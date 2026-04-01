@@ -157,25 +157,118 @@ function normalizeZendeskCommentContent(comment = {}) {
   return "";
 }
 
-function mapZendeskCommentsToMessages(comments, requesterId) {
-  return comments.map((comment) => ({
-    id: String(comment.id),
-    role: Number(comment.author_id) === Number(requesterId) ? "user" : "assistant",
-    content: normalizeZendeskCommentContent(comment),
-    createdAt: comment.created_at,
-    sourceChannel: comment.via?.channel || null,
-    authoredByHuman:
-      Number(comment.author_id) !== Number(requesterId) && comment.via?.channel !== "api",
-    attachments: Array.isArray(comment.attachments)
-      ? comment.attachments.map((attachment) => ({
-          id: attachment.id,
-          name: attachment.file_name,
-          contentType: attachment.content_type,
-          size: attachment.size,
-          url: attachment.content_url
-        }))
-      : []
-  }));
+function hasAiReplyMarker(audit = {}) {
+  return Array.isArray(audit.events) && audit.events.some((event) => {
+    const haystack = JSON.stringify({
+      type: event?.type,
+      field_name: event?.field_name,
+      value: event?.value,
+      previous_value: event?.previous_value
+    }).toLowerCase();
+
+    return haystack.includes("ai_replied") || haystack.includes("webchat_ai");
+  });
+}
+
+function getZendeskAuditCustomMetadata(audit = {}) {
+  const customMetadata = audit?.metadata?.custom;
+
+  if (!customMetadata || typeof customMetadata !== "object") {
+    return {};
+  }
+
+  if (customMetadata.custom && typeof customMetadata.custom === "object") {
+    return customMetadata.custom;
+  }
+
+  return customMetadata;
+}
+
+function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary) {
+  const normalizedRequesterId = Number(requesterId);
+  const commentAuthorId = Number(commentEvent?.author_id ?? audit?.author_id);
+  const sourceChannel = commentEvent?.via?.channel || audit?.via?.channel || null;
+  const customMetadata = getZendeskAuditCustomMetadata(audit);
+  const taggedRole = customMetadata.libar_message_role || customMetadata.libarMessageRole || null;
+
+  if (taggedRole === "assistant") {
+    return "assistant";
+  }
+
+  if (taggedRole === "customer") {
+    return "user";
+  }
+
+  if (
+    Number.isFinite(commentAuthorId) &&
+    Number.isFinite(normalizedRequesterId) &&
+    commentAuthorId === normalizedRequesterId
+  ) {
+    return "user";
+  }
+
+  if (sourceChannel && sourceChannel !== "api") {
+    return "assistant";
+  }
+
+  if (hasAiReplyMarker(audit)) {
+    return "assistant";
+  }
+
+  if (
+    Number.isFinite(commentAuthorId) &&
+    Number.isFinite(normalizedRequesterId) &&
+    commentAuthorId !== normalizedRequesterId
+  ) {
+    return "assistant";
+  }
+
+  if (Array.isArray(ticketSummary?.tags)) {
+    const stateTags = new Set(ticketSummary.tags);
+
+    if (
+      stateTags.has("human_active") ||
+      stateTags.has("awaiting_human") ||
+      stateTags.has("ai_replied")
+    ) {
+      return "user";
+    }
+  }
+
+  return "user";
+}
+
+function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
+  return audits
+    .flatMap((audit) => {
+      const commentEvents = Array.isArray(audit.events)
+        ? audit.events.filter((event) => event?.type === "Comment" && event?.public !== false)
+        : [];
+
+      return commentEvents.map((commentEvent) => {
+        const role = inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary);
+        const sourceChannel = commentEvent?.via?.channel || audit?.via?.channel || null;
+
+        return {
+          id: String(commentEvent.id || audit.id),
+          role,
+          content: normalizeZendeskCommentContent(commentEvent),
+          createdAt: audit.created_at,
+          sourceChannel,
+          authoredByHuman: role === "assistant" && sourceChannel !== "api",
+          attachments: Array.isArray(commentEvent.attachments)
+            ? commentEvent.attachments.map((attachment) => ({
+                id: attachment.id,
+                name: attachment.file_name,
+                contentType: attachment.content_type,
+                size: attachment.size,
+                url: attachment.content_url
+              }))
+            : []
+        };
+      });
+    })
+    .sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt));
 }
 
 function getSessionsByTicketId(ticketId) {
@@ -220,7 +313,21 @@ function buildConversationState(ticketSummary, messages) {
     };
   }
 
-  if (tags.includes("hitno_slike") || tags.includes("ai_eskalacija")) {
+  if (
+    tags.includes("human_active")
+  ) {
+    return {
+      tone: "human-active",
+      badge: "Podrška uživo",
+      subtitle: "Naš tim nastavlja razgovor s vama ovdje u istoj niti."
+    };
+  }
+
+  if (
+    tags.includes("awaiting_human") ||
+    tags.includes("hitno_slike") ||
+    tags.includes("ai_eskalacija")
+  ) {
     return {
       tone: "awaiting-human",
       badge: "Provjera upita",
@@ -240,12 +347,12 @@ async function syncSessionMessages(session) {
     return session;
   }
 
-  const [comments, ticketSummary] = await Promise.all([
-    zendeskService.getPublicTicketComments(session.ticketId),
+  const [audits, ticketSummary] = await Promise.all([
+    zendeskService.getTicketAudits(session.ticketId),
     zendeskService.getTicketSummary(session.ticketId)
   ]);
 
-  session.messages = mapZendeskCommentsToMessages(comments, session.requesterId);
+  session.messages = mapZendeskAuditsToMessages(audits, session.requesterId, ticketSummary);
   session.conversationState = buildConversationState(ticketSummary, session.messages);
   session.resolutionPrompt = getResolutionPrompt(session, ticketSummary);
   session.updatedAt = new Date().toISOString();
@@ -708,11 +815,11 @@ app.post("/api/chat/restore", async (req, res) => {
 
   try {
     const existingSession = findSessionByTicketId(ticketId);
-    const [comments, ticketSummary] = await Promise.all([
-      zendeskService.getPublicTicketComments(ticketId),
+    const [audits, ticketSummary] = await Promise.all([
+      zendeskService.getTicketAudits(ticketId),
       zendeskService.getTicketSummary(ticketId)
     ]);
-    const restoredMessages = mapZendeskCommentsToMessages(comments, requesterId);
+    const restoredMessages = mapZendeskAuditsToMessages(audits, requesterId, ticketSummary);
 
     if (isClosedTicketStatus(ticketSummary.status)) {
       if (existingSession) {
@@ -835,7 +942,9 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
 
     if (
       session.conversationState?.tone === "human-active" ||
-      session.conversationState?.tone === "awaiting-human"
+      session.conversationState?.tone === "awaiting-human" ||
+      Array.isArray(ticketSummary.tags) &&
+        (ticketSummary.tags.includes("human_active") || ticketSummary.tags.includes("awaiting_human"))
     ) {
       session.resolutionPrompt = null;
       console.info("human_pass_through", {

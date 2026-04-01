@@ -386,6 +386,13 @@ async function replyToTicket(ticketId, replyText, isPublic = false, options = {}
           ...(options.authorId ? { author_id: options.authorId } : {}),
           ...(options.uploadTokens?.length ? { uploads: options.uploadTokens } : {})
         },
+        ...(options.metadata
+          ? {
+              metadata: {
+                custom: options.metadata
+              }
+            }
+          : {}),
         ...(options.additionalTags?.length ? { additional_tags: options.additionalTags } : {})
       }
     });
@@ -430,6 +437,12 @@ async function createChatTicket({
           body: initialMessage,
           ...(uploadTokens.length ? { uploads: uploadTokens } : {})
         },
+        metadata: {
+          custom: {
+            libar_message_role: "customer",
+            libar_message_origin: "webchat"
+          }
+        },
         requester: {
           name: requesterName,
           email: requesterEmail
@@ -465,7 +478,11 @@ async function createChatTicket({
 async function addCustomerMessageToTicket(ticketId, requesterId, messageText, uploadTokens = []) {
   return replyToTicket(ticketId, messageText, true, {
     authorId: requesterId,
-    uploadTokens
+    uploadTokens,
+    metadata: {
+      libar_message_role: "customer",
+      libar_message_origin: "webchat"
+    }
   });
 }
 
@@ -475,7 +492,11 @@ async function addCustomerMessageToTicket(ticketId, requesterId, messageText, up
  */
 async function addBotReplyToTicket(ticketId, replyText) {
   return replyToTicket(ticketId, replyText, true, {
-    additionalTags: ["ai_replied"]
+    additionalTags: ["ai_replied"],
+    metadata: {
+      libar_message_role: "assistant",
+      libar_message_origin: "webchat_ai"
+    }
   });
 }
 
@@ -632,6 +653,34 @@ async function getPublicTicketComments(ticketId) {
   }
 }
 
+async function getTicketAudits(ticketId) {
+  try {
+    validateZendeskConfig();
+
+    const audits = [];
+    let nextPageUrl = `/api/v2/tickets/${ticketId}/audits.json?filter_events[]=Comment&page[size]=100`;
+
+    while (nextPageUrl) {
+      const response = await zendeskClient.get(nextPageUrl);
+      const pageAudits = Array.isArray(response.data?.audits) ? response.data.audits : [];
+
+      audits.push(...pageAudits);
+      nextPageUrl = response.data?.next_page || null;
+    }
+
+    return audits;
+  } catch (error) {
+    console.error("Failed to fetch Zendesk ticket audits:", {
+      ticketId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to fetch ticket audits", error, { ticketId });
+  }
+}
+
 async function getTicketSummary(ticketId) {
   try {
     validateZendeskConfig();
@@ -700,6 +749,7 @@ module.exports = {
   fetchAllHelpCenterArticles,
   getZendeskConfigSummary,
   getPublicTicketComments,
+  getTicketAudits,
   getTicketSummary,
   normalizeText,
   replyToTicket,

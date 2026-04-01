@@ -32,6 +32,8 @@ let typingIndicatorEl = null;
 let closedConversationState = null;
 let currentResolutionPrompt = null;
 let currentConversationTone = "ai-active";
+let canonicalMessages = [];
+let optimisticMessages = [];
 
 const onboarding = {
   stage: "initial",
@@ -40,8 +42,7 @@ const onboarding = {
     name: "",
     email: ""
   },
-  messages: [],
-  preludeMessages: []
+  messages: []
 };
 
 function showWidget() {
@@ -95,55 +96,10 @@ function normalizeMessageContent(content) {
     .toLowerCase();
 }
 
-function getMessageMatchKey(message) {
-  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
-
-  return [
-    message?.role || "",
-    normalizeMessageContent(message?.content),
-    attachments
-      .map((attachment) => `${attachment.name || ""}:${attachment.size || ""}`)
-      .join(",")
-  ].join("|");
-}
-
-function mergePreludeWithSessionMessages(preludeMessages, sessionMessages) {
-  if (!Array.isArray(preludeMessages) || preludeMessages.length === 0) {
-    return Array.isArray(sessionMessages) ? sessionMessages : [];
-  }
-
-  const mergedMessages = [...preludeMessages];
-  const existingKeys = new Set(
-    preludeMessages
-      .filter((message) => message.role !== "system")
-      .map((message) => getMessageMatchKey(message))
-  );
-
-  for (const message of Array.isArray(sessionMessages) ? sessionMessages : []) {
-    const matchKey = getMessageMatchKey(message);
-
-    if (message.role !== "system" && existingKeys.has(matchKey)) {
-      continue;
-    }
-
-    mergedMessages.push(message);
-
-    if (message.role !== "system") {
-      existingKeys.add(matchKey);
-    }
-  }
-
-  return mergedMessages;
-}
-
 function applySessionMessages(sessionMessages) {
-  const visibleMessages = mergePreludeWithSessionMessages(
-    onboarding.preludeMessages,
-    sessionMessages
-  );
-
-  onboarding.messages = visibleMessages;
-  updateMessages(visibleMessages);
+  canonicalMessages = Array.isArray(sessionMessages) ? sessionMessages : [];
+  optimisticMessages = [];
+  updateMessages(canonicalMessages);
 }
 
 function formatFileSize(size) {
@@ -197,7 +153,8 @@ function resetOnboardingState() {
     email: ""
   };
   onboarding.messages = [];
-  onboarding.preludeMessages = [];
+  canonicalMessages = [];
+  optimisticMessages = [];
 }
 
 function setUnreadCount(count) {
@@ -339,7 +296,7 @@ function renderMessages(messages) {
 function getMessagesSignature(messages) {
   const messageSignature = messages
     .map((message) =>
-      `${message.id}:${message.createdAt}:${message.content}:${(message.attachments || [])
+      `${message.id}:${message.role}:${message.createdAt}:${message.content}:${(message.attachments || [])
         .map((attachment) => `${attachment.id || attachment.name}:${attachment.name}`)
         .join(",")}`
     )
@@ -551,8 +508,9 @@ function updateMessages(messages) {
   const currentIds = Array.from(messagesEl.children).map((node) => node.dataset.messageId);
   const nextIds = messages.map((message) => String(message.id));
   const canAppendOnly =
-    currentIds.every((id, index) => id === nextIds[index]) &&
-    nextIds.length >= currentIds.length;
+    optimisticMessages.length === 0 &&
+    nextIds.length > currentIds.length &&
+    currentIds.every((id, index) => id === nextIds[index]);
 
   if (!canAppendOnly) {
     hideTypingIndicator();
@@ -679,6 +637,13 @@ function pushMessage(role, content, attachments = []) {
   saveOnboardingState();
 }
 
+function pushOptimisticMessage(role, content, attachments = []) {
+  const message = createMessage(role, content);
+  message.attachments = attachments;
+  optimisticMessages.push(message);
+  updateMessages([...canonicalMessages, ...optimisticMessages]);
+}
+
 function seedWelcomeState() {
   if (onboarding.messages.length > 0) {
     return;
@@ -697,7 +662,6 @@ function isValidEmail(value) {
 }
 
 async function startZendeskChat() {
-  const preludeMessages = onboarding.messages.slice();
   const isForm = pendingFiles.length > 0;
   let body;
   let headers = {};
@@ -735,7 +699,6 @@ async function startZendeskChat() {
   renderPendingFiles();
   localStorage.setItem(storageKey, data.sessionId);
   saveSessionSnapshot(data.session);
-  onboarding.preludeMessages = preludeMessages;
   clearOnboardingState();
   onboarding.stage = "connected";
   if (data.session) {
@@ -916,6 +879,8 @@ async function loadExistingSession() {
       onboarding.stage = parsed.stage || "initial";
       onboarding.draft = parsed.draft || onboarding.draft;
       onboarding.messages = parsed.messages || [];
+      canonicalMessages = [];
+      optimisticMessages = [];
     } catch (error) {
       clearOnboardingState();
     }
@@ -925,6 +890,8 @@ async function loadExistingSession() {
   hideClosedConversationPanel();
   clearResolutionPrompt();
   setComposerEnabled(true);
+  canonicalMessages = [];
+  optimisticMessages = [];
   updateMessages(onboarding.messages);
 }
 
@@ -1159,9 +1126,17 @@ messageForm.addEventListener("submit", async (event) => {
   }));
 
   if (message) {
-    pushMessage("user", message, pendingAttachmentPayload);
+    if (sessionId) {
+      pushOptimisticMessage("user", message, pendingAttachmentPayload);
+    } else {
+      pushMessage("user", message, pendingAttachmentPayload);
+    }
   } else if (pendingAttachmentPayload.length > 0) {
-    pushMessage("user", "Šaljem privitak.", pendingAttachmentPayload);
+    if (sessionId) {
+      pushOptimisticMessage("user", "Šaljem privitak.", pendingAttachmentPayload);
+    } else {
+      pushMessage("user", "Šaljem privitak.", pendingAttachmentPayload);
+    }
   }
 
   messageInput.value = "";
@@ -1203,7 +1178,7 @@ messageForm.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
       if (response.status === 409 && data.conversationState?.tone === "resolved") {
-        handleResolvedSession(data, onboarding.messages);
+        handleResolvedSession(data, canonicalMessages);
       }
       throw new Error(data.error || "Slanje poruke nije uspjelo.");
     }
@@ -1216,6 +1191,10 @@ messageForm.addEventListener("submit", async (event) => {
     applySessionMessages(data.messages);
     startPolling();
   } catch (error) {
+    optimisticMessages = [];
+    if (sessionId) {
+      updateMessages(canonicalMessages);
+    }
     hideTypingIndicator();
     showError(error.message);
   }
