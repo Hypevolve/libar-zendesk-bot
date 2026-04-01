@@ -69,6 +69,16 @@ function createSession(payload) {
   return session;
 }
 
+function findSessionByTicketId(ticketId) {
+  for (const session of chatSessions.values()) {
+    if (Number(session.ticketId) === Number(ticketId)) {
+      return session;
+    }
+  }
+
+  return null;
+}
+
 function appendMessageToSession(sessionId, role, content) {
   const session = getSession(sessionId);
 
@@ -309,6 +319,13 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
     return res.status(200).json({
       success: true,
       sessionId: session.sessionId,
+      session: {
+        sessionId: session.sessionId,
+        ticketId: session.ticketId,
+        requesterId: session.requesterId,
+        requesterName: session.requesterName,
+        requesterEmail: session.requesterEmail
+      },
       ticketId,
       messages: getSession(session.sessionId).messages
     });
@@ -321,6 +338,59 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
     return res.status(500).json({
       success: false,
       error: "Unable to start webshop chat session."
+    });
+  }
+});
+
+app.post("/api/chat/restore", async (req, res) => {
+  const { ticketId, requesterId, requesterName, requesterEmail } = req.body || {};
+
+  if (!ticketId || !requesterId) {
+    return res.status(400).json({
+      success: false,
+      error: "ticketId and requesterId are required."
+    });
+  }
+
+  try {
+    const existingSession = findSessionByTicketId(ticketId);
+
+    if (existingSession) {
+      await syncSessionMessages(existingSession);
+
+      return res.status(200).json({
+        success: true,
+        restored: true,
+        session: existingSession
+      });
+    }
+
+    const session = createSession({
+      ticketId,
+      requesterId,
+      requesterName: requesterName || "",
+      requesterEmail: requesterEmail || "",
+      messages: []
+    });
+
+    await syncSessionMessages(session);
+
+    return res.status(200).json({
+      success: true,
+      restored: true,
+      session
+    });
+  } catch (error) {
+    console.error("Failed to restore webshop chat session:", {
+      ticketId,
+      requesterId,
+      message: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to restore webshop chat session."
     });
   }
 });

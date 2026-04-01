@@ -209,6 +209,21 @@ function truncateText(text, maxLength = 1800) {
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
+function dedupeRankedArticles(rankedArticles) {
+  const seenKeys = new Set();
+
+  return rankedArticles.filter(({ article }) => {
+    const key = normalizeText(`${article.title || ""} ${stripHtml(article.body || "").slice(0, 240)}`);
+
+    if (!key || seenKeys.has(key)) {
+      return false;
+    }
+
+    seenKeys.add(key);
+    return true;
+  });
+}
+
 /**
  * Download the complete Help Center article corpus using Zendesk pagination.
  * We cache the result briefly in memory because article data changes far less often
@@ -261,14 +276,16 @@ async function searchHelpCenter(query) {
         score: scoreArticle(article, query)
       }))
       .filter((entry) => entry.score > 0)
-      .sort((left, right) => right.score - left.score)
+      .sort((left, right) => right.score - left.score);
+
+    const uniqueRankedArticles = dedupeRankedArticles(rankedArticles)
       .slice(0, HELP_CENTER_CONTEXT_ARTICLES);
 
-    if (rankedArticles.length === 0) {
+    if (uniqueRankedArticles.length === 0) {
       return null;
     }
 
-    const context = rankedArticles
+    const context = uniqueRankedArticles
       .map(({ article, score }, index) => {
         const title = stripHtml(article.title || "Bez naslova");
         const body = truncateText(stripHtml(article.body || ""));

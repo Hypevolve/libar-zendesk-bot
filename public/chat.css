@@ -214,6 +214,26 @@ textarea:focus {
   flex-shrink: 0;
 }
 
+.chat-launcher__badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 2px solid rgba(255, 252, 247, 0.96);
+  border-radius: var(--radius-pill);
+  background: #201815;
+  color: var(--color-text-inverse);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+}
+
 .chat-widget {
   position: fixed;
   right: 24px;
@@ -447,6 +467,13 @@ textarea:focus {
   box-shadow: none;
   text-align: center;
   font-size: var(--text-sm);
+}
+
+.message.typing-host {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .message-meta {

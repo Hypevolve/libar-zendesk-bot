@@ -1,7 +1,9 @@
 const storageKey = "libar-chat-session-id";
+const sessionSnapshotKey = "libar-chat-session-snapshot";
 const onboardingKey = "libar-chat-onboarding";
 
 const launcher = document.getElementById("chat-launcher");
+const launcherBadge = document.getElementById("chat-launcher-badge");
 const widget = document.getElementById("chat-widget");
 const closeButton = document.getElementById("chat-close");
 const messageForm = document.getElementById("message-form");
@@ -15,6 +17,8 @@ const pendingFilesList = document.getElementById("pending-files-list");
 let pollTimer = null;
 let lastRenderedSignature = "";
 let pendingFiles = [];
+let unreadCount = 0;
+let typingIndicatorEl = null;
 
 const onboarding = {
   stage: "initial",
@@ -30,6 +34,7 @@ function showWidget() {
   widget.classList.remove("hidden");
   widget.setAttribute("aria-hidden", "false");
   launcher.setAttribute("aria-expanded", "true");
+  setUnreadCount(0);
   messageInput.focus();
 }
 
@@ -84,6 +89,46 @@ function saveOnboardingState() {
 
 function clearOnboardingState() {
   localStorage.removeItem(onboardingKey);
+}
+
+function saveSessionSnapshot(snapshot) {
+  localStorage.setItem(sessionSnapshotKey, JSON.stringify(snapshot));
+}
+
+function getSessionSnapshot() {
+  const raw = localStorage.getItem(sessionSnapshotKey);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    localStorage.removeItem(sessionSnapshotKey);
+    return null;
+  }
+}
+
+function clearSessionSnapshot() {
+  localStorage.removeItem(sessionSnapshotKey);
+}
+
+function setUnreadCount(count) {
+  unreadCount = Math.max(0, count);
+
+  if (!launcherBadge) {
+    return;
+  }
+
+  if (unreadCount === 0) {
+    launcherBadge.classList.add("hidden");
+    launcherBadge.textContent = "0";
+    return;
+  }
+
+  launcherBadge.classList.remove("hidden");
+  launcherBadge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
 }
 
 function renderMessages(messages) {
@@ -173,6 +218,38 @@ function createMessageElement(message) {
   return wrapper;
 }
 
+function createTypingIndicatorElement() {
+  const wrapper = document.createElement("article");
+  wrapper.className = "message assistant typing-host";
+  wrapper.dataset.messageId = "typing-indicator";
+
+  const indicator = document.createElement("div");
+  indicator.className = "typing-indicator";
+  indicator.innerHTML = "<span></span><span></span><span></span>";
+  wrapper.appendChild(indicator);
+
+  return wrapper;
+}
+
+function showTypingIndicator() {
+  if (typingIndicatorEl) {
+    return;
+  }
+
+  typingIndicatorEl = createTypingIndicatorElement();
+  messagesEl.appendChild(typingIndicatorEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function hideTypingIndicator() {
+  if (!typingIndicatorEl) {
+    return;
+  }
+
+  typingIndicatorEl.remove();
+  typingIndicatorEl = null;
+}
+
 function updateMessages(messages) {
   const nextSignature = getMessagesSignature(messages);
 
@@ -184,6 +261,7 @@ function updateMessages(messages) {
     messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
 
   if (!lastRenderedSignature || messagesEl.children.length === 0) {
+    hideTypingIndicator();
     renderMessages(messages);
     lastRenderedSignature = nextSignature;
     return;
@@ -196,12 +274,22 @@ function updateMessages(messages) {
     nextIds.length >= currentIds.length;
 
   if (!canAppendOnly) {
+    hideTypingIndicator();
     renderMessages(messages);
     lastRenderedSignature = nextSignature;
     return;
   }
 
   const newMessages = messages.slice(currentIds.length);
+
+  if (newMessages.length > 0 && widget.classList.contains("hidden")) {
+    const incomingAssistantMessages = newMessages.filter((message) => message.role === "assistant");
+    if (incomingAssistantMessages.length > 0) {
+      setUnreadCount(unreadCount + incomingAssistantMessages.length);
+    }
+  }
+
+  hideTypingIndicator();
 
   for (const message of newMessages) {
     messagesEl.appendChild(createMessageElement(message));
@@ -320,6 +408,7 @@ async function startZendeskChat() {
   pendingFiles = [];
   renderPendingFiles();
   localStorage.setItem(storageKey, data.sessionId);
+  saveSessionSnapshot(data.session);
   clearOnboardingState();
   onboarding.stage = "connected";
   updateMessages(data.messages);
@@ -362,6 +451,39 @@ async function handleOnboardingMessage(message) {
 
 async function loadExistingSession() {
   const sessionId = localStorage.getItem(storageKey);
+  const sessionSnapshot = getSessionSnapshot();
+
+  async function restoreFromSnapshot() {
+    if (!sessionSnapshot) {
+      return false;
+    }
+
+    const restoreResponse = await fetch("/api/chat/restore", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(sessionSnapshot)
+    });
+    const restoreData = await restoreResponse.json();
+
+    if (!restoreResponse.ok) {
+      return false;
+    }
+
+    localStorage.setItem(storageKey, restoreData.session.sessionId);
+    saveSessionSnapshot({
+      sessionId: restoreData.session.sessionId,
+      ticketId: restoreData.session.ticketId,
+      requesterId: restoreData.session.requesterId,
+      requesterName: restoreData.session.requesterName,
+      requesterEmail: restoreData.session.requesterEmail
+    });
+    onboarding.stage = "connected";
+    updateMessages(restoreData.session.messages);
+    startPolling();
+    return true;
+  }
 
   if (sessionId) {
     try {
@@ -376,10 +498,20 @@ async function loadExistingSession() {
       }
 
       localStorage.removeItem(storageKey);
+      if (await restoreFromSnapshot()) {
+        return;
+      }
     } catch (error) {
+      if (await restoreFromSnapshot()) {
+        return;
+      }
+
       showError("Ne mogu učitati prethodni razgovor.");
-      return;
     }
+  }
+
+  if (await restoreFromSnapshot()) {
+    return;
   }
 
   const savedOnboarding = localStorage.getItem(onboardingKey);
@@ -567,6 +699,7 @@ messageForm.addEventListener("submit", async (event) => {
   }
 
   try {
+    showTypingIndicator();
     const formData = new FormData();
     formData.append("sessionId", sessionId);
     formData.append("message", message);
@@ -592,6 +725,7 @@ messageForm.addEventListener("submit", async (event) => {
     updateMessages(data.messages);
     startPolling();
   } catch (error) {
+    hideTypingIndicator();
     showError(error.message);
   }
 });
