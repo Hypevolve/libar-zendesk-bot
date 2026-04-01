@@ -6,6 +6,8 @@ const launcher = document.getElementById("chat-launcher");
 const launcherBadge = document.getElementById("chat-launcher-badge");
 const widget = document.getElementById("chat-widget");
 const closeButton = document.getElementById("chat-close");
+const chatStatusText = document.getElementById("chat-status-text");
+const welcomeSubtitle = document.getElementById("chat-welcome-subtitle");
 const messageForm = document.getElementById("message-form");
 const messagesEl = document.getElementById("messages");
 const errorBox = document.getElementById("error-box");
@@ -206,7 +208,9 @@ function createMessageElement(message) {
   const meta = document.createElement("div");
   meta.className = "message-meta";
 
-  if (message.role === "assistant") {
+  if (message.role === "assistant" && message.authoredByHuman) {
+    meta.textContent = `Agent uživo • ${formatTime(message.createdAt)}`;
+  } else if (message.role === "assistant") {
     meta.textContent = `Agent podrške • ${formatTime(message.createdAt)}`;
   } else if (message.role === "system") {
     meta.textContent = formatTime(message.createdAt);
@@ -216,6 +220,27 @@ function createMessageElement(message) {
 
   wrapper.appendChild(meta);
   return wrapper;
+}
+
+function applyConversationState(session) {
+  const state = session?.conversationState;
+
+  if (!state) {
+    return;
+  }
+
+  if (chatStatusText) {
+    chatStatusText.textContent = state.badge || "Aktivan";
+  }
+
+  if (welcomeSubtitle) {
+    welcomeSubtitle.textContent = state.subtitle || "Odgovor stiže odmah - agent se može uključiti u razgovor.";
+  }
+
+  const statusEl = document.querySelector(".chat-widget__status");
+  if (statusEl) {
+    statusEl.dataset.tone = state.tone || "ai-active";
+  }
 }
 
 function createTypingIndicatorElement() {
@@ -324,6 +349,7 @@ function startPolling() {
       }
 
       onboarding.stage = "connected";
+      applyConversationState(data.session);
       updateMessages(data.session.messages);
     } catch (error) {
       showError(error.message);
@@ -411,6 +437,9 @@ async function startZendeskChat() {
   saveSessionSnapshot(data.session);
   clearOnboardingState();
   onboarding.stage = "connected";
+  if (data.session) {
+    applyConversationState(data.session);
+  }
   updateMessages(data.messages);
   startPolling();
 }
@@ -480,6 +509,7 @@ async function loadExistingSession() {
       requesterEmail: restoreData.session.requesterEmail
     });
     onboarding.stage = "connected";
+    applyConversationState(restoreData.session);
     updateMessages(restoreData.session.messages);
     startPolling();
     return true;
@@ -492,6 +522,7 @@ async function loadExistingSession() {
 
       if (response.ok) {
         onboarding.stage = "connected";
+        applyConversationState(data.session);
         updateMessages(data.session.messages);
         startPolling();
         return;

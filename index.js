@@ -103,6 +103,9 @@ function mapZendeskCommentsToMessages(comments, requesterId) {
     role: Number(comment.author_id) === Number(requesterId) ? "user" : "assistant",
     content: comment.plain_body || comment.body || "",
     createdAt: comment.created_at,
+    sourceChannel: comment.via?.channel || null,
+    authoredByHuman:
+      Number(comment.author_id) !== Number(requesterId) && comment.via?.channel !== "api",
     attachments: Array.isArray(comment.attachments)
       ? comment.attachments.map((attachment) => ({
           id: attachment.id,
@@ -115,13 +118,47 @@ function mapZendeskCommentsToMessages(comments, requesterId) {
   }));
 }
 
+function buildConversationState(ticketSummary, messages) {
+  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
+  const humanAgentActive = messages.some(
+    (message) => message.role === "assistant" && message.authoredByHuman
+  );
+
+  if (humanAgentActive) {
+    return {
+      tone: "human-active",
+      badge: "Agent uživo",
+      subtitle: "Razgovor je preuzeo naš agent i odgovara vam izravno iz podrške."
+    };
+  }
+
+  if (tags.includes("hitno_slike") || tags.includes("ai_eskalacija")) {
+    return {
+      tone: "awaiting-human",
+      badge: "Ljudska provjera",
+      subtitle: "Vaš upit je proslijeđen timu. Čim netko preuzme razgovor, odgovor stiže ovdje."
+    };
+  }
+
+  return {
+    tone: "ai-active",
+    badge: "Aktivan",
+    subtitle: "Libar Agent odgovara odmah, a po potrebi se u razgovor uključuje i naš tim."
+  };
+}
+
 async function syncSessionMessages(session) {
   if (!session?.ticketId || !session?.requesterId) {
     return session;
   }
 
-  const comments = await zendeskService.getPublicTicketComments(session.ticketId);
+  const [comments, ticketSummary] = await Promise.all([
+    zendeskService.getPublicTicketComments(session.ticketId),
+    zendeskService.getTicketSummary(session.ticketId)
+  ]);
+
   session.messages = mapZendeskCommentsToMessages(comments, session.requesterId);
+  session.conversationState = buildConversationState(ticketSummary, session.messages);
   session.updatedAt = new Date().toISOString();
 
   return session;

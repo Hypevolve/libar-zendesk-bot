@@ -533,6 +533,32 @@ async function getPublicTicketComments(ticketId) {
   }
 }
 
+async function getTicketSummary(ticketId) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.get(`/api/v2/tickets/${ticketId}.json`);
+    const ticket = response.data?.ticket || {};
+
+    return {
+      id: ticket.id,
+      status: ticket.status || null,
+      tags: Array.isArray(ticket.tags) ? ticket.tags : [],
+      assigneeId: ticket.assignee_id || null,
+      requesterId: ticket.requester_id || null
+    };
+  } catch (error) {
+    console.error("Failed to fetch Zendesk ticket summary:", {
+      ticketId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to fetch ticket summary", error, { ticketId });
+  }
+}
+
 async function testZendeskTicketAccess(ticketId) {
   try {
     validateZendeskConfig();
@@ -563,6 +589,7 @@ module.exports = {
   fetchAllHelpCenterArticles,
   getZendeskConfigSummary,
   getPublicTicketComments,
+  getTicketSummary,
   normalizeText,
   replyToTicket,
   scoreArticle,

@@ -340,6 +340,16 @@ textarea:focus {
   background: var(--color-primary-50);
 }
 
+.chat-widget__status[data-tone="human-active"] {
+  background: rgba(34, 160, 107, 0.09);
+  border-color: rgba(34, 160, 107, 0.16);
+}
+
+.chat-widget__status[data-tone="awaiting-human"] {
+  background: rgba(240, 100, 49, 0.09);
+  border-color: rgba(240, 100, 49, 0.18);
+}
+
 .chat-widget__status-dot {
   width: 7px;
   height: 7px;
@@ -347,6 +357,10 @@ textarea:focus {
   border-radius: var(--radius-pill);
   background: var(--color-online);
   animation: pulse-status 2.8s ease-out infinite;
+}
+
+.chat-widget__status[data-tone="awaiting-human"] .chat-widget__status-dot {
+  background: var(--color-primary-500);
 }
 
 .chat-widget__status-text {
