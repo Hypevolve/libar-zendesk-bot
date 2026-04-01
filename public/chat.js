@@ -30,6 +30,8 @@ let pendingFiles = [];
 let unreadCount = 0;
 let typingIndicatorEl = null;
 let closedConversationState = null;
+let currentResolutionPrompt = null;
+let currentConversationTone = "ai-active";
 
 const onboarding = {
   stage: "initial",
@@ -240,6 +242,14 @@ function hideClosedConversationPanel() {
   reviewConversationButton?.classList.remove("is-active");
 }
 
+function setResolutionPrompt(prompt) {
+  currentResolutionPrompt = prompt?.show ? prompt : null;
+}
+
+function clearResolutionPrompt() {
+  currentResolutionPrompt = null;
+}
+
 function showClosedConversationPanel(payload) {
   closedConversationState = payload;
   closedConversationTitle.textContent =
@@ -268,6 +278,7 @@ function handleResolvedSession(session, messages) {
   saveSessionSnapshot(nextSnapshot);
   closeStream();
   stopPolling();
+  clearResolutionPrompt();
   applySessionMessages(messages || []);
   showClosedConversationPanel({
     panelTitle: "Što želite dalje?",
@@ -275,7 +286,7 @@ function handleResolvedSession(session, messages) {
     conversationState: {
       tone: "resolved",
       badge: "Prethodni razgovor je završen",
-      subtitle: "Ako imate novo pitanje, ovdje možete započeti novi razgovor."
+      subtitle: "Ako imate novo pitanje, ovdje možete otvoriti novi razgovor."
     }
   });
 }
@@ -290,6 +301,7 @@ function startNewConversationFlow() {
   clearOnboardingState();
   resetOnboardingState();
   hideClosedConversationPanel();
+  clearResolutionPrompt();
   pendingFiles = [];
   renderPendingFiles();
   lastRenderedSignature = "";
@@ -299,7 +311,7 @@ function startNewConversationFlow() {
     conversationState: {
       tone: "ai-active",
       badge: "Aktivan",
-      subtitle: "Libar Agent odgovara odmah, a po potrebi se u razgovor uključuje i naš tim."
+      subtitle: "Odgovaramo odmah, a po potrebi se u razgovor uključuje i naš tim."
     }
   });
   setComposerEnabled(true);
@@ -317,17 +329,64 @@ function renderMessages(messages) {
     messagesEl.appendChild(createMessageElement(message));
   }
 
+  if (currentResolutionPrompt?.show) {
+    messagesEl.appendChild(createResolutionPromptElement(currentResolutionPrompt));
+  }
+
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function getMessagesSignature(messages) {
-  return messages
+  const messageSignature = messages
     .map((message) =>
       `${message.id}:${message.createdAt}:${message.content}:${(message.attachments || [])
         .map((attachment) => `${attachment.id || attachment.name}:${attachment.name}`)
         .join(",")}`
     )
     .join("|");
+
+  const promptSignature = currentResolutionPrompt?.show
+    ? `prompt:${currentResolutionPrompt.title}:${currentResolutionPrompt.text}`
+    : "prompt:none";
+
+  return `${messageSignature}|${promptSignature}`;
+}
+
+function createResolutionPromptElement(prompt) {
+  const wrapper = document.createElement("article");
+  wrapper.className = "resolution-prompt";
+  wrapper.dataset.messageId = "resolution-prompt";
+
+  const title = document.createElement("p");
+  title.className = "resolution-prompt__title";
+  title.textContent = prompt.title || "Je li sve u redu?";
+
+  const text = document.createElement("p");
+  text.className = "resolution-prompt__text";
+  text.textContent = prompt.text || "Ako je problem riješen, možemo završiti ovaj razgovor.";
+
+  const actions = document.createElement("div");
+  actions.className = "resolution-prompt__actions";
+
+  const confirmButton = document.createElement("button");
+  confirmButton.type = "button";
+  confirmButton.className = "resolution-prompt__button is-primary";
+  confirmButton.dataset.resolveAction = "confirm";
+  confirmButton.textContent = prompt.confirmLabel || "Da, riješeno je";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "resolution-prompt__button is-secondary";
+  cancelButton.dataset.resolveAction = "cancel";
+  cancelButton.textContent = prompt.cancelLabel || "Ne, trebam još pomoć";
+
+  actions.appendChild(confirmButton);
+  actions.appendChild(cancelButton);
+  wrapper.appendChild(title);
+  wrapper.appendChild(text);
+  wrapper.appendChild(actions);
+
+  return wrapper;
 }
 
 function createMessageElement(message) {
@@ -396,9 +455,9 @@ function createMessageElement(message) {
   meta.className = "message-meta";
 
   if (message.role === "assistant" && message.authoredByHuman) {
-    meta.textContent = `Agent uživo • ${formatTime(message.createdAt)}`;
+    meta.textContent = `Podrška uživo • ${formatTime(message.createdAt)}`;
   } else if (message.role === "assistant") {
-    meta.textContent = `Agent podrške • ${formatTime(message.createdAt)}`;
+    meta.textContent = `Podrška • ${formatTime(message.createdAt)}`;
   } else if (message.role === "system") {
     meta.textContent = formatTime(message.createdAt);
   } else {
@@ -415,6 +474,8 @@ function applyConversationState(session) {
   if (!state) {
     return;
   }
+
+  currentConversationTone = state.tone || "ai-active";
 
   if (chatStatusText) {
     chatStatusText.textContent = state.badge || "Aktivan";
@@ -547,6 +608,7 @@ function startPolling() {
       hideClosedConversationPanel();
       setComposerEnabled(true);
       applyConversationState(data.session);
+      setResolutionPrompt(data.session?.resolutionPrompt || null);
       applySessionMessages(data.session.messages);
 
       if (data.session?.conversationState?.tone === "resolved") {
@@ -577,6 +639,7 @@ function startStream(sessionId) {
       hideClosedConversationPanel();
       setComposerEnabled(true);
       applyConversationState(data.session);
+      setResolutionPrompt(data.session?.resolutionPrompt || null);
       applySessionMessages(data.session.messages);
 
       if (data.session?.conversationState?.tone === "resolved") {
@@ -624,7 +687,7 @@ function seedWelcomeState() {
   setMessages([
     createMessage(
       "assistant",
-      "Pozdrav! Ja sam Libar Agent. Kako vam mogu pomoći danas?"
+      "Pozdrav! Kako vam mogu pomoći?"
     )
   ]);
 }
@@ -678,6 +741,7 @@ async function startZendeskChat() {
   if (data.session) {
     applyConversationState(data.session);
   }
+  setResolutionPrompt(data.resolutionPrompt || data.session?.resolutionPrompt || null);
   applySessionMessages(data.messages);
   closeStream();
   stopPolling();
@@ -689,26 +753,26 @@ async function handleOnboardingMessage(message) {
   if (onboarding.stage === "initial") {
     onboarding.draft.firstMessage = message;
     onboarding.stage = "awaiting_name";
-    pushMessage("system", "Za početak, recite mi svoje ime i prezime.");
+    pushMessage("assistant", "Hvala. Kako se zovete?");
     return;
   }
 
   if (onboarding.stage === "awaiting_name") {
     onboarding.draft.name = message;
     onboarding.stage = "awaiting_email";
-    pushMessage("system", "Hvala. Na koji email vas možemo kontaktirati ako zatreba nastavak razgovora?");
+    pushMessage("assistant", "Na koji vas email možemo kontaktirati ako zatreba nastavak razgovora?");
     return;
   }
 
   if (onboarding.stage === "awaiting_email") {
     if (!isValidEmail(message)) {
-      pushMessage("system", "Molim unesite ispravnu email adresu, npr. ime@domena.com.");
+      pushMessage("assistant", "Molim upišite ispravnu email adresu, npr. ime@domena.com.");
       return;
     }
 
     onboarding.draft.email = message;
     onboarding.stage = "starting";
-    pushMessage("system", "Odlično, povezujem razgovor s podrškom...");
+    pushMessage("assistant", "Hvala. Upit je zaprimljen i odgovor stiže ovdje u istom razgovoru.");
 
     try {
       await startZendeskChat();
@@ -753,6 +817,7 @@ async function loadExistingSession() {
       onboarding.stage = "closed";
       closeStream();
       stopPolling();
+      clearResolutionPrompt();
       applyConversationState({ conversationState: restoreData.conversationState });
       applySessionMessages(restoreData.messages || []);
       showClosedConversationPanel(restoreData);
@@ -772,6 +837,7 @@ async function loadExistingSession() {
       hideClosedConversationPanel();
       setComposerEnabled(true);
       applyConversationState(restoreData.session);
+      setResolutionPrompt(restoreData.session?.resolutionPrompt || null);
       applySessionMessages(restoreData.session.messages);
       closeStream();
       stopPolling();
@@ -799,6 +865,7 @@ async function loadExistingSession() {
         hideClosedConversationPanel();
         setComposerEnabled(true);
         applyConversationState(data.session);
+        setResolutionPrompt(data.session?.resolutionPrompt || null);
         applySessionMessages(data.session.messages);
 
         if (data.session?.conversationState?.tone === "resolved") {
@@ -815,7 +882,7 @@ async function loadExistingSession() {
             conversationState: {
               tone: "resolved",
               badge: "Prethodni razgovor je završen",
-              subtitle: "Ako imate novo pitanje, ovdje možete započeti novi razgovor."
+              subtitle: "Ako imate novo pitanje, ovdje možete otvoriti novi razgovor."
             }
           });
           return;
@@ -856,6 +923,7 @@ async function loadExistingSession() {
 
   seedWelcomeState();
   hideClosedConversationPanel();
+  clearResolutionPrompt();
   setComposerEnabled(true);
   updateMessages(onboarding.messages);
 }
@@ -877,6 +945,64 @@ reviewConversationButton?.addEventListener("click", () => {
 });
 
 newConversationButton?.addEventListener("click", startNewConversationFlow);
+
+messagesEl.addEventListener("click", async (event) => {
+  const actionButton = event.target.closest("[data-resolve-action]");
+
+  if (!actionButton) {
+    return;
+  }
+
+  const sessionId = localStorage.getItem(storageKey);
+
+  if (!sessionId) {
+    return;
+  }
+
+  const confirmed = actionButton.dataset.resolveAction === "confirm";
+
+  try {
+    clearError();
+    const response = await fetch("/api/chat/resolve", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        sessionId,
+        confirmed
+      })
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Ažuriranje razgovora nije uspjelo.");
+    }
+
+    if (!confirmed) {
+      clearResolutionPrompt();
+      if (data.session?.conversationState) {
+        applyConversationState(data.session);
+      }
+      applySessionMessages(data.session?.messages || onboarding.messages);
+      return;
+    }
+
+    clearResolutionPrompt();
+    if (data.session?.conversationState) {
+      applyConversationState(data.session);
+    }
+    if (data.session?.messages) {
+      applySessionMessages(data.session.messages);
+    }
+
+    if (data.session?.conversationState?.tone === "resolved") {
+      handleResolvedSession(data.session, data.session.messages);
+    }
+  } catch (error) {
+    showError(error.message);
+  }
+});
 
 function collectPendingFiles(inputEl) {
   if (!inputEl || !inputEl.files) {
@@ -1018,6 +1144,8 @@ messageForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  clearResolutionPrompt();
+
   if (!message && pendingFiles.length === 0) {
     return;
   }
@@ -1033,7 +1161,7 @@ messageForm.addEventListener("submit", async (event) => {
   if (message) {
     pushMessage("user", message, pendingAttachmentPayload);
   } else if (pendingAttachmentPayload.length > 0) {
-    pushMessage("user", "Poslan je privitak.", pendingAttachmentPayload);
+    pushMessage("user", "Šaljem privitak.", pendingAttachmentPayload);
   }
 
   messageInput.value = "";
@@ -1048,7 +1176,13 @@ messageForm.addEventListener("submit", async (event) => {
   }
 
   try {
-    showTypingIndicator();
+    const shouldShowTypingIndicator =
+      currentConversationTone !== "human-active" &&
+      currentConversationTone !== "awaiting-human";
+
+    if (shouldShowTypingIndicator) {
+      showTypingIndicator();
+    }
     const formData = new FormData();
     formData.append("sessionId", sessionId);
     formData.append("message", message);
@@ -1078,6 +1212,7 @@ messageForm.addEventListener("submit", async (event) => {
       applyConversationState({ conversationState: data.conversationState });
     }
 
+    setResolutionPrompt(data.resolutionPrompt || null);
     applySessionMessages(data.messages);
     startPolling();
   } catch (error) {

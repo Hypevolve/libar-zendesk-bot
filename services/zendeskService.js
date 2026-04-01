@@ -520,6 +520,38 @@ async function updateConversationState(ticketId, nextState, extraTags = []) {
   return setTicketTags(ticketId, nextTags);
 }
 
+async function solveTicket(ticketId, options = {}) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.put(`/api/v2/tickets/${ticketId}.json`, {
+      ticket: {
+        status: "solved",
+        ...(options.commentBody
+          ? {
+              comment: {
+                public: true,
+                body: options.commentBody
+              }
+            }
+          : {}),
+        ...(options.additionalTags?.length ? { additional_tags: options.additionalTags } : {})
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error("Failed to solve Zendesk ticket:", {
+      ticketId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to solve ticket", error, { ticketId });
+  }
+}
+
 async function uploadAttachment(file) {
   try {
     validateZendeskConfig();
@@ -675,6 +707,7 @@ module.exports = {
   searchHelpCenter,
   searchHelpCenterDetailed,
   setTicketTags,
+  solveTicket,
   stripHtml,
   testZendeskTicketAccess,
   updateConversationState,

@@ -98,11 +98,70 @@ function appendMessageToSession(sessionId, role, content) {
   return session;
 }
 
+function decodeHtmlEntities(content = "") {
+  let decoded = String(content);
+
+  for (let i = 0; i < 3; i += 1) {
+    const nextDecoded = decoded
+      .replace(/&amp;/gi, "&")
+      .replace(/&nbsp;?/gi, " ")
+      .replace(/&#160;/gi, " ")
+      .replace(/&quot;/gi, "\"")
+      .replace(/&#39;/gi, "'")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/\u00a0/g, " ");
+
+    if (nextDecoded === decoded) {
+      break;
+    }
+
+    decoded = nextDecoded;
+  }
+
+  return decoded
+    .replace(/^[ \t]+$/gm, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function stripHtmlWithLineBreaks(html = "") {
+  return String(html)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|ul|ol|blockquote|h[1-6])>/gi, "\n")
+    .replace(/<(li)\b[^>]*>/gi, "- ")
+    .replace(/<(p|div|ul|ol|blockquote|h[1-6])\b[^>]*>/gi, "")
+    .replace(/<[^>]+>/g, "");
+}
+
+function normalizeZendeskCommentContent(comment = {}) {
+  const sources = [comment.html_body, comment.plain_body, comment.body].filter(Boolean);
+
+  if (sources.length === 0) {
+    return "";
+  }
+
+  for (const source of sources) {
+    const normalized = decodeHtmlEntities(stripHtmlWithLineBreaks(source))
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
 function mapZendeskCommentsToMessages(comments, requesterId) {
   return comments.map((comment) => ({
     id: String(comment.id),
     role: Number(comment.author_id) === Number(requesterId) ? "user" : "assistant",
-    content: comment.plain_body || comment.body || "",
+    content: normalizeZendeskCommentContent(comment),
     createdAt: comment.created_at,
     sourceChannel: comment.via?.channel || null,
     authoredByHuman:
@@ -149,30 +208,30 @@ function buildConversationState(ticketSummary, messages) {
     return {
       tone: "resolved",
       badge: "Riješeno",
-      subtitle: "Razgovor je završen. Ako trebate još nešto, možete poslati novu poruku."
+      subtitle: "Ovaj razgovor je završen. Ako imate novo pitanje, možete započeti novi razgovor."
     };
   }
 
   if (humanAgentActive) {
     return {
       tone: "human-active",
-      badge: "Agent uživo",
-      subtitle: "Razgovor je preuzeo naš agent i odgovara vam izravno iz podrške."
+      badge: "Podrška uživo",
+      subtitle: "Naš tim nastavlja razgovor s vama ovdje u istoj niti."
     };
   }
 
   if (tags.includes("hitno_slike") || tags.includes("ai_eskalacija")) {
     return {
       tone: "awaiting-human",
-      badge: "Ljudska provjera",
-      subtitle: "Vaš upit je proslijeđen timu. Čim netko preuzme razgovor, odgovor stiže ovdje."
+      badge: "Provjera upita",
+      subtitle: "Pregledavamo vaš upit. Odgovor stiže ovdje čim ga pripremimo."
     };
   }
 
   return {
     tone: "ai-active",
     badge: "Aktivan",
-    subtitle: "Libar Agent odgovara odmah, a po potrebi se u razgovor uključuje i naš tim."
+    subtitle: "Odgovaramo odmah, a po potrebi se u razgovor uključuje i naš tim."
   };
 }
 
@@ -188,6 +247,7 @@ async function syncSessionMessages(session) {
 
   session.messages = mapZendeskCommentsToMessages(comments, session.requesterId);
   session.conversationState = buildConversationState(ticketSummary, session.messages);
+  session.resolutionPrompt = getResolutionPrompt(session, ticketSummary);
   session.updatedAt = new Date().toISOString();
 
   return session;
@@ -209,8 +269,9 @@ function buildClosedSessionPayload({ ticketSummary, requesterName, requesterEmai
     conversationState: {
       tone: "resolved",
       badge: "Prethodni razgovor je završen",
-      subtitle: "Možete pregledati prethodni odgovor ili započeti novi razgovor."
-    }
+      subtitle: "Možete pregledati raniji odgovor ili otvoriti novi razgovor."
+    },
+    resolutionPrompt: null
   };
 }
 
@@ -228,6 +289,94 @@ function isHardHandoffMessage(message = "") {
     "prevara",
     "ne radi"
   ].some((token) => normalizedMessage.includes(token));
+}
+
+function isResolutionCandidateMessage(message = "") {
+  const normalizedMessage = String(message).toLowerCase().trim();
+
+  if (
+    !normalizedMessage ||
+    normalizedMessage.includes("?") ||
+    normalizedMessage.length > 120
+  ) {
+    return false;
+  }
+
+  const candidateTokens = [
+    "hvala",
+    "super",
+    "odlično",
+    "to je to",
+    "riješeno",
+    "reseno",
+    "sve jasno",
+    "pomoglo je",
+    "to mi je pomoglo",
+    "to je riješilo",
+    "sve ok",
+    "ok, hvala"
+  ];
+
+  return candidateTokens.some((token) => normalizedMessage.includes(token));
+}
+
+function getLatestAssistantMessage(messages = []) {
+  return [...messages].reverse().find((message) => message.role === "assistant") || null;
+}
+
+function getLatestUserMessage(messages = []) {
+  return [...messages].reverse().find((message) => message.role === "user") || null;
+}
+
+function getResolutionPrompt(session, ticketSummary) {
+  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
+  const blockedTags = new Set(["ai_eskalacija", "hitno_slike", "awaiting_human", "human_active", "resolved"]);
+
+  if (!session || !isActiveTicketStatus(ticketSummary?.status)) {
+    return null;
+  }
+
+  if (session.conversationState?.tone !== "ai-active") {
+    return null;
+  }
+
+  if (tags.some((tag) => blockedTags.has(tag))) {
+    return null;
+  }
+
+  const lastMessage = session.messages?.[session.messages.length - 1];
+  const latestUserMessage = getLatestUserMessage(session.messages);
+  const latestAssistantMessage = getLatestAssistantMessage(
+    (session.messages || []).filter((message) => message !== lastMessage)
+  );
+
+  if (!lastMessage || lastMessage.role !== "user" || !latestUserMessage) {
+    return null;
+  }
+
+  if (Array.isArray(lastMessage.attachments) && lastMessage.attachments.length > 0) {
+    return null;
+  }
+
+  if (!isResolutionCandidateMessage(lastMessage.content)) {
+    return null;
+  }
+
+  if (isHardHandoffMessage(lastMessage.content)) {
+    return null;
+  }
+
+  if (!latestAssistantMessage || latestAssistantMessage.authoredByHuman) {
+    return null;
+  }
+
+  return {
+    show: true,
+    title: "Je li sve u redu?",
+    text: "Ako je problem riješen, možemo završiti ovaj razgovor.",
+    confirmLabel: "Da, riješeno je",
+    cancelLabel: "Ne, trebam još pomoć"
+  };
 }
 
 function buildAutopilotNote({ outcome, userMessage, knowledge }) {
@@ -253,7 +402,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       stateTag: "awaiting_human",
       reason: "attachments_present",
       customerMessage:
-        "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
+        "Hvala, privitci su stigli. Pregledat ćemo ih i javiti vam se ovdje čim ih prođemo."
     };
   }
 
@@ -263,7 +412,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       stateTag: "awaiting_human",
       reason: "sensitive_or_complaint_topic",
       customerMessage:
-        "Vaš upit zahtijeva ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+        "Ovo trebamo provjeriti ručno. Javit ćemo vam se ovdje čim pregledamo upit."
     };
   }
 
@@ -273,7 +422,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       stateTag: "awaiting_human",
       reason: "insufficient_context_confidence",
       customerMessage:
-        "Trenutno nemam dovoljno sigurnih informacija za točan odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
+        "Ne želim vam dati napola točan odgovor. Pregledat ćemo upit i javiti vam se ovdje uskoro."
     };
   }
 
@@ -285,7 +434,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       stateTag: "awaiting_human",
       reason: aiDecision.reason || "ai_flagged_hard_handoff",
       customerMessage:
-        "Vaš upit zahtijeva ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+        "Ovo trebamo provjeriti ručno. Javit ćemo vam se ovdje čim pregledamo upit."
     };
   }
 
@@ -295,7 +444,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       stateTag: "awaiting_human",
       reason: aiDecision.reason || "ai_flagged_unknown",
       customerMessage:
-        "Trenutno nemam dovoljno sigurnih informacija za točan odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
+        "Ne želim vam dati napola točan odgovor. Pregledat ćemo upit i javiti vam se ovdje uskoro."
     };
   }
 
@@ -526,11 +675,13 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
         requesterId: session.requesterId,
         requesterName: session.requesterName,
         requesterEmail: session.requesterEmail,
-        conversationState: session.conversationState
+        conversationState: session.conversationState,
+        resolutionPrompt: session.resolutionPrompt || null
       },
       ticketId,
       messages: getSession(session.sessionId).messages,
-      conversationState: session.conversationState
+      conversationState: session.conversationState,
+      resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
     console.error("Failed to start webshop chat session:", {
@@ -654,16 +805,21 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     const ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
 
     if (isClosedTicketStatus(ticketSummary.status)) {
+      console.info("resolved_block", {
+        sessionId,
+        ticketId: session.ticketId,
+        status: ticketSummary.status
+      });
       return res.status(409).json({
         success: false,
-        error: "Prethodni razgovor je završen. Za novo pitanje pokrenite novi razgovor.",
-        conversationState: {
-          tone: "resolved",
-          badge: "Prethodni razgovor je završen",
-          subtitle: "Možete pregledati prethodni odgovor ili započeti novi razgovor."
-        }
-      });
-    }
+      error: "Prethodni razgovor je završen. Za novo pitanje pokrenite novi razgovor.",
+      conversationState: {
+        tone: "resolved",
+        badge: "Prethodni razgovor je završen",
+        subtitle: "Možete pregledati raniji odgovor ili otvoriti novi razgovor."
+      }
+    });
+  }
 
     const uploadedAttachments = await zendeskService.uploadAttachments(files);
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
@@ -671,13 +827,55 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     await zendeskService.addCustomerMessageToTicket(
       session.ticketId,
       session.requesterId,
-      message || "Poslan je privitak.",
+      message || "Šaljem privitak.",
       uploadTokens
     );
+
+    await syncSessionMessages(session);
+
+    if (
+      session.conversationState?.tone === "human-active" ||
+      session.conversationState?.tone === "awaiting-human"
+    ) {
+      session.resolutionPrompt = null;
+      console.info("human_pass_through", {
+        sessionId,
+        ticketId: session.ticketId,
+        tone: session.conversationState.tone
+      });
+      broadcastSessionUpdate(session);
+
+      return res.status(200).json({
+        success: true,
+        ticketId: session.ticketId,
+        messages: session.messages,
+        conversationState: session.conversationState,
+        resolutionPrompt: null
+      });
+    }
+
+    if (getResolutionPrompt(session, ticketSummary)) {
+      broadcastSessionUpdate(session);
+
+      return res.status(200).json({
+        success: true,
+        ticketId: session.ticketId,
+        messages: session.messages,
+        conversationState: session.conversationState,
+        resolutionPrompt: session.resolutionPrompt || null
+      });
+    }
 
     const knowledge = await zendeskService.searchHelpCenterDetailed(message);
     const outcome = await determineChatOutcome(message, knowledge, {
       hasAttachments: files.length > 0
+    });
+
+    console.info("ai_autopilot", {
+      sessionId,
+      ticketId: session.ticketId,
+      outcome: outcome.type,
+      stateTag: outcome.stateTag
     });
 
     if (files.length > 0) {
@@ -699,7 +897,7 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     await zendeskService.addBotReplyToTicket(session.ticketId, outcome.customerMessage);
     await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
       outcome,
-      userMessage: message || "Poslan je privitak.",
+      userMessage: message || "Šaljem privitak.",
       knowledge
     }));
     await syncSessionMessages(session);
@@ -709,7 +907,8 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       success: true,
       ticketId: session.ticketId,
       messages: session.messages,
-      conversationState: session.conversationState
+      conversationState: session.conversationState,
+      resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
     console.error("Failed to continue webshop chat session:", {
@@ -722,6 +921,92 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     return res.status(500).json({
       success: false,
       error: "Unable to continue webshop chat session."
+    });
+  }
+});
+
+app.post("/api/chat/resolve", async (req, res) => {
+  const { sessionId, confirmed } = req.body || {};
+  const session = getSession(sessionId);
+
+  if (!sessionId || !session) {
+    return res.status(404).json({
+      success: false,
+      error: "Chat session not found."
+    });
+  }
+
+  try {
+    const ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+
+    if (isClosedTicketStatus(ticketSummary.status)) {
+      await syncSessionMessages(session);
+
+      return res.status(200).json({
+        success: true,
+        action: "ticket_already_resolved",
+        session,
+        conversationState: session.conversationState,
+        resolutionPrompt: null
+      });
+    }
+
+    await syncSessionMessages(session);
+
+    if (!confirmed) {
+      session.resolutionPrompt = null;
+
+      return res.status(200).json({
+        success: true,
+        action: "resolution_cancelled",
+        session,
+        conversationState: session.conversationState,
+        resolutionPrompt: null
+      });
+    }
+
+    const freshTicketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    const resolutionPrompt = getResolutionPrompt(session, freshTicketSummary);
+
+    if (!resolutionPrompt) {
+      session.resolutionPrompt = null;
+
+      return res.status(200).json({
+        success: true,
+        action: "resolution_not_available",
+        session,
+        conversationState: session.conversationState,
+        resolutionPrompt: null
+      });
+    }
+
+    await zendeskService.solveTicket(session.ticketId, {
+      commentBody: "Drago mi je da smo pomogli. Ako vam zatreba još nešto, slobodno otvorite novi razgovor.",
+      additionalTags: ["resolved", "resolved_by_customer_confirmation"]
+    });
+
+    await syncSessionMessages(session);
+    session.resolutionPrompt = null;
+    broadcastSessionUpdate(session);
+
+    return res.status(200).json({
+      success: true,
+      action: "ticket_solved",
+      session,
+      conversationState: session.conversationState,
+      resolutionPrompt: null
+    });
+  } catch (error) {
+    console.error("Failed to resolve webshop chat session:", {
+      sessionId,
+      ticketId: session.ticketId,
+      message: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to resolve webshop chat session."
     });
   }
 });
