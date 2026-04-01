@@ -1,7 +1,4 @@
 node_modules/
-client/node_modules/
-client/dist/
-client/*.tsbuildinfo
 .env
 .DS_Store
 ._*

@@ -1,6 +1,5 @@
 require("dotenv").config();
 
-const fs = require("fs");
 const path = require("path");
 const { randomUUID } = require("crypto");
 const express = require("express");
@@ -10,7 +9,6 @@ const aiService = require("./services/aiService");
 
 const app = express();
 const chatSessions = new Map();
-const clientDistPath = path.join(__dirname, "client", "dist");
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -24,10 +22,6 @@ console.log("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
 // Parse incoming JSON bodies from Zendesk webhooks.
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
-
-if (fs.existsSync(clientDistPath)) {
-  app.use("/widget", express.static(clientDistPath));
-}
 
 /**
  * Small helper that normalizes truthy values Zendesk might send.
@@ -440,14 +434,6 @@ app.get("/health", (req, res) => {
     success: true,
     status: "ok"
   });
-});
-
-app.get("/widget", (req, res, next) => {
-  if (!fs.existsSync(path.join(clientDistPath, "index.html"))) {
-    return next();
-  }
-
-  return res.sendFile(path.join(clientDistPath, "index.html"));
 });
 
 app.get("/chat", (req, res) => {
