@@ -361,15 +361,15 @@ export default function App() {
     <div className="fixed inset-0 pointer-events-none">
       <div className="pointer-events-auto fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4">
         {isOpen ? (
-          <Card className="h-[720px] w-[420px] overflow-hidden rounded-[30px] border-white/60 bg-card/95 backdrop-blur-xl max-md:h-[100dvh] max-md:w-screen max-md:rounded-none">
+          <Card className="h-[720px] w-[420px] overflow-hidden rounded-[30px] border-white/70 bg-[rgba(255,253,250,0.96)] backdrop-blur-xl max-md:h-[100dvh] max-md:w-screen max-md:rounded-none">
             <CardContent className="flex h-full flex-col">
-              <div className="flex items-start justify-between border-b border-border/80 px-5 py-4">
+              <div className="flex items-start justify-between border-b border-border/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,249,243,0.86))] px-5 py-4">
                 <div className="flex items-start gap-3">
                   <Avatar className="h-11 w-11 ring-4 ring-primary/10">
-                    <AvatarFallback className="bg-primary/10 text-primary">LA</AvatarFallback>
+                    <AvatarFallback className="bg-[linear-gradient(135deg,hsl(var(--primary))/0.16,rgba(255,255,255,0.95))] text-primary">LA</AvatarFallback>
                   </Avatar>
                   <div className="space-y-1">
-                    <Badge className="w-fit bg-primary/10 text-primary hover:bg-primary/10">
+                    <Badge className="w-fit border-transparent bg-primary/10 text-primary hover:bg-primary/10">
                       ANTIKVARIJAT LIBAR
                     </Badge>
                     <div className="space-y-0.5">
@@ -377,7 +377,7 @@ export default function App() {
                         Razgovor s podrškom
                       </h1>
                       <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                        <Circle className="h-2.5 w-2.5 fill-emerald-500 text-emerald-500" />
+                        <Circle className="h-2.5 w-2.5 fill-primary text-primary" />
                         Agent dostupan sada
                       </div>
                     </div>
@@ -394,7 +394,7 @@ export default function App() {
                   <p className="text-sm font-medium text-foreground">Pitaj za knjige, otkup ili narudžbu</p>
                   <p className="text-xs text-muted-foreground">Odgovor odmah u chatu, agent se može uključiti u razgovor.</p>
                 </div>
-                <Badge variant="secondary">{launcherBadge}</Badge>
+                <Badge variant="secondary" className="bg-white/70">{launcherBadge}</Badge>
               </div>
 
               <Separator />
@@ -412,11 +412,11 @@ export default function App() {
                       <div
                         className={cn(
                           "max-w-[85%] rounded-[24px] px-4 py-3 shadow-soft",
-                          message.role === "user" && "rounded-br-md bg-primary text-primary-foreground",
+                          message.role === "user" && "rounded-br-md bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(20_92%_50%))] text-primary-foreground",
                           message.role === "assistant" &&
-                            "rounded-bl-md border border-border/60 bg-secondary text-secondary-foreground",
+                            "rounded-bl-md border border-border/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(247,241,233,0.95))] text-secondary-foreground",
                           message.role === "system" &&
-                            "max-w-[92%] rounded-full border border-border/80 bg-background px-3 py-2 text-center text-sm text-muted-foreground shadow-none"
+                            "max-w-[92%] rounded-full border border-border/80 bg-white/80 px-3 py-2 text-center text-sm text-muted-foreground shadow-none"
                         )}
                       >
                         <p className="whitespace-pre-wrap text-[15px] leading-6">{message.content}</p>
@@ -466,7 +466,7 @@ export default function App() {
 
                   {typing ? (
                     <div className="flex justify-start">
-                      <div className="rounded-full border border-border bg-secondary px-4 py-3 text-sm text-muted-foreground shadow-soft">
+                      <div className="rounded-full border border-border bg-white/85 px-4 py-3 text-sm text-muted-foreground shadow-soft">
                         <span className="inline-flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Agent tipka...
@@ -485,7 +485,7 @@ export default function App() {
                     {queuedFiles.map((file, index) => (
                       <div
                         key={`${file.name}-${index}`}
-                        className="flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-sm"
+                        className="flex items-center gap-2 rounded-full border border-border bg-white/85 px-3 py-1.5 text-sm shadow-soft"
                       >
                         {attachmentIcon(file.type)}
                         <span className="max-w-[180px] truncate">{file.name}</span>
@@ -503,7 +503,7 @@ export default function App() {
                   </div>
                 ) : null}
 
-                <form onSubmit={handleSubmit} className="rounded-[28px] border border-border bg-muted/70 p-3">
+                <form onSubmit={handleSubmit} className="rounded-[28px] border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,242,233,0.9))] p-3 shadow-soft">
                   <Textarea
                     value={composer}
                     onChange={(event) => setComposer(event.target.value)}
@@ -526,6 +526,7 @@ export default function App() {
                         variant="secondary"
                         size="icon"
                         onClick={() => fileInputRef.current?.click()}
+                        className="bg-white/80"
                       >
                         <Paperclip className="h-4 w-4" />
                       </Button>
@@ -534,6 +535,7 @@ export default function App() {
                         variant="ghost"
                         size="icon"
                         onClick={() => fileInputRef.current?.click()}
+                        className="hover:bg-white/80"
                       >
                         <Plus className="h-4 w-4" />
                       </Button>
@@ -553,9 +555,9 @@ export default function App() {
         <Button
           size="default"
           onClick={() => setIsOpen((current) => !current)}
-          className="rounded-full px-5 shadow-widget"
+          className="rounded-full border border-white/50 bg-[linear-gradient(135deg,hsl(var(--primary)),hsl(20_92%_52%))] px-5 text-primary-foreground shadow-[0_18px_42px_rgba(244,130,32,0.24)] transition-transform duration-200 ease-out hover:bg-[linear-gradient(135deg,hsl(23_90%_51%),hsl(20_92%_48%))] hover:text-primary-foreground hover:shadow-[0_20px_46px_rgba(244,130,32,0.28)] hover:-translate-y-[1px] active:translate-y-0"
         >
-          <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
+          <span className="inline-flex h-2.5 w-2.5 rounded-full bg-white/80" />
           <MessageCircleMore className="h-4 w-4" />
           Pitaj Libar
         </Button>

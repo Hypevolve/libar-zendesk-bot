@@ -442,16 +442,16 @@ app.get("/health", (req, res) => {
   });
 });
 
-app.get("/chat", (req, res) => {
-  return res.sendFile(path.join(__dirname, "public", "chat.html"));
-});
-
 app.get("/widget", (req, res, next) => {
   if (!fs.existsSync(path.join(clientDistPath, "index.html"))) {
     return next();
   }
 
   return res.sendFile(path.join(clientDistPath, "index.html"));
+});
+
+app.get("/chat", (req, res) => {
+  return res.sendFile(path.join(__dirname, "public", "chat.html"));
 });
 
 app.get("/debug/zendesk/:ticketId", async (req, res) => {

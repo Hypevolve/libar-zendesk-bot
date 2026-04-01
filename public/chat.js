@@ -8,8 +8,12 @@ const messageForm = document.getElementById("message-form");
 const messagesEl = document.getElementById("messages");
 const errorBox = document.getElementById("error-box");
 const messageInput = document.getElementById("message-input");
+const fileInput = document.getElementById("file-input");
+const imageInput = document.getElementById("image-input");
+const filesIndicator = document.getElementById("pending-files-indicator");
 let pollTimer = null;
 let lastRenderedSignature = "";
+let pendingFiles = [];
 
 const onboarding = {
   stage: "initial",
@@ -214,18 +218,31 @@ function isValidEmail(value) {
 }
 
 async function startZendeskChat() {
-  const payload = {
-    name: onboarding.draft.name,
-    email: onboarding.draft.email,
-    message: onboarding.draft.firstMessage
-  };
+  const isForm = pendingFiles.length > 0;
+  let body;
+  let headers = {};
+
+  if (isForm) {
+    body = new FormData();
+    body.append("name", onboarding.draft.name);
+    body.append("email", onboarding.draft.email);
+    body.append("message", onboarding.draft.firstMessage);
+    for (const file of pendingFiles) {
+      body.append("attachments", file);
+    }
+  } else {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify({
+      name: onboarding.draft.name,
+      email: onboarding.draft.email,
+      message: onboarding.draft.firstMessage
+    });
+  }
 
   const response = await fetch("/api/chat/start", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
+    headers,
+    body
   });
 
   const data = await response.json();
@@ -234,6 +251,8 @@ async function startZendeskChat() {
     throw new Error(data.error || "Pokretanje chata nije uspjelo.");
   }
 
+  pendingFiles = [];
+  renderPendingFiles();
   localStorage.setItem(storageKey, data.sessionId);
   clearOnboardingState();
   onboarding.stage = "connected";
@@ -325,6 +344,60 @@ launcher.addEventListener("click", () => {
 
 closeButton.addEventListener("click", hideWidget);
 
+function collectPendingFiles(inputEl) {
+  if (!inputEl || !inputEl.files) {
+    return;
+  }
+
+  for (const file of inputEl.files) {
+    pendingFiles.push(file);
+  }
+
+  inputEl.value = "";
+  renderPendingFiles();
+}
+
+function renderPendingFiles() {
+  if (!filesIndicator) return;
+
+  if (pendingFiles.length === 0) {
+    filesIndicator.classList.add("hidden");
+    filesIndicator.textContent = "";
+    return;
+  }
+
+  filesIndicator.classList.remove("hidden");
+  filesIndicator.textContent = `${pendingFiles.length} file${pendingFiles.length > 1 ? "s" : ""}`;
+  
+  // Localize for Libar
+  if (pendingFiles.length === 1) {
+    filesIndicator.textContent = "1 datoteka";
+  } else if (pendingFiles.length < 5) {
+    filesIndicator.textContent = `${pendingFiles.length} datoteke`;
+  } else {
+    filesIndicator.textContent = `${pendingFiles.length} datoteka`;
+  }
+}
+
+if (fileInput) {
+  fileInput.addEventListener("change", () => {
+    collectPendingFiles(fileInput);
+  });
+}
+
+if (imageInput) {
+  imageInput.addEventListener("change", () => {
+    collectPendingFiles(imageInput);
+  });
+}
+
+messageInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    messageForm.requestSubmit();
+  }
+});
+
 messageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError();
@@ -332,29 +405,40 @@ messageForm.addEventListener("submit", async (event) => {
   const sessionId = localStorage.getItem(storageKey);
   const message = messageInput.value.trim();
 
-  if (!message) {
+  if (!message && pendingFiles.length === 0) {
     return;
   }
 
-  pushMessage("user", message);
+  if (message) {
+    pushMessage("user", message);
+  }
+
   messageInput.value = "";
   messageInput.style.height = "auto";
 
   if (!sessionId) {
-    await handleOnboardingMessage(message);
+    if (message) {
+      await handleOnboardingMessage(message);
+    }
+    // Do NOT clear pendingFiles here anymore! They need to persist until startZendeskChat
     return;
   }
 
   try {
+    const formData = new FormData();
+    formData.append("sessionId", sessionId);
+    formData.append("message", message);
+
+    for (const file of pendingFiles) {
+      formData.append("attachments", file);
+    }
+
+    pendingFiles = [];
+    renderPendingFiles();
+
     const response = await fetch("/api/chat/message", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        sessionId,
-        message
-      })
+      body: formData
     });
 
     const data = await response.json();
