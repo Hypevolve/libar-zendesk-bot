@@ -30,7 +30,8 @@ const onboarding = {
     name: "",
     email: ""
   },
-  messages: []
+  messages: [],
+  preludeMessages: []
 };
 
 function showWidget() {
@@ -72,6 +73,64 @@ function createMessage(role, content, createdAt = new Date().toISOString()) {
     createdAt,
     attachments: []
   };
+}
+
+function normalizeMessageContent(content) {
+  return String(content || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getMessageMatchKey(message) {
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+
+  return [
+    message?.role || "",
+    normalizeMessageContent(message?.content),
+    attachments
+      .map((attachment) => `${attachment.name || ""}:${attachment.size || ""}`)
+      .join(",")
+  ].join("|");
+}
+
+function mergePreludeWithSessionMessages(preludeMessages, sessionMessages) {
+  if (!Array.isArray(preludeMessages) || preludeMessages.length === 0) {
+    return Array.isArray(sessionMessages) ? sessionMessages : [];
+  }
+
+  const mergedMessages = [...preludeMessages];
+  const existingKeys = new Set(
+    preludeMessages
+      .filter((message) => message.role !== "system")
+      .map((message) => getMessageMatchKey(message))
+  );
+
+  for (const message of Array.isArray(sessionMessages) ? sessionMessages : []) {
+    const matchKey = getMessageMatchKey(message);
+
+    if (message.role !== "system" && existingKeys.has(matchKey)) {
+      continue;
+    }
+
+    mergedMessages.push(message);
+
+    if (message.role !== "system") {
+      existingKeys.add(matchKey);
+    }
+  }
+
+  return mergedMessages;
+}
+
+function applySessionMessages(sessionMessages) {
+  const visibleMessages = mergePreludeWithSessionMessages(
+    onboarding.preludeMessages,
+    sessionMessages
+  );
+
+  onboarding.messages = visibleMessages;
+  updateMessages(visibleMessages);
 }
 
 function formatFileSize(size) {
@@ -352,7 +411,7 @@ function updateMessages(messages) {
 }
 
 function startPolling() {
-  if (pollTimer || streamSource || !localStorage.getItem(storageKey)) {
+  if (pollTimer || !localStorage.getItem(storageKey)) {
     return;
   }
 
@@ -374,7 +433,7 @@ function startPolling() {
 
       onboarding.stage = "connected";
       applyConversationState(data.session);
-      updateMessages(data.session.messages);
+      applySessionMessages(data.session.messages);
     } catch (error) {
       showError(error.message);
     }
@@ -398,7 +457,7 @@ function startStream(sessionId) {
       const data = JSON.parse(event.data);
       onboarding.stage = "connected";
       applyConversationState(data.session);
-      updateMessages(data.session.messages);
+      applySessionMessages(data.session.messages);
     } catch (error) {
       console.error("Failed to parse SSE update:", error);
     }
@@ -451,6 +510,7 @@ function isValidEmail(value) {
 }
 
 async function startZendeskChat() {
+  const preludeMessages = onboarding.messages.slice();
   const isForm = pendingFiles.length > 0;
   let body;
   let headers = {};
@@ -488,12 +548,13 @@ async function startZendeskChat() {
   renderPendingFiles();
   localStorage.setItem(storageKey, data.sessionId);
   saveSessionSnapshot(data.session);
+  onboarding.preludeMessages = preludeMessages;
   clearOnboardingState();
   onboarding.stage = "connected";
   if (data.session) {
     applyConversationState(data.session);
   }
-  updateMessages(data.messages);
+  applySessionMessages(data.messages);
   closeStream();
   stopPolling();
   startStream(data.sessionId);
@@ -566,7 +627,7 @@ async function loadExistingSession() {
     });
     onboarding.stage = "connected";
     applyConversationState(restoreData.session);
-    updateMessages(restoreData.session.messages);
+    applySessionMessages(restoreData.session.messages);
     closeStream();
     stopPolling();
     startStream(restoreData.session.sessionId);
@@ -582,7 +643,7 @@ async function loadExistingSession() {
       if (response.ok) {
         onboarding.stage = "connected";
         applyConversationState(data.session);
-        updateMessages(data.session.messages);
+        applySessionMessages(data.session.messages);
         closeStream();
         stopPolling();
         startStream(sessionId);
