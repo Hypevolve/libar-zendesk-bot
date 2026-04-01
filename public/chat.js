@@ -17,6 +17,7 @@ const imageInput = document.getElementById("image-input");
 const filesIndicator = document.getElementById("pending-files-indicator");
 const pendingFilesList = document.getElementById("pending-files-list");
 let pollTimer = null;
+let streamSource = null;
 let lastRenderedSignature = "";
 let pendingFiles = [];
 let unreadCount = 0;
@@ -133,6 +134,19 @@ function setUnreadCount(count) {
   launcherBadge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
 }
 
+function closeStream() {
+  if (!streamSource) {
+    return;
+  }
+
+  streamSource.close();
+  streamSource = null;
+}
+
+function isImageAttachment(attachment) {
+  return String(attachment?.contentType || attachment?.type || "").startsWith("image/");
+}
+
 function renderMessages(messages) {
   messagesEl.innerHTML = "";
 
@@ -179,10 +193,20 @@ function createMessageElement(message) {
         attachmentEl.rel = "noopener noreferrer";
       }
 
-      const icon = document.createElement("div");
-      icon.className = "message-attachment__icon";
-      icon.innerHTML =
-        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9.5 14.5 12 12l2.5 2.5"/></svg>';
+      let icon;
+
+      if (isImageAttachment(attachment) && attachment.url) {
+        icon = document.createElement("img");
+        icon.className = "message-attachment__thumb";
+        icon.src = attachment.url;
+        icon.alt = attachment.name || "Slika";
+        icon.loading = "lazy";
+      } else {
+        icon = document.createElement("div");
+        icon.className = "message-attachment__icon";
+        icon.innerHTML =
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9.5 14.5 12 12l2.5 2.5"/></svg>';
+      }
 
       const meta = document.createElement("div");
       meta.className = "message-attachment__meta";
@@ -328,7 +352,7 @@ function updateMessages(messages) {
 }
 
 function startPolling() {
-  if (pollTimer || !localStorage.getItem(storageKey)) {
+  if (pollTimer || streamSource || !localStorage.getItem(storageKey)) {
     return;
   }
 
@@ -355,6 +379,35 @@ function startPolling() {
       showError(error.message);
     }
   }, 4000);
+}
+
+function startStream(sessionId) {
+  if (!sessionId || streamSource) {
+    return;
+  }
+
+  try {
+    streamSource = new EventSource(`/api/chat/stream/${sessionId}`);
+  } catch (error) {
+    startPolling();
+    return;
+  }
+
+  streamSource.addEventListener("session_update", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onboarding.stage = "connected";
+      applyConversationState(data.session);
+      updateMessages(data.session.messages);
+    } catch (error) {
+      console.error("Failed to parse SSE update:", error);
+    }
+  });
+
+  streamSource.onerror = () => {
+    closeStream();
+    startPolling();
+  };
 }
 
 function stopPolling() {
@@ -441,6 +494,9 @@ async function startZendeskChat() {
     applyConversationState(data.session);
   }
   updateMessages(data.messages);
+  closeStream();
+  stopPolling();
+  startStream(data.sessionId);
   startPolling();
 }
 
@@ -511,6 +567,9 @@ async function loadExistingSession() {
     onboarding.stage = "connected";
     applyConversationState(restoreData.session);
     updateMessages(restoreData.session.messages);
+    closeStream();
+    stopPolling();
+    startStream(restoreData.session.sessionId);
     startPolling();
     return true;
   }
@@ -524,6 +583,9 @@ async function loadExistingSession() {
         onboarding.stage = "connected";
         applyConversationState(data.session);
         updateMessages(data.session.messages);
+        closeStream();
+        stopPolling();
+        startStream(sessionId);
         startPolling();
         return;
       }
@@ -636,6 +698,15 @@ function renderPendingFiles() {
 
     meta.appendChild(name);
     meta.appendChild(size);
+
+    if (file.type && file.type.startsWith("image/")) {
+      const preview = document.createElement("img");
+      preview.className = "pending-file__thumb";
+      preview.src = URL.createObjectURL(file);
+      preview.alt = file.name;
+      preview.loading = "lazy";
+      item.appendChild(preview);
+    }
 
     const removeButton = document.createElement("button");
     removeButton.type = "button";
@@ -751,6 +822,10 @@ messageForm.addEventListener("submit", async (event) => {
 
     if (!response.ok) {
       throw new Error(data.error || "Slanje poruke nije uspjelo.");
+    }
+
+    if (data.conversationState) {
+      applyConversationState({ conversationState: data.conversationState });
     }
 
     updateMessages(data.messages);

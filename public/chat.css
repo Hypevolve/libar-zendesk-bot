@@ -350,6 +350,11 @@ textarea:focus {
   border-color: rgba(240, 100, 49, 0.18);
 }
 
+.chat-widget__status[data-tone="resolved"] {
+  background: rgba(107, 88, 77, 0.08);
+  border-color: rgba(107, 88, 77, 0.14);
+}
+
 .chat-widget__status-dot {
   width: 7px;
   height: 7px;
@@ -361,6 +366,10 @@ textarea:focus {
 
 .chat-widget__status[data-tone="awaiting-human"] .chat-widget__status-dot {
   background: var(--color-primary-500);
+}
+
+.chat-widget__status[data-tone="resolved"] .chat-widget__status-dot {
+  background: var(--color-text-muted);
 }
 
 .chat-widget__status-text {
@@ -549,6 +558,17 @@ textarea:focus {
   border-radius: 10px;
   background: rgba(240, 100, 49, 0.1);
   color: var(--color-primary-700);
+}
+
+.message-attachment__thumb,
+.pending-file__thumb {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: var(--shadow-xs);
 }
 
 .message.user .message-attachment__icon {

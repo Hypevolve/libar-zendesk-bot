@@ -3,7 +3,8 @@ const axios = require("axios");
 const {
   ZENDESK_SUBDOMAIN,
   ZENDESK_EMAIL,
-  ZENDESK_API_TOKEN
+  ZENDESK_API_TOKEN,
+  ZENDESK_WEBHOOK_TOKEN
 } = process.env;
 
 const HELP_CENTER_CACHE_TTL_MS = Number(process.env.HELP_CENTER_CACHE_TTL_MS) || 5 * 60 * 1000;
@@ -93,7 +94,8 @@ function getZendeskConfigSummary() {
   return {
     baseURL: `https://${sanitizeEnvValue(ZENDESK_SUBDOMAIN)}.zendesk.com`,
     email: sanitizeEnvValue(ZENDESK_EMAIL),
-    tokenPreview: maskSecret(ZENDESK_API_TOKEN)
+    tokenPreview: maskSecret(ZENDESK_API_TOKEN),
+    webhookTokenConfigured: Boolean(sanitizeEnvValue(ZENDESK_WEBHOOK_TOKEN))
   };
 }
 
@@ -263,6 +265,11 @@ async function fetchAllHelpCenterArticles() {
  * Returns null when no article appears relevant.
  */
 async function searchHelpCenter(query) {
+  const result = await searchHelpCenterDetailed(query);
+  return result?.context || null;
+}
+
+async function searchHelpCenterDetailed(query) {
   try {
     const allArticles = await fetchAllHelpCenterArticles();
 
@@ -299,7 +306,17 @@ async function searchHelpCenter(query) {
       })
       .join("\n\n");
 
-    return context || null;
+    return {
+      context: context || null,
+      articles: uniqueRankedArticles.map(({ article, score }) => ({
+        id: article.id,
+        title: stripHtml(article.title || "Bez naslova"),
+        score,
+        body: truncateText(stripHtml(article.body || ""))
+      })),
+      topScore: uniqueRankedArticles[0]?.score || 0,
+      totalMatches: uniqueRankedArticles.length
+    };
   } catch (error) {
     console.error("Zendesk Help Center retrieval failed:", {
       message: error.message,
@@ -344,6 +361,12 @@ async function addTagAndNote(ticketId, tag, noteText) {
       tag
     });
   }
+}
+
+async function addInternalNote(ticketId, noteText, additionalTags = []) {
+  return replyToTicket(ticketId, noteText, false, {
+    additionalTags
+  });
 }
 
 /**
@@ -393,7 +416,8 @@ async function createChatTicket({
   requesterEmail,
   initialMessage,
   subject,
-  uploadTokens = []
+  uploadTokens = [],
+  externalId = null
 }) {
   try {
     validateZendeskConfig();
@@ -410,7 +434,8 @@ async function createChatTicket({
           name: requesterName,
           email: requesterEmail
         },
-        additional_tags: ["webshop_chat", "ai_chat"]
+        ...(externalId ? { external_id: externalId } : {}),
+        additional_tags: ["webshop_chat", "ai_chat", "ai_active"]
       }
     });
 
@@ -418,7 +443,8 @@ async function createChatTicket({
 
     return {
       ticketId: ticket?.id,
-      requesterId: ticket?.requester_id
+      requesterId: ticket?.requester_id,
+      externalId: ticket?.external_id || externalId || null
     };
   } catch (error) {
     console.error("Failed to create Zendesk chat ticket:", {
@@ -451,6 +477,47 @@ async function addBotReplyToTicket(ticketId, replyText) {
   return replyToTicket(ticketId, replyText, true, {
     additionalTags: ["ai_replied"]
   });
+}
+
+async function setTicketTags(ticketId, nextTags = []) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.put(`/api/v2/tickets/${ticketId}.json`, {
+      ticket: {
+        tags: nextTags
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error("Failed to set Zendesk ticket tags:", {
+      ticketId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to set ticket tags", error, { ticketId });
+  }
+}
+
+async function updateConversationState(ticketId, nextState, extraTags = []) {
+  const ticket = await getTicketSummary(ticketId);
+  const stateTags = new Set(["ai_active", "awaiting_human", "human_active", "resolved"]);
+  const nextTags = (ticket.tags || []).filter((tag) => !stateTags.has(tag));
+
+  if (nextState) {
+    nextTags.push(nextState);
+  }
+
+  for (const tag of extraTags) {
+    if (tag && !nextTags.includes(tag)) {
+      nextTags.push(tag);
+    }
+  }
+
+  return setTicketTags(ticketId, nextTags);
 }
 
 async function uploadAttachment(file) {
@@ -545,7 +612,8 @@ async function getTicketSummary(ticketId) {
       status: ticket.status || null,
       tags: Array.isArray(ticket.tags) ? ticket.tags : [],
       assigneeId: ticket.assignee_id || null,
-      requesterId: ticket.requester_id || null
+      requesterId: ticket.requester_id || null,
+      externalId: ticket.external_id || null
     };
   } catch (error) {
     console.error("Failed to fetch Zendesk ticket summary:", {
@@ -557,6 +625,16 @@ async function getTicketSummary(ticketId) {
 
     throw buildZendeskApiError("Unable to fetch ticket summary", error, { ticketId });
   }
+}
+
+function verifyWebhookToken(token = "") {
+  const configuredToken = sanitizeEnvValue(ZENDESK_WEBHOOK_TOKEN);
+
+  if (!configuredToken) {
+    return false;
+  }
+
+  return sanitizeEnvValue(token) === configuredToken;
 }
 
 async function testZendeskTicketAccess(ticketId) {
@@ -582,6 +660,7 @@ async function testZendeskTicketAccess(ticketId) {
 }
 
 module.exports = {
+  addInternalNote,
   addTagAndNote,
   addBotReplyToTicket,
   addCustomerMessageToTicket,
@@ -594,7 +673,11 @@ module.exports = {
   replyToTicket,
   scoreArticle,
   searchHelpCenter,
+  searchHelpCenterDetailed,
+  setTicketTags,
   stripHtml,
   testZendeskTicketAccess,
-  uploadAttachments
+  updateConversationState,
+  uploadAttachments,
+  verifyWebhookToken
 };

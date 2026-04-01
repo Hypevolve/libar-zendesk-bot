@@ -9,6 +9,7 @@ const aiService = require("./services/aiService");
 
 const app = express();
 const chatSessions = new Map();
+const chatStreams = new Map();
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -118,11 +119,31 @@ function mapZendeskCommentsToMessages(comments, requesterId) {
   }));
 }
 
+function getSessionsByTicketId(ticketId) {
+  const sessions = [];
+
+  for (const session of chatSessions.values()) {
+    if (Number(session.ticketId) === Number(ticketId)) {
+      sessions.push(session);
+    }
+  }
+
+  return sessions;
+}
+
 function buildConversationState(ticketSummary, messages) {
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
   const humanAgentActive = messages.some(
     (message) => message.role === "assistant" && message.authoredByHuman
   );
+
+  if (ticketSummary?.status === "solved" || ticketSummary?.status === "closed" || tags.includes("resolved")) {
+    return {
+      tone: "resolved",
+      badge: "Riješeno",
+      subtitle: "Razgovor je završen. Ako trebate još nešto, možete poslati novu poruku."
+    };
+  }
 
   if (humanAgentActive) {
     return {
@@ -164,28 +185,95 @@ async function syncSessionMessages(session) {
   return session;
 }
 
-async function generateChatReply(userMessage) {
-  const context = await zendeskService.searchHelpCenter(userMessage);
-  const aiReply = await aiService.generateReply(userMessage, context);
+function isHardHandoffMessage(message = "") {
+  const normalizedMessage = String(message).toLowerCase();
 
-  if (aiReply === "[ESKALACIJA_NEZNANJE]") {
+  return [
+    "plać",
+    "reklamacij",
+    "povrat",
+    "refund",
+    "narudžb",
+    "problem",
+    "ljut",
+    "prevara",
+    "ne radi"
+  ].some((token) => normalizedMessage.includes(token));
+}
+
+function buildAutopilotNote({ outcome, userMessage, knowledge }) {
+  const articleSummary = (knowledge?.articles || [])
+    .map((article) => `${article.title} (${article.score})`)
+    .join(", ");
+
+  return [
+    `AI outcome: ${outcome.type}`,
+    `Upit korisnika: ${userMessage}`,
+    knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
+    articleSummary ? `Korišteni članci: ${articleSummary}` : "Korišteni članci: nema",
+    outcome.reason ? `Razlog: ${outcome.reason}` : null
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function determineChatOutcome(userMessage, knowledge, { hasAttachments = false } = {}) {
+  if (hasAttachments) {
     return {
-      escalation: aiReply,
+      type: "hard_handoff",
+      stateTag: "awaiting_human",
+      reason: "attachments_present",
       customerMessage:
-        "Trenutno nemam dovoljno informacija za siguran odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
+        "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
     };
   }
 
+  if (isHardHandoffMessage(userMessage)) {
+    return {
+      type: "hard_handoff",
+      stateTag: "awaiting_human",
+      reason: "sensitive_or_complaint_topic",
+      customerMessage:
+        "Vaš upit zahtijeva ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+    };
+  }
+
+  if (!knowledge?.context || !knowledge?.topScore || knowledge.topScore < 8) {
+    return {
+      type: "soft_handoff",
+      stateTag: "awaiting_human",
+      reason: "insufficient_context_confidence",
+      customerMessage:
+        "Trenutno nemam dovoljno sigurnih informacija za točan odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
+    };
+  }
+
+  const aiReply = await aiService.generateReply(userMessage, knowledge.context);
+
   if (aiReply === "[ESKALACIJA_HITNO]") {
     return {
-      escalation: aiReply,
+      type: "hard_handoff",
+      stateTag: "awaiting_human",
+      reason: "ai_flagged_hard_handoff",
       customerMessage:
-        "Vaš upit zahtijeva brzu ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+        "Vaš upit zahtijeva ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+    };
+  }
+
+  if (aiReply === "[ESKALACIJA_NEZNANJE]") {
+    return {
+      type: "soft_handoff",
+      stateTag: "awaiting_human",
+      reason: "ai_flagged_unknown",
+      customerMessage:
+        "Trenutno nemam dovoljno sigurnih informacija za točan odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
     };
   }
 
   return {
-    escalation: null,
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "context_grounded_answer",
     customerMessage: aiReply
   };
 }
@@ -197,6 +285,45 @@ async function persistEscalation(ticketId, escalationType) {
       : "AI chat eskalacija: odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.";
 
   await zendeskService.addTagAndNote(ticketId, "ai_eskalacija", noteText);
+}
+
+function writeSseEvent(res, eventName, payload) {
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function registerChatStream(sessionId, res) {
+  const streams = chatStreams.get(sessionId) || new Set();
+  streams.add(res);
+  chatStreams.set(sessionId, streams);
+}
+
+function unregisterChatStream(sessionId, res) {
+  const streams = chatStreams.get(sessionId);
+
+  if (!streams) {
+    return;
+  }
+
+  streams.delete(res);
+
+  if (streams.size === 0) {
+    chatStreams.delete(sessionId);
+  }
+}
+
+function broadcastSessionUpdate(session) {
+  const streams = chatStreams.get(session.sessionId);
+
+  if (!streams || streams.size === 0) {
+    return;
+  }
+
+  for (const stream of streams) {
+    writeSseEvent(stream, "session_update", {
+      session
+    });
+  }
 }
 
 function getUploadedFiles(req) {
@@ -311,6 +438,7 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
   }
 
   try {
+    const initialSessionKey = randomUUID();
     const uploadedAttachments = await zendeskService.uploadAttachments(files);
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
     const { ticketId, requesterId } = await zendeskService.createChatTicket({
@@ -318,18 +446,25 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       requesterEmail: email,
       initialMessage: message,
       subject: buildChatSubject(name),
-      uploadTokens
+      uploadTokens,
+      externalId: initialSessionKey
     });
 
-    const session = createSession({
+    const session = {
+      ...createSession({
       ticketId,
       requesterId,
       requesterName: name,
       requesterEmail: email,
       messages: []
-    });
+      }),
+      externalId: initialSessionKey
+    };
 
-    let replyResult;
+    const knowledge = await zendeskService.searchHelpCenterDetailed(message);
+    const outcome = await determineChatOutcome(message, knowledge, {
+      hasAttachments: files.length > 0
+    });
 
     if (files.length > 0) {
       await zendeskService.addTagAndNote(
@@ -337,21 +472,21 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
         "hitno_slike",
         "Korisnik je poslao privitke kroz webshop chat. Potrebna ljudska provjera."
       );
-      replyResult = {
-        escalation: "[ESKALACIJA_HITNO]",
-        customerMessage:
-          "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
-      };
-    } else {
-      replyResult = await generateChatReply(message);
     }
 
-    if (replyResult.escalation) {
-      await persistEscalation(ticketId, replyResult.escalation);
+    if (outcome.type !== "safe_answer") {
+      await persistEscalation(ticketId, outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]");
     }
 
-    await zendeskService.addBotReplyToTicket(ticketId, replyResult.customerMessage);
+    await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage);
+    await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+      outcome,
+      userMessage: message,
+      knowledge
+    }));
     await syncSessionMessages(session);
+    broadcastSessionUpdate(session);
 
     return res.status(200).json({
       success: true,
@@ -361,10 +496,12 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
         ticketId: session.ticketId,
         requesterId: session.requesterId,
         requesterName: session.requesterName,
-        requesterEmail: session.requesterEmail
+        requesterEmail: session.requesterEmail,
+        conversationState: session.conversationState
       },
       ticketId,
-      messages: getSession(session.sessionId).messages
+      messages: getSession(session.sessionId).messages,
+      conversationState: session.conversationState
     });
   } catch (error) {
     console.error("Failed to start webshop chat session:", {
@@ -466,7 +603,10 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       uploadTokens
     );
 
-    let replyResult;
+    const knowledge = await zendeskService.searchHelpCenterDetailed(message);
+    const outcome = await determineChatOutcome(message, knowledge, {
+      hasAttachments: files.length > 0
+    });
 
     if (files.length > 0) {
       await zendeskService.addTagAndNote(
@@ -474,26 +614,30 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
         "hitno_slike",
         "Korisnik je poslao privitke kroz webshop chat. Potrebna ljudska provjera."
       );
-      replyResult = {
-        escalation: "[ESKALACIJA_HITNO]",
-        customerMessage:
-          "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
-      };
-    } else {
-      replyResult = await generateChatReply(message);
     }
 
-    if (replyResult.escalation) {
-      await persistEscalation(session.ticketId, replyResult.escalation);
+    if (outcome.type !== "safe_answer") {
+      await persistEscalation(
+        session.ticketId,
+        outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]"
+      );
     }
 
-    await zendeskService.addBotReplyToTicket(session.ticketId, replyResult.customerMessage);
+    await zendeskService.updateConversationState(session.ticketId, outcome.stateTag);
+    await zendeskService.addBotReplyToTicket(session.ticketId, outcome.customerMessage);
+    await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
+      outcome,
+      userMessage: message || "Poslan je privitak.",
+      knowledge
+    }));
     await syncSessionMessages(session);
+    broadcastSessionUpdate(session);
 
     return res.status(200).json({
       success: true,
       ticketId: session.ticketId,
-      messages: session.messages
+      messages: session.messages,
+      conversationState: session.conversationState
     });
   } catch (error) {
     console.error("Failed to continue webshop chat session:", {
@@ -533,6 +677,96 @@ app.get("/api/chat/session/:sessionId", (req, res) => {
         error: error.message
       })
     );
+});
+
+app.get("/api/chat/stream/:sessionId", async (req, res) => {
+  const session = getSession(req.params.sessionId);
+
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: "Chat session not found."
+    });
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive"
+  });
+
+  registerChatStream(session.sessionId, res);
+
+  await syncSessionMessages(session);
+  writeSseEvent(res, "session_update", { session });
+
+  const keepAlive = setInterval(() => {
+    res.write(": keep-alive\n\n");
+  }, 20000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    unregisterChatStream(session.sessionId, res);
+  });
+});
+
+app.post("/webhook/zendesk/events", async (req, res) => {
+  const token = req.headers["x-zendesk-webhook-token"];
+
+  if (!zendeskService.verifyWebhookToken(token)) {
+    return res.status(401).json({
+      success: false,
+      error: "Invalid Zendesk webhook token."
+    });
+  }
+
+  const ticketId = req.body?.ticket_id || req.body?.ticketId || req.body?.ticket?.id;
+
+  if (!ticketId) {
+    return res.status(400).json({
+      success: false,
+      error: "ticket_id is required."
+    });
+  }
+
+  try {
+    const sessions = getSessionsByTicketId(ticketId);
+    const ticketSummary = await zendeskService.getTicketSummary(ticketId);
+
+    if (ticketSummary.status === "solved" || ticketSummary.status === "closed") {
+      await zendeskService.updateConversationState(ticketId, "resolved");
+    }
+
+    for (const session of sessions) {
+      await syncSessionMessages(session);
+
+      if (session.conversationState?.tone === "human-active") {
+        await zendeskService.updateConversationState(ticketId, "human_active");
+      } else if (session.conversationState?.tone === "awaiting-human") {
+        await zendeskService.updateConversationState(ticketId, "awaiting_human");
+      } else if (session.conversationState?.tone === "ai-active") {
+        await zendeskService.updateConversationState(ticketId, "ai_active");
+      }
+
+      broadcastSessionUpdate(session);
+    }
+
+    return res.status(200).json({
+      success: true,
+      updatedSessions: sessions.length
+    });
+  } catch (error) {
+    console.error("Zendesk event webhook failed:", {
+      ticketId,
+      message: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to process Zendesk event webhook."
+    });
+  }
 });
 
 // Basic health endpoint for local checks and deployment probes.
