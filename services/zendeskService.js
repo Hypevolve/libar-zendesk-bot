@@ -334,7 +334,7 @@ async function addTagAndNote(ticketId, tag, noteText) {
  * The default use case here is internal notes (shadow mode), but the function
  * also supports public replies by flipping isPublic to true if needed later.
  */
-async function replyToTicket(ticketId, replyText, isPublic = false) {
+async function replyToTicket(ticketId, replyText, isPublic = false, options = {}) {
   try {
     validateZendeskConfig();
 
@@ -342,8 +342,11 @@ async function replyToTicket(ticketId, replyText, isPublic = false) {
       ticket: {
         comment: {
           public: isPublic,
-          body: replyText
-        }
+          body: replyText,
+          ...(options.authorId ? { author_id: options.authorId } : {}),
+          ...(options.uploadTokens?.length ? { uploads: options.uploadTokens } : {})
+        },
+        ...(options.additionalTags?.length ? { additional_tags: options.additionalTags } : {})
       }
     });
 
@@ -361,6 +364,155 @@ async function replyToTicket(ticketId, replyText, isPublic = false) {
       ticketId,
       isPublic
     });
+  }
+}
+
+/**
+ * Create a customer-facing Zendesk ticket that will act as the backing store
+ * for a webshop chat conversation.
+ */
+async function createChatTicket({
+  requesterName,
+  requesterEmail,
+  initialMessage,
+  subject,
+  uploadTokens = []
+}) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.post("/api/v2/tickets.json", {
+      ticket: {
+        subject: subject || "Webshop chat conversation",
+        comment: {
+          public: true,
+          body: initialMessage,
+          ...(uploadTokens.length ? { uploads: uploadTokens } : {})
+        },
+        requester: {
+          name: requesterName,
+          email: requesterEmail
+        },
+        additional_tags: ["webshop_chat", "ai_chat"]
+      }
+    });
+
+    const ticket = response.data?.ticket;
+
+    return {
+      ticketId: ticket?.id,
+      requesterId: ticket?.requester_id
+    };
+  } catch (error) {
+    console.error("Failed to create Zendesk chat ticket:", {
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to create webshop chat ticket", error);
+  }
+}
+
+/**
+ * Persist a customer message into the Zendesk ticket as a public comment.
+ * The author is explicitly set to the requester so agents can see the flow
+ * as an actual conversation instead of bot-authored notes only.
+ */
+async function addCustomerMessageToTicket(ticketId, requesterId, messageText, uploadTokens = []) {
+  return replyToTicket(ticketId, messageText, true, {
+    authorId: requesterId,
+    uploadTokens
+  });
+}
+
+/**
+ * Persist an AI response into the Zendesk ticket as a public comment authored
+ * by the API agent account.
+ */
+async function addBotReplyToTicket(ticketId, replyText) {
+  return replyToTicket(ticketId, replyText, true, {
+    additionalTags: ["ai_replied"]
+  });
+}
+
+async function uploadAttachment(file) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.post("/api/v2/uploads.json", file.buffer, {
+      params: {
+        filename: file.originalname
+      },
+      headers: {
+        "Content-Type": file.mimetype || "application/octet-stream"
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+
+    const upload = response.data?.upload;
+
+    return {
+      token: upload?.token,
+      attachment: {
+        id: upload?.attachment?.id || file.originalname,
+        name: upload?.attachment?.file_name || file.originalname,
+        contentType: upload?.attachment?.content_type || file.mimetype,
+        size: upload?.attachment?.size || file.size,
+        url: upload?.attachment?.content_url || null
+      }
+    };
+  } catch (error) {
+    console.error("Failed to upload attachment to Zendesk:", {
+      filename: file.originalname,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to upload attachment", error, {
+      filename: file.originalname
+    });
+  }
+}
+
+async function uploadAttachments(files = []) {
+  const results = [];
+
+  for (const file of files) {
+    results.push(await uploadAttachment(file));
+  }
+
+  return results;
+}
+
+/**
+ * Fetch the public ticket conversation so the webshop widget can stay in sync
+ * with agent replies entered directly in Zendesk.
+ */
+async function getPublicTicketComments(ticketId) {
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.get(`/api/v2/tickets/${ticketId}/comments.json`, {
+      params: {
+        sort: "created_at"
+      }
+    });
+
+    const comments = Array.isArray(response.data?.comments) ? response.data.comments : [];
+
+    return comments.filter((comment) => comment.public !== false);
+  } catch (error) {
+    console.error("Failed to fetch Zendesk ticket comments:", {
+      ticketId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    throw buildZendeskApiError("Unable to fetch ticket comments", error, { ticketId });
   }
 }
 
@@ -388,12 +540,17 @@ async function testZendeskTicketAccess(ticketId) {
 
 module.exports = {
   addTagAndNote,
+  addBotReplyToTicket,
+  addCustomerMessageToTicket,
+  createChatTicket,
   fetchAllHelpCenterArticles,
   getZendeskConfigSummary,
+  getPublicTicketComments,
   normalizeText,
   replyToTicket,
   scoreArticle,
   searchHelpCenter,
   stripHtml,
-  testZendeskTicketAccess
+  testZendeskTicketAccess,
+  uploadAttachments
 };

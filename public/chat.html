@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="hr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Antikvarijat Libar Chat</title>
+    <link rel="stylesheet" href="/chat.css" />
+  </head>
+  <body>
+    <div class="widget-backdrop"></div>
+
+    <button id="chat-launcher" class="chat-launcher" type="button" aria-expanded="false">
+      <span class="chat-launcher__pulse"></span>
+      <span class="chat-launcher__icon">💬</span>
+      <span class="chat-launcher__label">Pitaj Libar</span>
+    </button>
+
+    <aside id="chat-widget" class="chat-widget hidden" aria-hidden="true">
+      <header class="chat-widget__header">
+        <div class="chat-widget__header-copy">
+          <p class="chat-widget__eyebrow">Antikvarijat Libar</p>
+          <h1>Online pomoć pri kupnji</h1>
+          <div class="chat-widget__presence">
+            <span class="chat-widget__presence-dot"></span>
+            <span>Agent je aktivan</span>
+          </div>
+        </div>
+
+        <button id="chat-close" class="chat-widget__close" type="button" aria-label="Zatvori chat">
+          ×
+        </button>
+      </header>
+
+      <section id="chat-wrap" class="chat-wrap">
+        <div class="chat-wrap__topline">
+          <div class="chat-wrap__agent">
+            <span class="chat-wrap__agent-dot"></span>
+            <p>Agent podrške</p>
+          </div>
+          <span>Odgovara uskoro</span>
+        </div>
+
+        <div id="messages" class="messages"></div>
+
+        <form id="message-form" class="message-form">
+          <textarea
+            id="message-input"
+            rows="1"
+            placeholder="Napišite poruku..."
+            required
+          ></textarea>
+          <button type="submit">Pošalji</button>
+        </form>
+      </section>
+
+      <p id="error-box" class="error-box hidden"></p>
+    </aside>
+
+    <script src="/chat.js"></script>
+  </body>
+</html>

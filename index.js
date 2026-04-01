@@ -1,15 +1,33 @@
 require("dotenv").config();
 
+const fs = require("fs");
+const path = require("path");
+const { randomUUID } = require("crypto");
 const express = require("express");
+const multer = require("multer");
 const zendeskService = require("./services/zendeskService");
 const aiService = require("./services/aiService");
 
 const app = express();
+const chatSessions = new Map();
+const clientDistPath = path.join(__dirname, "client", "dist");
+const chatUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 5
+  }
+});
 
 console.log("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
 
 // Parse incoming JSON bodies from Zendesk webhooks.
 app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
+
+if (fs.existsSync(clientDistPath)) {
+  app.use("/widget", express.static(clientDistPath));
+}
 
 /**
  * Small helper that normalizes truthy values Zendesk might send.
@@ -30,6 +48,122 @@ function toBoolean(value) {
   }
 
   return false;
+}
+
+function buildChatSubject(requesterName) {
+  if (!requesterName) {
+    return "Webshop chat conversation";
+  }
+
+  return `Webshop chat - ${String(requesterName).trim()}`;
+}
+
+function getSession(sessionId) {
+  return chatSessions.get(sessionId) || null;
+}
+
+function createSession(payload) {
+  const sessionId = randomUUID();
+  const session = {
+    sessionId,
+    ...payload,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  chatSessions.set(sessionId, session);
+  return session;
+}
+
+function appendMessageToSession(sessionId, role, content) {
+  const session = getSession(sessionId);
+
+  if (!session) {
+    return null;
+  }
+
+  session.messages.push({
+    id: randomUUID(),
+    role,
+    content,
+    createdAt: new Date().toISOString()
+  });
+  session.updatedAt = new Date().toISOString();
+
+  return session;
+}
+
+function mapZendeskCommentsToMessages(comments, requesterId) {
+  return comments.map((comment) => ({
+    id: String(comment.id),
+    role: Number(comment.author_id) === Number(requesterId) ? "user" : "assistant",
+    content: comment.plain_body || comment.body || "",
+    createdAt: comment.created_at,
+    attachments: Array.isArray(comment.attachments)
+      ? comment.attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.file_name,
+          contentType: attachment.content_type,
+          size: attachment.size,
+          url: attachment.content_url
+        }))
+      : []
+  }));
+}
+
+async function syncSessionMessages(session) {
+  if (!session?.ticketId || !session?.requesterId) {
+    return session;
+  }
+
+  const comments = await zendeskService.getPublicTicketComments(session.ticketId);
+  session.messages = mapZendeskCommentsToMessages(comments, session.requesterId);
+  session.updatedAt = new Date().toISOString();
+
+  return session;
+}
+
+async function generateChatReply(userMessage) {
+  const context = await zendeskService.searchHelpCenter(userMessage);
+  const aiReply = await aiService.generateReply(userMessage, context);
+
+  if (aiReply === "[ESKALACIJA_NEZNANJE]") {
+    return {
+      escalation: aiReply,
+      customerMessage:
+        "Trenutno nemam dovoljno informacija za siguran odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
+    };
+  }
+
+  if (aiReply === "[ESKALACIJA_HITNO]") {
+    return {
+      escalation: aiReply,
+      customerMessage:
+        "Vaš upit zahtijeva brzu ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
+    };
+  }
+
+  return {
+    escalation: null,
+    customerMessage: aiReply
+  };
+}
+
+async function persistEscalation(ticketId, escalationType) {
+  const noteText =
+    escalationType === "[ESKALACIJA_HITNO]"
+      ? "AI chat eskalacija: hitan ili osjetljiv webshop chat upit. Potrebna ljudska provjera."
+      : "AI chat eskalacija: odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.";
+
+  await zendeskService.addTagAndNote(ticketId, "ai_eskalacija", noteText);
+}
+
+function getUploadedFiles(req) {
+  return Array.isArray(req.files) ? req.files : [];
+}
+
+function normalizeMessage(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 /**
@@ -116,12 +250,208 @@ app.post("/webhook/zendesk", async (req, res) => {
   }
 });
 
+/**
+ * Start a webshop chat conversation:
+ * - create the backing Zendesk ticket
+ * - store the local session mapping
+ * - generate the first AI response
+ * - mirror both sides into Zendesk
+ */
+app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res) => {
+  const { name, email } = req.body || {};
+  const message = normalizeMessage(req.body?.message);
+  const files = getUploadedFiles(req);
+
+  if (!name || !email || !message) {
+    return res.status(400).json({
+      success: false,
+      error: "Name, email, and message are required."
+    });
+  }
+
+  try {
+    const uploadedAttachments = await zendeskService.uploadAttachments(files);
+    const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
+    const { ticketId, requesterId } = await zendeskService.createChatTicket({
+      requesterName: name,
+      requesterEmail: email,
+      initialMessage: message,
+      subject: buildChatSubject(name),
+      uploadTokens
+    });
+
+    const session = createSession({
+      ticketId,
+      requesterId,
+      requesterName: name,
+      requesterEmail: email,
+      messages: []
+    });
+
+    let replyResult;
+
+    if (files.length > 0) {
+      await zendeskService.addTagAndNote(
+        ticketId,
+        "hitno_slike",
+        "Korisnik je poslao privitke kroz webshop chat. Potrebna ljudska provjera."
+      );
+      replyResult = {
+        escalation: "[ESKALACIJA_HITNO]",
+        customerMessage:
+          "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
+      };
+    } else {
+      replyResult = await generateChatReply(message);
+    }
+
+    if (replyResult.escalation) {
+      await persistEscalation(ticketId, replyResult.escalation);
+    }
+
+    await zendeskService.addBotReplyToTicket(ticketId, replyResult.customerMessage);
+    await syncSessionMessages(session);
+
+    return res.status(200).json({
+      success: true,
+      sessionId: session.sessionId,
+      ticketId,
+      messages: getSession(session.sessionId).messages
+    });
+  } catch (error) {
+    console.error("Failed to start webshop chat session:", {
+      message: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to start webshop chat session."
+    });
+  }
+});
+
+/**
+ * Continue an existing webshop chat session.
+ */
+app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, res) => {
+  const { sessionId } = req.body || {};
+  const message = normalizeMessage(req.body?.message);
+  const files = getUploadedFiles(req);
+  const session = getSession(sessionId);
+
+  if (!sessionId || !session) {
+    return res.status(404).json({
+      success: false,
+      error: "Chat session not found."
+    });
+  }
+
+  if (!message && files.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: "A message or at least one attachment is required."
+    });
+  }
+
+  try {
+    const uploadedAttachments = await zendeskService.uploadAttachments(files);
+    const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
+
+    await zendeskService.addCustomerMessageToTicket(
+      session.ticketId,
+      session.requesterId,
+      message || "Poslan je privitak.",
+      uploadTokens
+    );
+
+    let replyResult;
+
+    if (files.length > 0) {
+      await zendeskService.addTagAndNote(
+        session.ticketId,
+        "hitno_slike",
+        "Korisnik je poslao privitke kroz webshop chat. Potrebna ljudska provjera."
+      );
+      replyResult = {
+        escalation: "[ESKALACIJA_HITNO]",
+        customerMessage:
+          "Hvala, primili smo vaše privitke. Naš tim će ih pregledati i javiti vam se uskoro."
+      };
+    } else {
+      replyResult = await generateChatReply(message);
+    }
+
+    if (replyResult.escalation) {
+      await persistEscalation(session.ticketId, replyResult.escalation);
+    }
+
+    await zendeskService.addBotReplyToTicket(session.ticketId, replyResult.customerMessage);
+    await syncSessionMessages(session);
+
+    return res.status(200).json({
+      success: true,
+      ticketId: session.ticketId,
+      messages: session.messages
+    });
+  } catch (error) {
+    console.error("Failed to continue webshop chat session:", {
+      sessionId,
+      ticketId: session.ticketId,
+      message: error.message,
+      stack: error.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Unable to continue webshop chat session."
+    });
+  }
+});
+
+app.get("/api/chat/session/:sessionId", (req, res) => {
+  const session = getSession(req.params.sessionId);
+
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      error: "Chat session not found."
+    });
+  }
+
+  return syncSessionMessages(session)
+    .then((syncedSession) =>
+      res.status(200).json({
+        success: true,
+        session: syncedSession
+      })
+    )
+    .catch((error) =>
+      res.status(500).json({
+        success: false,
+        error: error.message
+      })
+    );
+});
+
 // Basic health endpoint for local checks and deployment probes.
 app.get("/health", (req, res) => {
   res.status(200).json({
     success: true,
     status: "ok"
   });
+});
+
+app.get("/chat", (req, res) => {
+  return res.sendFile(path.join(__dirname, "public", "chat.html"));
+});
+
+app.get("/widget", (req, res, next) => {
+  if (!fs.existsSync(path.join(clientDistPath, "index.html"))) {
+    return next();
+  }
+
+  return res.sendFile(path.join(clientDistPath, "index.html"));
 });
 
 app.get("/debug/zendesk/:ticketId", async (req, res) => {
