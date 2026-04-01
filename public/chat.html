@@ -65,13 +65,23 @@
     <!-- ── Welcome Banner ── -->
     <div class="chat-widget__welcome">
       <div class="chat-widget__welcome-inner">
-        <p class="chat-widget__welcome-title">Pitajte za knjige, otkup ili narudžbu</p>
+        <p id="chat-welcome-title" class="chat-widget__welcome-title">Pitajte za knjige, otkup ili narudžbu</p>
         <p id="chat-welcome-subtitle" class="chat-widget__welcome-subtitle">Odgovor stiže odmah - agent se može uključiti u razgovor.</p>
       </div>
     </div>
 
     <!-- ── Chat Body ── -->
     <section id="chat-wrap" class="chat-wrap">
+      <div id="closed-conversation-panel" class="closed-conversation-panel hidden" aria-live="polite">
+        <div class="closed-conversation-panel__copy">
+          <p id="closed-conversation-title" class="closed-conversation-panel__title">Što želite dalje?</p>
+          <p id="closed-conversation-text" class="closed-conversation-panel__text">Možete pregledati završeni razgovor ili odmah otvoriti novi upit.</p>
+        </div>
+        <div class="closed-conversation-panel__actions">
+          <button id="review-conversation-button" class="closed-conversation-panel__button is-secondary" type="button">Pregledaj prethodni razgovor</button>
+          <button id="new-conversation-button" class="closed-conversation-panel__button is-primary" type="button">Započni novi razgovor</button>
+        </div>
+      </div>
       <div id="messages" class="messages"></div>
 
       <!-- ── Input Area ── -->

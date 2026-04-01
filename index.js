@@ -131,6 +131,14 @@ function getSessionsByTicketId(ticketId) {
   return sessions;
 }
 
+function isClosedTicketStatus(status = "") {
+  return ["solved", "closed"].includes(String(status).toLowerCase());
+}
+
+function isActiveTicketStatus(status = "") {
+  return ["new", "open", "pending", "hold"].includes(String(status).toLowerCase());
+}
+
 function buildConversationState(ticketSummary, messages) {
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
   const humanAgentActive = messages.some(
@@ -183,6 +191,27 @@ async function syncSessionMessages(session) {
   session.updatedAt = new Date().toISOString();
 
   return session;
+}
+
+function buildClosedSessionPayload({ ticketSummary, requesterName, requesterEmail, messages }) {
+  return {
+    ticket: {
+      id: ticketSummary?.id || null,
+      status: ticketSummary?.status || null,
+      tags: Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : []
+    },
+    requester: {
+      name: requesterName || "",
+      email: requesterEmail || "",
+      requesterId: ticketSummary?.requesterId || null
+    },
+    messages,
+    conversationState: {
+      tone: "resolved",
+      badge: "Prethodni razgovor je završen",
+      subtitle: "Možete pregledati prethodni odgovor ili započeti novi razgovor."
+    }
+  };
 }
 
 function isHardHandoffMessage(message = "") {
@@ -528,13 +557,39 @@ app.post("/api/chat/restore", async (req, res) => {
 
   try {
     const existingSession = findSessionByTicketId(ticketId);
+    const [comments, ticketSummary] = await Promise.all([
+      zendeskService.getPublicTicketComments(ticketId),
+      zendeskService.getTicketSummary(ticketId)
+    ]);
+    const restoredMessages = mapZendeskCommentsToMessages(comments, requesterId);
 
-    if (existingSession) {
-      await syncSessionMessages(existingSession);
+    if (isClosedTicketStatus(ticketSummary.status)) {
+      if (existingSession) {
+        chatSessions.delete(existingSession.sessionId);
+      }
 
       return res.status(200).json({
         success: true,
         restored: true,
+        mode: "closed_session",
+        ...buildClosedSessionPayload({
+          ticketSummary,
+          requesterName,
+          requesterEmail,
+          messages: restoredMessages
+        })
+      });
+    }
+
+    if (existingSession && isActiveTicketStatus(ticketSummary.status)) {
+      existingSession.messages = restoredMessages;
+      existingSession.conversationState = buildConversationState(ticketSummary, existingSession.messages);
+      existingSession.updatedAt = new Date().toISOString();
+
+      return res.status(200).json({
+        success: true,
+        restored: true,
+        mode: "active_session",
         session: existingSession
       });
     }
@@ -547,11 +602,14 @@ app.post("/api/chat/restore", async (req, res) => {
       messages: []
     });
 
-    await syncSessionMessages(session);
+    session.messages = restoredMessages;
+    session.conversationState = buildConversationState(ticketSummary, session.messages);
+    session.updatedAt = new Date().toISOString();
 
     return res.status(200).json({
       success: true,
       restored: true,
+      mode: "active_session",
       session
     });
   } catch (error) {
@@ -593,6 +651,20 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
   }
 
   try {
+    const ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+
+    if (isClosedTicketStatus(ticketSummary.status)) {
+      return res.status(409).json({
+        success: false,
+        error: "Prethodni razgovor je završen. Za novo pitanje pokrenite novi razgovor.",
+        conversationState: {
+          tone: "resolved",
+          badge: "Prethodni razgovor je završen",
+          subtitle: "Možete pregledati prethodni odgovor ili započeti novi razgovor."
+        }
+      });
+    }
+
     const uploadedAttachments = await zendeskService.uploadAttachments(files);
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
 

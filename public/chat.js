@@ -7,7 +7,13 @@ const launcherBadge = document.getElementById("chat-launcher-badge");
 const widget = document.getElementById("chat-widget");
 const closeButton = document.getElementById("chat-close");
 const chatStatusText = document.getElementById("chat-status-text");
+const welcomeTitle = document.getElementById("chat-welcome-title");
 const welcomeSubtitle = document.getElementById("chat-welcome-subtitle");
+const closedConversationPanel = document.getElementById("closed-conversation-panel");
+const closedConversationTitle = document.getElementById("closed-conversation-title");
+const closedConversationText = document.getElementById("closed-conversation-text");
+const reviewConversationButton = document.getElementById("review-conversation-button");
+const newConversationButton = document.getElementById("new-conversation-button");
 const messageForm = document.getElementById("message-form");
 const messagesEl = document.getElementById("messages");
 const errorBox = document.getElementById("error-box");
@@ -16,12 +22,14 @@ const fileInput = document.getElementById("file-input");
 const imageInput = document.getElementById("image-input");
 const filesIndicator = document.getElementById("pending-files-indicator");
 const pendingFilesList = document.getElementById("pending-files-list");
+const chatInputArea = document.querySelector(".chat-input-area");
 let pollTimer = null;
 let streamSource = null;
 let lastRenderedSignature = "";
 let pendingFiles = [];
 let unreadCount = 0;
 let typingIndicatorEl = null;
+let closedConversationState = null;
 
 const onboarding = {
   stage: "initial",
@@ -39,7 +47,10 @@ function showWidget() {
   widget.setAttribute("aria-hidden", "false");
   launcher.setAttribute("aria-expanded", "true");
   setUnreadCount(0);
-  messageInput.focus();
+
+  if (!messageInput.disabled && !chatInputArea?.classList.contains("hidden")) {
+    messageInput.focus();
+  }
 }
 
 function hideWidget() {
@@ -176,6 +187,17 @@ function clearSessionSnapshot() {
   localStorage.removeItem(sessionSnapshotKey);
 }
 
+function resetOnboardingState() {
+  onboarding.stage = "initial";
+  onboarding.draft = {
+    firstMessage: "",
+    name: "",
+    email: ""
+  };
+  onboarding.messages = [];
+  onboarding.preludeMessages = [];
+}
+
 function setUnreadCount(count) {
   unreadCount = Math.max(0, count);
 
@@ -200,6 +222,88 @@ function closeStream() {
 
   streamSource.close();
   streamSource = null;
+}
+
+function setComposerEnabled(enabled) {
+  if (chatInputArea) {
+    chatInputArea.classList.toggle("hidden", !enabled);
+  }
+
+  if (messageInput) {
+    messageInput.disabled = !enabled;
+  }
+}
+
+function hideClosedConversationPanel() {
+  closedConversationState = null;
+  closedConversationPanel?.classList.add("hidden");
+  reviewConversationButton?.classList.remove("is-active");
+}
+
+function showClosedConversationPanel(payload) {
+  closedConversationState = payload;
+  closedConversationTitle.textContent =
+    payload?.panelTitle || "Što želite dalje?";
+  closedConversationText.textContent =
+    payload?.panelText || "Možete pregledati završeni razgovor ili odmah otvoriti novi upit.";
+  closedConversationPanel?.classList.remove("hidden");
+  reviewConversationButton?.classList.add("is-active");
+  setComposerEnabled(false);
+  hideTypingIndicator();
+}
+
+function handleResolvedSession(session, messages) {
+  const existingSnapshot = getSessionSnapshot();
+  const nextSnapshot = {
+    ticketId: session?.ticketId || session?.ticket?.id || existingSnapshot?.ticketId || null,
+    requesterId:
+      session?.requesterId || session?.requester?.requesterId || existingSnapshot?.requesterId || null,
+    requesterName:
+      session?.requesterName || session?.requester?.name || existingSnapshot?.requesterName || "",
+    requesterEmail:
+      session?.requesterEmail || session?.requester?.email || existingSnapshot?.requesterEmail || ""
+  };
+
+  localStorage.removeItem(storageKey);
+  saveSessionSnapshot(nextSnapshot);
+  closeStream();
+  stopPolling();
+  applySessionMessages(messages || []);
+  showClosedConversationPanel({
+    panelTitle: "Što želite dalje?",
+    panelText: "Možete pregledati završeni razgovor ili odmah otvoriti novi upit.",
+    conversationState: {
+      tone: "resolved",
+      badge: "Prethodni razgovor je završen",
+      subtitle: "Ako imate novo pitanje, ovdje možete započeti novi razgovor."
+    }
+  });
+}
+
+function startNewConversationFlow() {
+  closeStream();
+  stopPolling();
+  hideTypingIndicator();
+  clearError();
+  localStorage.removeItem(storageKey);
+  clearSessionSnapshot();
+  clearOnboardingState();
+  resetOnboardingState();
+  hideClosedConversationPanel();
+  pendingFiles = [];
+  renderPendingFiles();
+  lastRenderedSignature = "";
+  seedWelcomeState();
+  updateMessages(onboarding.messages);
+  applyConversationState({
+    conversationState: {
+      tone: "ai-active",
+      badge: "Aktivan",
+      subtitle: "Libar Agent odgovara odmah, a po potrebi se u razgovor uključuje i naš tim."
+    }
+  });
+  setComposerEnabled(true);
+  showWidget();
 }
 
 function isImageAttachment(attachment) {
@@ -316,8 +420,16 @@ function applyConversationState(session) {
     chatStatusText.textContent = state.badge || "Aktivan";
   }
 
+  if (welcomeTitle) {
+    welcomeTitle.textContent =
+      state.tone === "resolved"
+        ? "Prethodni razgovor je završen"
+        : "Pitajte za knjige, otkup ili narudžbu";
+  }
+
   if (welcomeSubtitle) {
-    welcomeSubtitle.textContent = state.subtitle || "Odgovor stiže odmah - agent se može uključiti u razgovor.";
+    welcomeSubtitle.textContent =
+      state.subtitle || "Odgovor stiže odmah - agent se može uključiti u razgovor.";
   }
 
   const statusEl = document.querySelector(".chat-widget__status");
@@ -432,8 +544,14 @@ function startPolling() {
       }
 
       onboarding.stage = "connected";
+      hideClosedConversationPanel();
+      setComposerEnabled(true);
       applyConversationState(data.session);
       applySessionMessages(data.session.messages);
+
+      if (data.session?.conversationState?.tone === "resolved") {
+        handleResolvedSession(data.session, data.session.messages);
+      }
     } catch (error) {
       showError(error.message);
     }
@@ -456,8 +574,14 @@ function startStream(sessionId) {
     try {
       const data = JSON.parse(event.data);
       onboarding.stage = "connected";
+      hideClosedConversationPanel();
+      setComposerEnabled(true);
       applyConversationState(data.session);
       applySessionMessages(data.session.messages);
+
+      if (data.session?.conversationState?.tone === "resolved") {
+        handleResolvedSession(data.session, data.session.messages);
+      }
     } catch (error) {
       console.error("Failed to parse SSE update:", error);
     }
@@ -596,7 +720,6 @@ async function handleOnboardingMessage(message) {
 }
 
 async function loadExistingSession() {
-  const sessionId = localStorage.getItem(storageKey);
   const sessionSnapshot = getSessionSnapshot();
 
   async function restoreFromSnapshot() {
@@ -617,23 +740,54 @@ async function loadExistingSession() {
       return false;
     }
 
-    localStorage.setItem(storageKey, restoreData.session.sessionId);
-    saveSessionSnapshot({
-      sessionId: restoreData.session.sessionId,
-      ticketId: restoreData.session.ticketId,
-      requesterId: restoreData.session.requesterId,
-      requesterName: restoreData.session.requesterName,
-      requesterEmail: restoreData.session.requesterEmail
-    });
-    onboarding.stage = "connected";
-    applyConversationState(restoreData.session);
-    applySessionMessages(restoreData.session.messages);
-    closeStream();
-    stopPolling();
-    startStream(restoreData.session.sessionId);
-    startPolling();
-    return true;
+    if (restoreData.mode === "closed_session") {
+      localStorage.removeItem(storageKey);
+      clearOnboardingState();
+      saveSessionSnapshot({
+        ticketId: restoreData.ticket?.id,
+        requesterId: restoreData.requester?.requesterId,
+        requesterName: restoreData.requester?.name,
+        requesterEmail: restoreData.requester?.email
+      });
+      resetOnboardingState();
+      onboarding.stage = "closed";
+      closeStream();
+      stopPolling();
+      applyConversationState({ conversationState: restoreData.conversationState });
+      applySessionMessages(restoreData.messages || []);
+      showClosedConversationPanel(restoreData);
+      return true;
+    }
+
+    if (restoreData.mode === "active_session" && restoreData.session) {
+      localStorage.setItem(storageKey, restoreData.session.sessionId);
+      saveSessionSnapshot({
+        sessionId: restoreData.session.sessionId,
+        ticketId: restoreData.session.ticketId,
+        requesterId: restoreData.session.requesterId,
+        requesterName: restoreData.session.requesterName,
+        requesterEmail: restoreData.session.requesterEmail
+      });
+      onboarding.stage = "connected";
+      hideClosedConversationPanel();
+      setComposerEnabled(true);
+      applyConversationState(restoreData.session);
+      applySessionMessages(restoreData.session.messages);
+      closeStream();
+      stopPolling();
+      startStream(restoreData.session.sessionId);
+      startPolling();
+      return true;
+    }
+
+    return false;
   }
+
+  if (await restoreFromSnapshot()) {
+    return;
+  }
+
+  const sessionId = localStorage.getItem(storageKey);
 
   if (sessionId) {
     try {
@@ -642,8 +796,31 @@ async function loadExistingSession() {
 
       if (response.ok) {
         onboarding.stage = "connected";
+        hideClosedConversationPanel();
+        setComposerEnabled(true);
         applyConversationState(data.session);
         applySessionMessages(data.session.messages);
+
+        if (data.session?.conversationState?.tone === "resolved") {
+          localStorage.removeItem(storageKey);
+          saveSessionSnapshot({
+            ticketId: data.session.ticketId,
+            requesterId: data.session.requesterId,
+            requesterName: data.session.requesterName,
+            requesterEmail: data.session.requesterEmail
+          });
+          showClosedConversationPanel({
+            panelTitle: "Što želite dalje?",
+            panelText: "Možete pregledati završeni razgovor ili odmah otvoriti novi upit.",
+            conversationState: {
+              tone: "resolved",
+              badge: "Prethodni razgovor je završen",
+              subtitle: "Ako imate novo pitanje, ovdje možete započeti novi razgovor."
+            }
+          });
+          return;
+        }
+
         closeStream();
         stopPolling();
         startStream(sessionId);
@@ -664,10 +841,6 @@ async function loadExistingSession() {
     }
   }
 
-  if (await restoreFromSnapshot()) {
-    return;
-  }
-
   const savedOnboarding = localStorage.getItem(onboardingKey);
 
   if (savedOnboarding) {
@@ -682,6 +855,8 @@ async function loadExistingSession() {
   }
 
   seedWelcomeState();
+  hideClosedConversationPanel();
+  setComposerEnabled(true);
   updateMessages(onboarding.messages);
 }
 
@@ -695,6 +870,13 @@ launcher.addEventListener("click", () => {
 });
 
 closeButton.addEventListener("click", hideWidget);
+
+reviewConversationButton?.addEventListener("click", () => {
+  reviewConversationButton.classList.add("is-active");
+  messagesEl.scrollTop = 0;
+});
+
+newConversationButton?.addEventListener("click", startNewConversationFlow);
 
 function collectPendingFiles(inputEl) {
   if (!inputEl || !inputEl.files) {
@@ -832,6 +1014,10 @@ messageForm.addEventListener("submit", async (event) => {
   const sessionId = localStorage.getItem(storageKey);
   const message = messageInput.value.trim();
 
+  if (closedConversationState) {
+    return;
+  }
+
   if (!message && pendingFiles.length === 0) {
     return;
   }
@@ -882,6 +1068,9 @@ messageForm.addEventListener("submit", async (event) => {
     const data = await response.json();
 
     if (!response.ok) {
+      if (response.status === 409 && data.conversationState?.tone === "resolved") {
+        handleResolvedSession(data, onboarding.messages);
+      }
       throw new Error(data.error || "Slanje poruke nije uspjelo.");
     }
 
@@ -889,7 +1078,7 @@ messageForm.addEventListener("submit", async (event) => {
       applyConversationState({ conversationState: data.conversationState });
     }
 
-    updateMessages(data.messages);
+    applySessionMessages(data.messages);
     startPolling();
   } catch (error) {
     hideTypingIndicator();
