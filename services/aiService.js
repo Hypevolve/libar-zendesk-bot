@@ -39,9 +39,9 @@ function buildSystemPrompt(context) {
     "- Ako odgovor nije dovoljno sigurno podržan kontekstom, ne pokušavaj popuniti praznine.",
     "",
     "ESKALACIJSKA PRAVILA:",
-    "- Ako je korisnik ljut, žali se, spominje plaćanje, povrat novca, reklamaciju, problem s narudžbom ili drugu osjetljivu situaciju, vrati točno: [ESKALACIJA_HITNO]",
-    "- Ako odgovor nije jasno i dovoljno podržan kontekstom, vrati točno: [ESKALACIJA_NEZNANJE]",
-    "- Ako korisnik pita više stvari, a samo dio je pokriven kontekstom, odgovori samo ako možeš dati i dalje točan i koristan odgovor bez nagađanja. Inače vrati [ESKALACIJA_NEZNANJE].",
+    "- Ako je korisnik ljut, žali se, spominje plaćanje, povrat novca, reklamaciju, problem s narudžbom ili drugu osjetljivu situaciju, odluka mora biti hard_handoff.",
+    "- Ako odgovor nije jasno i dovoljno podržan kontekstom, odluka mora biti soft_handoff.",
+    "- Ako korisnik pita više stvari, a samo dio je pokriven kontekstom, odgovori samo ako možeš dati i dalje točan i koristan odgovor bez nagađanja. Inače odluka mora biti soft_handoff.",
     "",
     "POSEBNO PRAVILO ZA OTKUP:",
     "- Ako korisnik pita za procjenu, vrednovanje, cijenu otkupa ili prodaju knjiga Antikvarijatu Libar, u normalnom odgovoru obavezno spomeni bonus od 10% na otkup.",
@@ -55,18 +55,73 @@ function buildSystemPrompt(context) {
     "- Ako korisnik pita kako nešto napraviti, odgovor treba biti proceduralan i konkretan.",
     "",
     "FORMAT IZLAZA:",
-    "- Vrati isključivo gotov odgovor za korisnika na hrvatskom, ili točno [ESKALACIJA_NEZNANJE], ili točno [ESKALACIJA_HITNO].",
-    "- Bez dodatnih labela, objašnjenja ili metakomentara.",
+    "Vrati isključivo valjani JSON objekt, bez markdowna, bez code blocka i bez dodatnog teksta.",
+    "Koristi točno ovu strukturu:",
+    '{',
+    '  "decision": "safe_answer" | "soft_handoff" | "hard_handoff",',
+    '  "reply": "string",',
+    '  "reason": "string"',
+    '}',
+    'Pravila za JSON izlaz:',
+    '- Ako je decision = safe_answer, reply mora sadržavati gotov odgovor za korisnika na hrvatskom.',
+    '- Ako je decision = soft_handoff, reply mora biti prazan string.',
+    '- Ako je decision = hard_handoff, reply mora biti prazan string.',
+    '- reason mora biti kratka strojno-čitljiva oznaka na engleskom, npr. "context_supported", "insufficient_context", "complaint_or_payment".',
+    '- Nemoj vraćati ništa osim JSON objekta.',
     "",
     "KONTEKST:",
     context || "Nema pronađenog konteksta."
   ].join("\n");
 }
 
+function extractJsonObject(rawText = "") {
+  const trimmed = String(rawText).trim();
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  return trimmed.slice(firstBrace, lastBrace + 1);
+}
+
+function normalizeAiDecision(parsed) {
+  const decision = String(parsed?.decision || "").trim();
+  const reply = typeof parsed?.reply === "string" ? parsed.reply.trim() : "";
+  const reason = typeof parsed?.reason === "string" ? parsed.reason.trim() : "";
+
+  if (!["safe_answer", "soft_handoff", "hard_handoff"].includes(decision)) {
+    throw new Error("AI response used an unsupported decision.");
+  }
+
+  if (decision === "safe_answer" && !reply) {
+    throw new Error("AI safe_answer decision did not include a reply.");
+  }
+
+  return {
+    decision,
+    reply,
+    reason: reason || "unspecified"
+  };
+}
+
+function buildFallbackDecision(reason = "ai_generation_failed") {
+  return {
+    decision: "soft_handoff",
+    reply: "",
+    reason
+  };
+}
+
 /**
- * Ask OpenRouter-hosted Claude 3.5 Sonnet to either:
- * - generate a context-grounded answer, or
- * - emit one of the escalation control tokens.
+ * Ask OpenRouter-hosted model to return a structured decision object that the
+ * backend can validate safely.
  */
 async function generateReply(message, context) {
   try {
@@ -85,13 +140,19 @@ async function generateReply(message, context) {
       ]
     });
 
-    const reply = completion.choices?.[0]?.message?.content?.trim();
+    const rawContent = completion.choices?.[0]?.message?.content?.trim();
 
-    if (!reply) {
+    if (!rawContent) {
       throw new Error("AI response was empty.");
     }
 
-    return reply;
+    const jsonPayload = extractJsonObject(rawContent);
+
+    if (!jsonPayload) {
+      throw new Error("AI response did not contain valid JSON.");
+    }
+
+    return normalizeAiDecision(JSON.parse(jsonPayload));
   } catch (error) {
     console.error("AI reply generation failed:", {
       message: error.message,
@@ -99,11 +160,21 @@ async function generateReply(message, context) {
       status: error.status
     });
 
-    throw new Error("Unable to generate AI reply.");
+    if (
+      error.message === "AI response did not contain valid JSON." ||
+      error.message === "AI response used an unsupported decision." ||
+      error.message === "AI safe_answer decision did not include a reply." ||
+      error.name === "SyntaxError"
+    ) {
+      return buildFallbackDecision("invalid_structured_output");
+    }
+
+    return buildFallbackDecision("ai_generation_failed");
   }
 }
 
 module.exports = {
   buildSystemPrompt,
+  buildFallbackDecision,
   generateReply
 };

@@ -248,23 +248,23 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
     };
   }
 
-  const aiReply = await aiService.generateReply(userMessage, knowledge.context);
+  const aiDecision = await aiService.generateReply(userMessage, knowledge.context);
 
-  if (aiReply === "[ESKALACIJA_HITNO]") {
+  if (aiDecision.decision === "hard_handoff") {
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
-      reason: "ai_flagged_hard_handoff",
+      reason: aiDecision.reason || "ai_flagged_hard_handoff",
       customerMessage:
         "Vaš upit zahtijeva ljudsku provjeru. Naš tim će vam se javiti u najkraćem mogućem roku."
     };
   }
 
-  if (aiReply === "[ESKALACIJA_NEZNANJE]") {
+  if (aiDecision.decision === "soft_handoff") {
     return {
       type: "soft_handoff",
       stateTag: "awaiting_human",
-      reason: "ai_flagged_unknown",
+      reason: aiDecision.reason || "ai_flagged_unknown",
       customerMessage:
         "Trenutno nemam dovoljno sigurnih informacija za točan odgovor. Naš tim će pregledati upit i javiti vam se uskoro."
     };
@@ -273,8 +273,8 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
   return {
     type: "safe_answer",
     stateTag: "ai_active",
-    reason: "context_grounded_answer",
-    customerMessage: aiReply
+    reason: aiDecision.reason || "context_grounded_answer",
+    customerMessage: aiDecision.reply
   };
 }
 
@@ -375,15 +375,12 @@ app.post("/webhook/zendesk", async (req, res) => {
     const context = await zendeskService.searchHelpCenter(message);
 
     // 3. Ask the AI to generate a reply or an escalation token.
-    const aiReply = await aiService.generateReply(message, context);
+    const aiDecision = await aiService.generateReply(message, context);
 
     // 4. Route escalation outputs to internal notes instead of customer replies.
-    if (
-      aiReply === "[ESKALACIJA_NEZNANJE]" ||
-      aiReply === "[ESKALACIJA_HITNO]"
-    ) {
+    if (aiDecision.decision === "soft_handoff" || aiDecision.decision === "hard_handoff") {
       const noteText =
-        aiReply === "[ESKALACIJA_HITNO]"
+        aiDecision.decision === "hard_handoff"
           ? "AI eskalacija: hitan ili osjetljiv upit. Potrebna ljudska provjera prije odgovora."
           : "AI eskalacija: odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.";
 
@@ -392,12 +389,15 @@ app.post("/webhook/zendesk", async (req, res) => {
       return res.status(200).json({
         success: true,
         action: "ai_escalation",
-        escalationType: aiReply
+        escalationType:
+          aiDecision.decision === "hard_handoff"
+            ? "[ESKALACIJA_HITNO]"
+            : "[ESKALACIJA_NEZNANJE]"
       });
     }
 
     // Shadow mode: write the AI draft as an internal note only.
-    await zendeskService.replyToTicket(ticketId, aiReply, false);
+    await zendeskService.replyToTicket(ticketId, aiDecision.reply, false);
 
     return res.status(200).json({
       success: true,
