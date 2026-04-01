@@ -11,6 +11,7 @@ const messageInput = document.getElementById("message-input");
 const fileInput = document.getElementById("file-input");
 const imageInput = document.getElementById("image-input");
 const filesIndicator = document.getElementById("pending-files-indicator");
+const pendingFilesList = document.getElementById("pending-files-list");
 let pollTimer = null;
 let lastRenderedSignature = "";
 let pendingFiles = [];
@@ -60,8 +61,21 @@ function createMessage(role, content, createdAt = new Date().toISOString()) {
     id: crypto.randomUUID(),
     role,
     content,
-    createdAt
+    createdAt,
+    attachments: []
   };
+}
+
+function formatFileSize(size) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function saveOnboardingState() {
@@ -84,7 +98,11 @@ function renderMessages(messages) {
 
 function getMessagesSignature(messages) {
   return messages
-    .map((message) => `${message.id}:${message.createdAt}:${message.content}`)
+    .map((message) =>
+      `${message.id}:${message.createdAt}:${message.content}:${(message.attachments || [])
+        .map((attachment) => `${attachment.id || attachment.name}:${attachment.name}`)
+        .join(",")}`
+    )
     .join("|");
 }
 
@@ -92,7 +110,53 @@ function createMessageElement(message) {
   const wrapper = document.createElement("article");
   wrapper.className = `message ${message.role}`;
   wrapper.dataset.messageId = String(message.id);
-  wrapper.textContent = message.content;
+
+  const content = document.createElement("div");
+  content.className = "message-content";
+  content.textContent = message.content;
+  wrapper.appendChild(content);
+
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+
+  if (attachments.length > 0) {
+    const attachmentsEl = document.createElement("div");
+    attachmentsEl.className = "message-attachments";
+
+    attachments.forEach((attachment) => {
+      const attachmentEl = document.createElement(attachment.url ? "a" : "div");
+      attachmentEl.className = "message-attachment";
+
+      if (attachment.url) {
+        attachmentEl.href = attachment.url;
+        attachmentEl.target = "_blank";
+        attachmentEl.rel = "noopener noreferrer";
+      }
+
+      const icon = document.createElement("div");
+      icon.className = "message-attachment__icon";
+      icon.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9.5 14.5 12 12l2.5 2.5"/></svg>';
+
+      const meta = document.createElement("div");
+      meta.className = "message-attachment__meta";
+
+      const name = document.createElement("span");
+      name.className = "message-attachment__name";
+      name.textContent = attachment.name || "Privitak";
+
+      const info = document.createElement("span");
+      info.className = "message-attachment__info";
+      info.textContent = attachment.size ? formatFileSize(attachment.size) : "Privitak";
+
+      meta.appendChild(name);
+      meta.appendChild(info);
+      attachmentEl.appendChild(icon);
+      attachmentEl.appendChild(meta);
+      attachmentsEl.appendChild(attachmentEl);
+    });
+
+    wrapper.appendChild(attachmentsEl);
+  }
 
   const meta = document.createElement("div");
   meta.className = "message-meta";
@@ -194,8 +258,10 @@ function setMessages(messages) {
   saveOnboardingState();
 }
 
-function pushMessage(role, content) {
-  onboarding.messages.push(createMessage(role, content));
+function pushMessage(role, content, attachments = []) {
+  const message = createMessage(role, content);
+  message.attachments = attachments;
+  onboarding.messages.push(message);
   updateMessages(onboarding.messages);
   saveOnboardingState();
 }
@@ -350,7 +416,16 @@ function collectPendingFiles(inputEl) {
   }
 
   for (const file of inputEl.files) {
-    pendingFiles.push(file);
+    const duplicate = pendingFiles.some(
+      (pendingFile) =>
+        pendingFile.name === file.name &&
+        pendingFile.size === file.size &&
+        pendingFile.lastModified === file.lastModified
+    );
+
+    if (!duplicate) {
+      pendingFiles.push(file);
+    }
   }
 
   inputEl.value = "";
@@ -358,18 +433,17 @@ function collectPendingFiles(inputEl) {
 }
 
 function renderPendingFiles() {
-  if (!filesIndicator) return;
+  if (!filesIndicator || !pendingFilesList) return;
 
   if (pendingFiles.length === 0) {
     filesIndicator.classList.add("hidden");
     filesIndicator.textContent = "";
+    pendingFilesList.classList.add("hidden");
+    pendingFilesList.innerHTML = "";
     return;
   }
 
   filesIndicator.classList.remove("hidden");
-  filesIndicator.textContent = `${pendingFiles.length} file${pendingFiles.length > 1 ? "s" : ""}`;
-  
-  // Localize for Libar
   if (pendingFiles.length === 1) {
     filesIndicator.textContent = "1 datoteka";
   } else if (pendingFiles.length < 5) {
@@ -377,6 +451,46 @@ function renderPendingFiles() {
   } else {
     filesIndicator.textContent = `${pendingFiles.length} datoteka`;
   }
+
+  pendingFilesList.classList.remove("hidden");
+  pendingFilesList.innerHTML = "";
+
+  pendingFiles.forEach((file, index) => {
+    const item = document.createElement("div");
+    item.className = "pending-file";
+
+    const meta = document.createElement("div");
+    meta.className = "pending-file__meta";
+
+    const name = document.createElement("span");
+    name.className = "pending-file__name";
+    name.textContent = file.name;
+    name.title = file.name;
+
+    const size = document.createElement("span");
+    size.className = "pending-file__size";
+    size.textContent = formatFileSize(file.size);
+
+    meta.appendChild(name);
+    meta.appendChild(size);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "pending-file__remove";
+    removeButton.setAttribute("aria-label", `Ukloni ${file.name}`);
+    removeButton.dataset.fileIndex = String(index);
+    removeButton.innerHTML = "&times;";
+
+    item.appendChild(meta);
+    item.appendChild(removeButton);
+
+    pendingFilesList.appendChild(item);
+  });
+}
+
+function removePendingFile(index) {
+  pendingFiles = pendingFiles.filter((_, fileIndex) => fileIndex !== index);
+  renderPendingFiles();
 }
 
 if (fileInput) {
@@ -388,6 +502,24 @@ if (fileInput) {
 if (imageInput) {
   imageInput.addEventListener("change", () => {
     collectPendingFiles(imageInput);
+  });
+}
+
+if (pendingFilesList) {
+  pendingFilesList.addEventListener("click", (event) => {
+    const target = event.target.closest(".pending-file__remove");
+
+    if (!target) {
+      return;
+    }
+
+    const index = Number(target.dataset.fileIndex);
+
+    if (Number.isNaN(index)) {
+      return;
+    }
+
+    removePendingFile(index);
   });
 }
 
@@ -409,8 +541,18 @@ messageForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  const pendingAttachmentPayload = pendingFiles.map((file) => ({
+    id: `${file.name}-${file.size}-${file.lastModified}`,
+    name: file.name,
+    size: file.size,
+    contentType: file.type || "application/octet-stream",
+    url: null
+  }));
+
   if (message) {
-    pushMessage("user", message);
+    pushMessage("user", message, pendingAttachmentPayload);
+  } else if (pendingAttachmentPayload.length > 0) {
+    pushMessage("user", "Poslan je privitak.", pendingAttachmentPayload);
   }
 
   messageInput.value = "";
