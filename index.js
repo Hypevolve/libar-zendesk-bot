@@ -12,6 +12,7 @@ const oneDriveService = require("./services/oneDriveService");
 const app = express();
 const chatSessions = new Map();
 const chatStreams = new Map();
+const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 5;
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -526,7 +527,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
     };
   }
 
-  if (!knowledge?.context || !knowledge?.topScore || knowledge.topScore < 8) {
+  if (!knowledge?.context || !knowledge?.topScore || knowledge.topScore < KNOWLEDGE_MIN_TOP_SCORE) {
     return {
       type: "soft_handoff",
       stateTag: "awaiting_human",

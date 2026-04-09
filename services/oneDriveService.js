@@ -14,7 +14,8 @@ const {
   ONEDRIVE_CLIENT_SECRET,
   ONEDRIVE_DRIVE_ID,
   ONEDRIVE_FOLDER_ID,
-  ONEDRIVE_SITE_ID
+  ONEDRIVE_SITE_ID,
+  ONEDRIVE_FOLDER_URL
 } = process.env;
 
 const ONEDRIVE_CACHE_TTL_MS = Number(process.env.ONEDRIVE_CACHE_TTL_MS) || 5 * 60 * 1000;
@@ -55,13 +56,18 @@ function maskSecret(value = "") {
 }
 
 function isConfigured() {
-  return [
+  const hasCredentials = [
     ONEDRIVE_TENANT_ID,
     ONEDRIVE_CLIENT_ID,
-    ONEDRIVE_CLIENT_SECRET,
+    ONEDRIVE_CLIENT_SECRET
+  ].every((value) => Boolean(sanitizeEnvValue(value)));
+
+  const hasDirectTarget = [
     ONEDRIVE_DRIVE_ID,
     ONEDRIVE_FOLDER_ID
   ].every((value) => Boolean(sanitizeEnvValue(value)));
+
+  return hasCredentials && (hasDirectTarget || Boolean(sanitizeEnvValue(ONEDRIVE_FOLDER_URL)));
 }
 
 function hasPartialConfig() {
@@ -71,7 +77,8 @@ function hasPartialConfig() {
     ONEDRIVE_CLIENT_SECRET,
     ONEDRIVE_DRIVE_ID,
     ONEDRIVE_FOLDER_ID,
-    ONEDRIVE_SITE_ID
+    ONEDRIVE_SITE_ID,
+    ONEDRIVE_FOLDER_URL
   ].some((value) => Boolean(sanitizeEnvValue(value))) && !isConfigured();
 }
 
@@ -84,7 +91,8 @@ function getOneDriveConfigSummary() {
     clientSecretPreview: maskSecret(ONEDRIVE_CLIENT_SECRET),
     driveId: sanitizeEnvValue(ONEDRIVE_DRIVE_ID),
     siteId: sanitizeEnvValue(ONEDRIVE_SITE_ID),
-    folderId: sanitizeEnvValue(ONEDRIVE_FOLDER_ID)
+    folderId: sanitizeEnvValue(ONEDRIVE_FOLDER_ID),
+    folderUrl: sanitizeEnvValue(ONEDRIVE_FOLDER_URL)
   };
 }
 
@@ -218,9 +226,135 @@ async function graphGet(url, accessToken, config = {}) {
   });
 }
 
-async function listFolderChildren(accessToken, itemId) {
+function encodeGraphPath(pathname = "") {
+  return String(pathname)
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function parseSharePointFolderUrl(folderUrl = "") {
+  const normalizedUrl = sanitizeEnvValue(folderUrl);
+
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  const parsedUrl = new URL(normalizedUrl);
+  const rawId = sanitizeEnvValue(parsedUrl.searchParams.get("id"));
+  const decodedId = rawId ? decodeURIComponent(rawId) : "";
+  const normalizedId = decodedId.replace(/\/+$/, "");
+
+  if (!normalizedId.startsWith("/")) {
+    throw new Error("ONEDRIVE_FOLDER_URL is missing a valid SharePoint folder path.");
+  }
+
+  let sitePath = "/";
+  let documentPath = normalizedId;
+
+  const multiSegmentRoots = ["/sites/", "/teams/", "/personal/"];
+  const matchingRoot = multiSegmentRoots.find((root) => normalizedId.startsWith(root));
+
+  if (matchingRoot) {
+    const pathSegments = normalizedId.split("/").filter(Boolean);
+
+    if (pathSegments.length < 3) {
+      throw new Error("ONEDRIVE_FOLDER_URL does not contain a resolvable SharePoint site path.");
+    }
+
+    sitePath = `/${pathSegments.slice(0, 2).join("/")}`;
+    documentPath = `/${pathSegments.slice(2).join("/")}`;
+  }
+
+  const libraryPrefixes = ["/Shared Documents/", "/Documents/"];
+  const matchingLibraryPrefix = libraryPrefixes.find((prefix) => documentPath.startsWith(prefix));
+  const driveRelativePath = matchingLibraryPrefix
+    ? documentPath.slice(matchingLibraryPrefix.length)
+    : documentPath.replace(/^\/+/, "");
+
+  if (!driveRelativePath) {
+    throw new Error("ONEDRIVE_FOLDER_URL points to a document library root instead of a folder.");
+  }
+
+  return {
+    hostname: parsedUrl.hostname,
+    sitePath,
+    documentPath,
+    driveRelativePath
+  };
+}
+
+async function resolveSiteId(accessToken, folderUrlDetails) {
+  const configuredSiteId = sanitizeEnvValue(ONEDRIVE_SITE_ID);
+
+  if (!folderUrlDetails && configuredSiteId) {
+    return configuredSiteId;
+  }
+
+  if (!folderUrlDetails || folderUrlDetails.sitePath === "/") {
+    const response = await graphGet("/sites/root", accessToken);
+    return response.data?.id || null;
+  }
+
+  const response = await graphGet(
+    `/sites/${folderUrlDetails.hostname}:${folderUrlDetails.sitePath}`,
+    accessToken
+  );
+
+  return response.data?.id || null;
+}
+
+async function resolveTarget(accessToken) {
+  const configuredFolderUrl = sanitizeEnvValue(ONEDRIVE_FOLDER_URL);
+
+  if (configuredFolderUrl) {
+    const folderUrlDetails = parseSharePointFolderUrl(configuredFolderUrl);
+    const siteId = await resolveSiteId(accessToken, folderUrlDetails);
+
+    if (!siteId) {
+      throw new Error("Unable to resolve SharePoint site from ONEDRIVE_FOLDER_URL.");
+    }
+
+    const driveResponse = await graphGet(`/sites/${siteId}/drive`, accessToken);
+    const driveId = driveResponse.data?.id || null;
+
+    if (!driveId) {
+      throw new Error("Unable to resolve SharePoint document library drive from ONEDRIVE_FOLDER_URL.");
+    }
+
+    const encodedPath = encodeGraphPath(folderUrlDetails.driveRelativePath);
+    const folderResponse = await graphGet(
+      `/drives/${driveId}/root:/${encodedPath}:?$select=id,name,webUrl,parentReference,folder`,
+      accessToken
+    );
+    const folderId = folderResponse.data?.id || null;
+
+    if (!folderId) {
+      throw new Error("Unable to resolve SharePoint folder from ONEDRIVE_FOLDER_URL.");
+    }
+
+    return {
+      driveId,
+      folderId,
+      source: "url",
+      siteId,
+      path: folderUrlDetails.driveRelativePath
+    };
+  }
+
+  return {
+    driveId: sanitizeEnvValue(ONEDRIVE_DRIVE_ID),
+    folderId: sanitizeEnvValue(ONEDRIVE_FOLDER_ID),
+    source: "direct",
+    siteId: sanitizeEnvValue(ONEDRIVE_SITE_ID) || null,
+    path: null
+  };
+}
+
+async function listFolderChildren(accessToken, driveId, itemId) {
   const children = [];
-  let nextPageUrl = `/drives/${sanitizeEnvValue(ONEDRIVE_DRIVE_ID)}/items/${itemId}/children?$top=200&select=id,name,size,webUrl,lastModifiedDateTime,file,folder,parentReference,@microsoft.graph.downloadUrl`;
+  let nextPageUrl = `/drives/${driveId}/items/${itemId}/children?$top=200&select=id,name,size,webUrl,lastModifiedDateTime,file,folder,parentReference,@microsoft.graph.downloadUrl`;
 
   while (nextPageUrl) {
     const response = await graphGet(nextPageUrl, accessToken);
@@ -232,13 +366,13 @@ async function listFolderChildren(accessToken, itemId) {
   return children;
 }
 
-async function collectDocuments(accessToken, folderId) {
+async function collectDocuments(accessToken, driveId, folderId) {
   const documents = [];
   const queue = [folderId];
 
   while (queue.length > 0) {
     const currentFolderId = queue.shift();
-    const children = await listFolderChildren(accessToken, currentFolderId);
+    const children = await listFolderChildren(accessToken, driveId, currentFolderId);
 
     for (const child of children) {
       if (child.folder) {
@@ -344,7 +478,8 @@ async function fetchFolderDocuments() {
   }
 
   const accessToken = await getAccessToken();
-  const items = await collectDocuments(accessToken, sanitizeEnvValue(ONEDRIVE_FOLDER_ID));
+  const target = await resolveTarget(accessToken);
+  const items = await collectDocuments(accessToken, target.driveId, target.folderId);
   const documents = [];
 
   for (const item of items) {
