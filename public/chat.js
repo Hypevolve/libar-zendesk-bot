@@ -1,6 +1,9 @@
 const storageKey = "libar-chat-session-id";
 const sessionSnapshotKey = "libar-chat-session-snapshot";
 const onboardingKey = "libar-chat-onboarding";
+const embedParams = new URLSearchParams(window.location.search);
+const isEmbedMode = embedParams.get("embed") === "1" || window.self !== window.top;
+const embedMessageType = "LIBAR_CHAT_EMBED";
 
 const launcher = document.getElementById("chat-launcher");
 const launcherBadge = document.getElementById("chat-launcher-badge");
@@ -35,6 +38,20 @@ let currentConversationTone = "ai-active";
 let canonicalMessages = [];
 let optimisticMessages = [];
 
+function postEmbedMessage(payload) {
+  if (!isEmbedMode || window.parent === window) {
+    return;
+  }
+
+  window.parent.postMessage(
+    {
+      source: embedMessageType,
+      ...payload
+    },
+    "*"
+  );
+}
+
 const onboarding = {
   stage: "initial",
   draft: {
@@ -57,6 +74,11 @@ function showWidget() {
 }
 
 function hideWidget() {
+  if (isEmbedMode) {
+    postEmbedMessage({ action: "request-close" });
+    return;
+  }
+
   widget.classList.add("hidden");
   widget.setAttribute("aria-hidden", "true");
   launcher.setAttribute("aria-expanded", "false");
@@ -895,6 +917,28 @@ async function loadExistingSession() {
   updateMessages(onboarding.messages);
 }
 
+function initializeEmbedMode() {
+  if (!isEmbedMode) {
+    return;
+  }
+
+  document.body.classList.add("embed-mode");
+  showWidget();
+  postEmbedMessage({ action: "ready" });
+}
+
+function handleEmbedMessage(event) {
+  const data = event?.data;
+
+  if (!data || data.source !== embedMessageType) {
+    return;
+  }
+
+  if (data.action === "open") {
+    showWidget();
+  }
+}
+
 launcher.addEventListener("click", () => {
   if (widget.classList.contains("hidden")) {
     showWidget();
@@ -1205,4 +1249,6 @@ messageInput.addEventListener("input", () => {
   messageInput.style.height = `${Math.min(messageInput.scrollHeight, 132)}px`;
 });
 
+window.addEventListener("message", handleEmbedMessage);
+initializeEmbedMode();
 loadExistingSession();

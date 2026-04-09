@@ -24,9 +24,23 @@ const chatUpload = multer({
 console.log("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
 console.log("Loaded OneDrive config:", oneDriveService.getOneDriveConfigSummary());
 
+const EMBED_ALLOWED_ORIGINS = String(process.env.EMBED_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 // Parse incoming JSON bodies from Zendesk webhooks.
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+function applyEmbedFrameHeaders(res) {
+  if (EMBED_ALLOWED_ORIGINS.length === 0) {
+    return;
+  }
+
+  const frameAncestors = ["'self'", ...EMBED_ALLOWED_ORIGINS].join(" ");
+  res.setHeader("Content-Security-Policy", `frame-ancestors ${frameAncestors}`);
+}
 
 /**
  * Small helper that normalizes truthy values Zendesk might send.
@@ -1248,6 +1262,12 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/chat", (req, res) => {
+  applyEmbedFrameHeaders(res);
+  return res.sendFile(path.join(__dirname, "public", "chat.html"));
+});
+
+app.get("/embed/chat", (req, res) => {
+  applyEmbedFrameHeaders(res);
   return res.sendFile(path.join(__dirname, "public", "chat.html"));
 });
 
