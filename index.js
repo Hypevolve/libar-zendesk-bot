@@ -6,6 +6,8 @@ const express = require("express");
 const multer = require("multer");
 const zendeskService = require("./services/zendeskService");
 const aiService = require("./services/aiService");
+const knowledgeService = require("./services/knowledgeService");
+const oneDriveService = require("./services/oneDriveService");
 
 const app = express();
 const chatSessions = new Map();
@@ -19,6 +21,7 @@ const chatUpload = multer({
 });
 
 console.log("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
+console.log("Loaded OneDrive config:", oneDriveService.getOneDriveConfigSummary());
 
 // Parse incoming JSON bodies from Zendesk webhooks.
 app.use(express.json({ limit: "1mb" }));
@@ -657,7 +660,7 @@ app.post("/webhook/zendesk", async (req, res) => {
     }
 
     // 2. Retrieve the most relevant Help Center knowledge for the user message.
-    const context = await zendeskService.searchHelpCenter(message);
+    const context = await knowledgeService.searchKnowledge(message);
 
     // 3. Ask the AI to generate a reply or an escalation token.
     const aiDecision = await aiService.generateReply(message, context);
@@ -746,7 +749,7 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       externalId: initialSessionKey
     };
 
-    const knowledge = await zendeskService.searchHelpCenterDetailed(message);
+    const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
     const outcome = await determineChatOutcome(message, knowledge, {
       hasAttachments: files.length > 0
     });
@@ -975,7 +978,7 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       });
     }
 
-    const knowledge = await zendeskService.searchHelpCenterDetailed(message);
+    const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
     const outcome = await determineChatOutcome(message, knowledge, {
       hasAttachments: files.length > 0
     });
