@@ -13,6 +13,7 @@ const app = express();
 const chatSessions = new Map();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 5;
+const BLOCKED_AUTOPILOT_TAGS = new Set(["awaiting_human", "human_active", "resolved"]);
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -61,6 +62,64 @@ function toBoolean(value) {
   }
 
   return false;
+}
+
+function normalizeChannelType(value = "") {
+  return aiService.normalizeChannelType(value);
+}
+
+function formatChannelLabel(channelType = "unknown") {
+  switch (normalizeChannelType(channelType)) {
+    case "web_chat":
+      return "web chat";
+    case "facebook":
+      return "facebook";
+    case "email":
+      return "email";
+    default:
+      return "zendesk";
+  }
+}
+
+function getChannelMessages(channelType = "unknown") {
+  switch (normalizeChannelType(channelType)) {
+    case "facebook":
+      return {
+        attachmentHandoff:
+          "Hvala na privitku. Pregledat ćemo ga i javiti vam se ovdje čim provjerimo detalje.",
+        hardHandoff:
+          "Ovo trebamo provjeriti ručno. Kolege će vam se javiti ovdje čim pregledaju upit.",
+        softHandoff:
+          "Ne želim vam dati netočan odgovor. Kolege će pregledati upit i javiti vam se ovdje uskoro."
+      };
+    case "email":
+      return {
+        attachmentHandoff:
+          "Hvala na poslanom privitku. Pregledat ćemo ga i javiti vam se čim provjerimo detalje.",
+        hardHandoff:
+          "Ovaj upit trebamo provjeriti ručno. Javit ćemo vam se čim pregledamo detalje.",
+        softHandoff:
+          "Ne želimo vam poslati napola točan odgovor. Vaš upit ćemo pregledati i javiti vam se čim ga provjerimo."
+      };
+    case "web_chat":
+      return {
+        attachmentHandoff:
+          "Hvala, privitci su stigli. Pregledat ćemo ih i javiti vam se ovdje čim ih prođemo.",
+        hardHandoff:
+          "Ovo trebamo provjeriti ručno. Javit ćemo vam se ovdje čim pregledamo upit.",
+        softHandoff:
+          "Ne želim vam dati napola točan odgovor. Pregledat ćemo upit i javiti vam se ovdje uskoro."
+      };
+    default:
+      return {
+        attachmentHandoff:
+          "Hvala na poslanom privitku. Pregledat ćemo ga i javiti vam se čim provjerimo detalje.",
+        hardHandoff:
+          "Ovaj upit trebamo provjeriti ručno. Javit ćemo vam se čim pregledamo detalje.",
+        softHandoff:
+          "Ne želimo vam poslati netočan odgovor. Vaš upit ćemo pregledati i javiti vam se čim ga provjerimo."
+      };
+  }
 }
 
 function buildChatSubject(requesterName) {
@@ -453,6 +512,62 @@ function getLatestUserMessage(messages = []) {
   return [...messages].reverse().find((message) => message.role === "user") || null;
 }
 
+function getLatestPublicMessage(messages = []) {
+  return Array.isArray(messages) && messages.length > 0 ? messages[messages.length - 1] : null;
+}
+
+function detectTicketChannelType(ticketSummary, messages = []) {
+  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
+
+  if (tags.includes("webshop_chat")) {
+    return "web_chat";
+  }
+
+  const latestMessageWithChannel = [...messages]
+    .reverse()
+    .find((message) => normalizeChannelType(message?.sourceChannel) !== "unknown");
+
+  return normalizeChannelType(latestMessageWithChannel?.sourceChannel);
+}
+
+function getAutomationBlockReason(ticketSummary, messages, channelType) {
+  if (isClosedTicketStatus(ticketSummary?.status)) {
+    return "ticket_closed";
+  }
+
+  if (normalizeChannelType(channelType) === "web_chat") {
+    return "web_chat_managed_by_widget";
+  }
+
+  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
+
+  if (tags.some((tag) => BLOCKED_AUTOPILOT_TAGS.has(tag))) {
+    return tags.includes("human_active") ? "human_active" : "awaiting_human";
+  }
+
+  const conversationState = buildConversationState(ticketSummary, messages);
+
+  if (conversationState.tone === "human-active") {
+    return "human_active";
+  }
+
+  if (conversationState.tone === "awaiting-human") {
+    return "awaiting_human";
+  }
+
+  const latestMessage = getLatestPublicMessage(messages);
+
+  if (!latestMessage) {
+    return "no_public_messages";
+  }
+
+  if (latestMessage.role !== "user") {
+    return "latest_message_not_user";
+  }
+
+  return null;
+}
+
 function getResolutionPrompt(session, ticketSummary) {
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
   const blockedTags = new Set(["ai_eskalacija", "hitno_slike", "awaiting_human", "human_active", "resolved"]);
@@ -504,30 +619,39 @@ function getResolutionPrompt(session, ticketSummary) {
   };
 }
 
-function buildAutopilotNote({ outcome, userMessage, knowledge }) {
-  const articleSummary = (knowledge?.articles || [])
+function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "web_chat" }) {
+  const sourceSummary = (knowledge?.articles || [])
     .map((article) => `${article.title} (${article.score})`)
     .join(", ");
 
   return [
+    `Kanal: ${formatChannelLabel(channelType)}`,
     `AI outcome: ${outcome.type}`,
     `Upit korisnika: ${userMessage}`,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
-    articleSummary ? `Korišteni članci: ${articleSummary}` : "Korišteni članci: nema",
+    sourceSummary ? `Korišteni izvori: ${sourceSummary}` : "Korišteni izvori: nema",
     outcome.reason ? `Razlog: ${outcome.reason}` : null
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-async function determineChatOutcome(userMessage, knowledge, { hasAttachments = false } = {}) {
+async function determineChatOutcome(
+  userMessage,
+  knowledge,
+  {
+    hasAttachments = false,
+    channelType = "web_chat"
+  } = {}
+) {
+  const channelMessages = getChannelMessages(channelType);
+
   if (hasAttachments) {
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: "attachments_present",
-      customerMessage:
-        "Hvala, privitci su stigli. Pregledat ćemo ih i javiti vam se ovdje čim ih prođemo."
+      customerMessage: channelMessages.attachmentHandoff
     };
   }
 
@@ -536,8 +660,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: "sensitive_or_complaint_topic",
-      customerMessage:
-        "Ovo trebamo provjeriti ručno. Javit ćemo vam se ovdje čim pregledamo upit."
+      customerMessage: channelMessages.hardHandoff
     };
   }
 
@@ -546,20 +669,20 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       type: "soft_handoff",
       stateTag: "awaiting_human",
       reason: "insufficient_context_confidence",
-      customerMessage:
-        "Ne želim vam dati napola točan odgovor. Pregledat ćemo upit i javiti vam se ovdje uskoro."
+      customerMessage: channelMessages.softHandoff
     };
   }
 
-  const aiDecision = await aiService.generateReply(userMessage, knowledge.context);
+  const aiDecision = await aiService.generateReply(userMessage, knowledge.context, {
+    channelType
+  });
 
   if (aiDecision.decision === "hard_handoff") {
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: aiDecision.reason || "ai_flagged_hard_handoff",
-      customerMessage:
-        "Ovo trebamo provjeriti ručno. Javit ćemo vam se ovdje čim pregledamo upit."
+      customerMessage: channelMessages.hardHandoff
     };
   }
 
@@ -568,8 +691,7 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
       type: "soft_handoff",
       stateTag: "awaiting_human",
       reason: aiDecision.reason || "ai_flagged_unknown",
-      customerMessage:
-        "Ne želim vam dati napola točan odgovor. Pregledat ćemo upit i javiti vam se ovdje uskoro."
+      customerMessage: channelMessages.softHandoff
     };
   }
 
@@ -581,11 +703,12 @@ async function determineChatOutcome(userMessage, knowledge, { hasAttachments = f
   };
 }
 
-async function persistEscalation(ticketId, escalationType) {
+async function persistEscalation(ticketId, escalationType, { channelType = "web_chat" } = {}) {
+  const channelLabel = formatChannelLabel(channelType);
   const noteText =
     escalationType === "[ESKALACIJA_HITNO]"
-      ? "AI chat eskalacija: hitan ili osjetljiv webshop chat upit. Potrebna ljudska provjera."
-      : "AI chat eskalacija: odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.";
+      ? `AI eskalacija (${channelLabel}): hitan ili osjetljiv korisnički upit. Potrebna ljudska provjera.`
+      : `AI eskalacija (${channelLabel}): odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.`;
 
   await zendeskService.addTagAndNote(ticketId, "ai_eskalacija", noteText);
 }
@@ -648,63 +771,138 @@ function normalizeMessage(value) {
  * }
  */
 app.post("/webhook/zendesk", async (req, res) => {
-  const { ticket_id: ticketId, message, has_attachments: hasAttachmentsRaw } = req.body || {};
+  const {
+    ticket_id: ticketId,
+    message,
+    channel: payloadChannelType,
+    has_attachments: hasAttachmentsRaw
+  } = req.body || {};
   const hasAttachments = toBoolean(hasAttachmentsRaw);
 
   // Validate the minimum contract early so upstream systems receive a clear error.
-  if (!ticketId || typeof message !== "string" || !message.trim()) {
+  if (!ticketId) {
     return res.status(400).json({
       success: false,
-      error: "Invalid payload. 'ticket_id' and non-empty 'message' are required."
+      error: "Invalid payload. 'ticket_id' is required."
     });
   }
 
   try {
-    // 1. Guardrail: if images/files exist, stop AI processing immediately and escalate.
-    if (hasAttachments) {
-      await zendeskService.addTagAndNote(
-        ticketId,
-        "hitno_slike",
-        "Korisnik je poslao slike. Potrebna ljudska provjera."
-      );
+    const [ticketSummary, audits] = await Promise.all([
+      zendeskService.getTicketSummary(ticketId),
+      zendeskService.getTicketAudits(ticketId)
+    ]);
+    const messages = mapZendeskAuditsToMessages(audits, ticketSummary.requesterId, ticketSummary);
+    const detectedChannelType = detectTicketChannelType(ticketSummary, messages);
+    const channelType =
+      detectedChannelType !== "unknown"
+        ? detectedChannelType
+        : normalizeChannelType(payloadChannelType);
+    const blockReason = getAutomationBlockReason(ticketSummary, messages, channelType);
 
+    if (blockReason) {
       return res.status(200).json({
         success: true,
-        action: "attachment_escalation"
+        action: "ignored",
+        reason: blockReason,
+        channelType
       });
     }
 
-    // 2. Retrieve the most relevant Help Center knowledge for the user message.
-    const context = await knowledgeService.searchKnowledge(message);
+    const latestUserMessage = getLatestUserMessage(messages);
+    const latestMessage = getLatestPublicMessage(messages);
+    const normalizedMessage = normalizeMessage(latestUserMessage?.content) || normalizeMessage(message);
+    const latestMessageHasAttachments =
+      Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0;
 
-    // 3. Ask the AI to generate a reply or an escalation token.
-    const aiDecision = await aiService.generateReply(message, context);
+    if (!normalizedMessage && !latestMessageHasAttachments && !hasAttachments) {
+      return res.status(200).json({
+        success: true,
+        action: "ignored",
+        reason: "empty_customer_message",
+        channelType
+      });
+    }
 
-    // 4. Route escalation outputs to internal notes instead of customer replies.
-    if (aiDecision.decision === "soft_handoff" || aiDecision.decision === "hard_handoff") {
-      const noteText =
-        aiDecision.decision === "hard_handoff"
-          ? "AI eskalacija: hitan ili osjetljiv upit. Potrebna ljudska provjera prije odgovora."
-          : "AI eskalacija: odgovor nije pronađen u bazi znanja. Potrebna ljudska provjera.";
+    const effectiveHasAttachments = hasAttachments || latestMessageHasAttachments;
 
-      await zendeskService.addTagAndNote(ticketId, "ai_eskalacija", noteText);
+    if (effectiveHasAttachments) {
+      await zendeskService.addTagAndNote(
+        ticketId,
+        "hitno_slike",
+        `Korisnik je poslao privitak preko ${formatChannelLabel(channelType)} kanala. Potrebna ljudska provjera.`
+      );
+      await zendeskService.updateConversationState(ticketId, "awaiting_human");
+      await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+        outcome: {
+          type: "hard_handoff",
+          reason: "attachments_present"
+        },
+        userMessage: normalizedMessage || "[privitak bez teksta]",
+        knowledge: null,
+        channelType
+      }));
+
+      return res.status(200).json({
+        success: true,
+        action: "attachment_escalation",
+        channelType
+      });
+    }
+
+    if (!latestMessage || latestMessage.role !== "user") {
+      return res.status(200).json({
+        success: true,
+        action: "ignored",
+        reason: "latest_message_not_user",
+        channelType
+      });
+    }
+
+    const knowledge = await knowledgeService.searchKnowledgeDetailed(normalizedMessage);
+    const outcome = await determineChatOutcome(normalizedMessage, knowledge, {
+      hasAttachments: false,
+      channelType
+    });
+
+    if (outcome.type !== "safe_answer") {
+      await persistEscalation(
+        ticketId,
+        outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
+        { channelType }
+      );
+      await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+      await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+        outcome,
+        userMessage: normalizedMessage,
+        knowledge,
+        channelType
+      }));
 
       return res.status(200).json({
         success: true,
         action: "ai_escalation",
         escalationType:
-          aiDecision.decision === "hard_handoff"
-            ? "[ESKALACIJA_HITNO]"
-            : "[ESKALACIJA_NEZNANJE]"
+          outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
+        channelType
       });
     }
 
-    // Shadow mode: write the AI draft as an internal note only.
-    await zendeskService.replyToTicket(ticketId, aiDecision.reply, false);
+    await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
+      channelType
+    });
+    await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+      outcome,
+      userMessage: normalizedMessage,
+      knowledge,
+      channelType
+    }));
 
     return res.status(200).json({
       success: true,
-      action: "internal_note_added"
+      action: "customer_reply_sent",
+      channelType
     });
   } catch (error) {
     // Keep the response clean for webhook consumers while logging the full detail locally.
@@ -766,7 +964,8 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
 
     const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
     const outcome = await determineChatOutcome(message, knowledge, {
-      hasAttachments: files.length > 0
+      hasAttachments: files.length > 0,
+      channelType: "web_chat"
     });
 
     if (files.length > 0) {
@@ -778,15 +977,22 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
     }
 
     if (outcome.type !== "safe_answer") {
-      await persistEscalation(ticketId, outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]");
+      await persistEscalation(
+        ticketId,
+        outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
+        { channelType: "web_chat" }
+      );
     }
 
     await zendeskService.updateConversationState(ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage);
+    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
+      channelType: "web_chat"
+    });
     await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
       outcome,
       userMessage: message,
-      knowledge
+      knowledge,
+      channelType: "web_chat"
     }));
     await syncSessionMessages(session);
     broadcastSessionUpdate(session);
@@ -995,7 +1201,8 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
 
     const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
     const outcome = await determineChatOutcome(message, knowledge, {
-      hasAttachments: files.length > 0
+      hasAttachments: files.length > 0,
+      channelType: "web_chat"
     });
 
     console.info("ai_autopilot", {
@@ -1016,16 +1223,20 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     if (outcome.type !== "safe_answer") {
       await persistEscalation(
         session.ticketId,
-        outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]"
+        outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
+        { channelType: "web_chat" }
       );
     }
 
     await zendeskService.updateConversationState(session.ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(session.ticketId, outcome.customerMessage);
+    await zendeskService.addBotReplyToTicket(session.ticketId, outcome.customerMessage, {
+      channelType: "web_chat"
+    });
     await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
       outcome,
       userMessage: message || "Šaljem privitak.",
-      knowledge
+      knowledge,
+      channelType: "web_chat"
     }));
     await syncSessionMessages(session);
     broadcastSessionUpdate(session);

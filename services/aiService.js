@@ -23,7 +23,69 @@ const client = new OpenAI({
   }
 });
 
-function buildSystemPrompt(context) {
+function normalizeChannelType(channelType = "") {
+  const normalized = String(channelType).trim().toLowerCase();
+
+  if (
+    normalized === "web_chat" ||
+    normalized === "webchat" ||
+    normalized === "web" ||
+    normalized === "web_widget"
+  ) {
+    return "web_chat";
+  }
+
+  if (
+    normalized === "facebook" ||
+    normalized === "messenger" ||
+    normalized === "facebook_messenger" ||
+    normalized === "facebook_post" ||
+    normalized === "facebook_page"
+  ) {
+    return "facebook";
+  }
+
+  if (normalized === "email" || normalized === "mail") {
+    return "email";
+  }
+
+  return "unknown";
+}
+
+function buildChannelInstructions(channelType = "unknown") {
+  const normalizedChannelType = normalizeChannelType(channelType);
+
+  if (normalizedChannelType === "facebook") {
+    return [
+      "KANAL: Facebook",
+      "- Odgovor treba biti malo kraći i razgovorniji nego email, ali i dalje profesionalan.",
+      "- Nemoj koristiti web-chat formulacije poput 'javiti ćemo vam se ovdje u chatu'."
+    ];
+  }
+
+  if (normalizedChannelType === "email") {
+    return [
+      "KANAL: Email",
+      "- Odgovor treba zvučati kao prirodan support email odgovor.",
+      "- Piši u punim, jasnim rečenicama i bez chatu sličnih formulacija.",
+      "- Ne generiraj subject ni potpis; vrati samo tijelo odgovora."
+    ];
+  }
+
+  if (normalizedChannelType === "web_chat") {
+    return [
+      "KANAL: Web chat",
+      "- Odgovor može biti nešto kraći i direktniji kao u live chatu."
+    ];
+  }
+
+  return [
+    "KANAL: Zendesk podrška",
+    "- Odgovor treba biti prirodan i kratak, bez pretpostavki o sučelju ili kanalu."
+  ];
+}
+
+function buildSystemPrompt(context, { channelType = "unknown" } = {}) {
   return [
     "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
     "",
@@ -63,6 +125,8 @@ function buildSystemPrompt(context) {
     "- Ako korisnik pita kako nešto napraviti, odgovor treba biti proceduralan i konkretan.",
     "- Kad je prikladno, koristi blage prirodne formulacije poput 'Možete', 'Ako želite', 'Pošaljite' ili 'Javite'.",
     "- Nemoj zvučati kao da čitaš pravila ili internu proceduru.",
+    "",
+    ...buildChannelInstructions(channelType),
     "",
     "FORMAT IZLAZA:",
     "Vrati isključivo valjani JSON objekt, bez markdowna, bez code blocka i bez dodatnog teksta.",
@@ -133,7 +197,7 @@ function buildFallbackDecision(reason = "ai_generation_failed") {
  * Ask OpenRouter-hosted model to return a structured decision object that the
  * backend can validate safely.
  */
-async function generateReply(message, context) {
+async function generateReply(message, context, options = {}) {
   try {
     const completion = await client.chat.completions.create({
       model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
@@ -141,7 +205,7 @@ async function generateReply(message, context) {
       messages: [
         {
           role: "system",
-          content: buildSystemPrompt(context)
+          content: buildSystemPrompt(context, options)
         },
         {
           role: "user",
@@ -186,5 +250,6 @@ async function generateReply(message, context) {
 module.exports = {
   buildSystemPrompt,
   buildFallbackDecision,
-  generateReply
+  generateReply,
+  normalizeChannelType
 };

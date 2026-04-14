@@ -490,12 +490,32 @@ async function addCustomerMessageToTicket(ticketId, requesterId, messageText, up
  * Persist an AI response into the Zendesk ticket as a public comment authored
  * by the API agent account.
  */
-async function addBotReplyToTicket(ticketId, replyText) {
+function resolveBotReplyOrigin(channelType = "web_chat") {
+  const normalizedChannelType = String(channelType).trim().toLowerCase();
+
+  if (normalizedChannelType === "facebook") {
+    return "facebook_ai";
+  }
+
+  if (normalizedChannelType === "email") {
+    return "email_ai";
+  }
+
+  if (normalizedChannelType === "web_chat" || normalizedChannelType === "webchat") {
+    return "webchat_ai";
+  }
+
+  return "zendesk_ai";
+}
+
+async function addBotReplyToTicket(ticketId, replyText, options = {}) {
+  const channelType = options.channelType || "web_chat";
+
   return replyToTicket(ticketId, replyText, true, {
     additionalTags: ["ai_replied"],
     metadata: {
       libar_message_role: "assistant",
-      libar_message_origin: "webchat_ai"
+      libar_message_origin: resolveBotReplyOrigin(channelType)
     }
   });
 }
