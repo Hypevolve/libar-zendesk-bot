@@ -193,6 +193,61 @@ function buildFallbackDecision(reason = "ai_generation_failed") {
   };
 }
 
+function buildSpamClassifierPrompt({ channelType = "email" } = {}) {
+  return [
+    "Ti si strogi klasifikator dolaznih poruka za korisničku podršku.",
+    "",
+    "Zadatak ti je klasificirati je li poruka stvarni support upit ili spam/outreach.",
+    "",
+    `Kanal: ${normalizeChannelType(channelType)}`,
+    "",
+    "Vrati isključivo JSON objekt bez dodatnog teksta.",
+    "Koristi točno ovu strukturu:",
+    "{",
+    '  "label": "support_message" | "sales_outreach" | "marketing_spam" | "phishing_or_malicious" | "unknown",',
+    '  "confidence": 0.0,',
+    '  "reason": "string"',
+    "}",
+    "",
+    "Pravila:",
+    '- "support_message" koristi samo kad je poruka stvarni korisnički upit za podršku, narudžbu, knjigu, otkup, račun, dostavu ili sličnu temu.',
+    '- "sales_outreach" koristi za B2B prodajne ili partnerske ponude, guest post, backlink, SEO outreach, marketinške usluge i slične pitch poruke.',
+    '- "marketing_spam" koristi za generički, masovni ili očito nerelevantan outreach.',
+    '- "phishing_or_malicious" koristi za poruke koje traže klik, verifikaciju računa, osjetljive podatke, wallet, gift card, crypto ili sličan rizičan sadržaj.',
+    '- "unknown" koristi samo ako poruka nije dovoljno jasna za sigurnu klasifikaciju.',
+    '- confidence mora biti broj između 0 i 1.',
+    '- reason mora biti kratka strojno-čitljiva oznaka na engleskom.'
+  ].join("\n");
+}
+
+function normalizeSpamClassification(parsed) {
+  const label = String(parsed?.label || "").trim();
+  const confidenceNumber = Number(parsed?.confidence);
+  const reason = typeof parsed?.reason === "string" ? parsed.reason.trim() : "";
+
+  if (
+    ![
+      "support_message",
+      "sales_outreach",
+      "marketing_spam",
+      "phishing_or_malicious",
+      "unknown"
+    ].includes(label)
+  ) {
+    throw new Error("AI spam classification used an unsupported label.");
+  }
+
+  if (!Number.isFinite(confidenceNumber) || confidenceNumber < 0 || confidenceNumber > 1) {
+    throw new Error("AI spam classification did not include a valid confidence.");
+  }
+
+  return {
+    label,
+    confidence: confidenceNumber,
+    reason: reason || "unspecified"
+  };
+}
+
 /**
  * Ask OpenRouter-hosted model to return a structured decision object that the
  * backend can validate safely.
@@ -247,9 +302,55 @@ async function generateReply(message, context, options = {}) {
   }
 }
 
+async function classifySpamCandidate(message, options = {}) {
+  try {
+    const completion = await client.chat.completions.create({
+      model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: buildSpamClassifierPrompt(options)
+        },
+        {
+          role: "user",
+          content: String(message || "").slice(0, 3500)
+        }
+      ]
+    });
+
+    const rawContent = completion.choices?.[0]?.message?.content?.trim();
+
+    if (!rawContent) {
+      throw new Error("AI spam classification response was empty.");
+    }
+
+    const jsonPayload = extractJsonObject(rawContent);
+
+    if (!jsonPayload) {
+      throw new Error("AI spam classification did not contain valid JSON.");
+    }
+
+    return normalizeSpamClassification(JSON.parse(jsonPayload));
+  } catch (error) {
+    console.error("AI spam classification failed:", {
+      message: error.message,
+      responseData: error.response?.data,
+      status: error.status
+    });
+
+    return {
+      label: "unknown",
+      confidence: 0,
+      reason: "spam_classification_failed"
+    };
+  }
+}
+
 module.exports = {
   buildSystemPrompt,
   buildFallbackDecision,
+  classifySpamCandidate,
   generateReply,
   normalizeChannelType
 };

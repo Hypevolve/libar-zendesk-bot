@@ -8,6 +8,7 @@ const zendeskService = require("./services/zendeskService");
 const aiService = require("./services/aiService");
 const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
+const spamFilterService = require("./services/spamFilterService");
 
 const app = express();
 const chatSessions = new Map();
@@ -825,6 +826,27 @@ app.post("/webhook/zendesk", async (req, res) => {
     }
 
     const effectiveHasAttachments = hasAttachments || latestMessageHasAttachments;
+
+    const spamFilterResult = await spamFilterService.evaluateIncomingMessage({
+      channelType,
+      message: normalizedMessage,
+      ticketSummary
+    });
+
+    if (spamFilterResult.shouldBlock) {
+      await zendeskService.addInternalNote(
+        ticketId,
+        spamFilterService.buildSpamFilterNote(spamFilterResult, channelType),
+        ["suspected_spam"]
+      );
+
+      return res.status(200).json({
+        success: true,
+        action: "ignored_spam",
+        channelType,
+        reason: spamFilterResult.reason
+      });
+    }
 
     if (effectiveHasAttachments) {
       await zendeskService.addTagAndNote(
