@@ -1,6 +1,15 @@
 const path = require("path");
 const axios = require("axios");
 const mammoth = require("mammoth");
+const {
+  findBestExcerpt,
+  normalizeText,
+  preprocessSearchQuery,
+  scoreSearchText,
+  stripHtml,
+  tokenize,
+  truncateText
+} = require("./searchUtils");
 
 const {
   ONEDRIVE_TENANT_ID,
@@ -96,35 +105,6 @@ if (hasPartialConfig()) {
   );
 }
 
-function stripHtml(html = "") {
-  return String(html)
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeText(text = "") {
-  return stripHtml(text)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, " ")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenize(text = "") {
-  return normalizeText(text)
-    .split(" ")
-    .filter((token) => token.length >= 2);
-}
-
 function scoreDocument(document, query) {
   const normalizedQuery = normalizeText(query);
   const queryTokens = tokenize(query);
@@ -135,35 +115,15 @@ function scoreDocument(document, query) {
     return 0;
   }
 
-  let score = 0;
+  let score = scoreSearchText(searchText, query);
 
   if (title.includes(normalizedQuery)) {
     score += 15;
   }
 
-  if (searchText.includes(normalizedQuery)) {
-    score += 10;
-  }
-
-  for (const token of queryTokens) {
-    if (title.includes(token)) {
-      score += 4;
-    }
-
-    if (searchText.includes(token)) {
-      score += 1;
-    }
-  }
+  score += scoreSearchText(document.title || "", query) * 2;
 
   return score;
-}
-
-function truncateText(text, maxLength = 1800) {
-  if (!text || text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength).trim()}...`;
 }
 
 function getFileExtension(fileName = "") {
@@ -486,6 +446,7 @@ async function searchOneDriveDetailed(query) {
   }
 
   try {
+    const searchQuery = preprocessSearchQuery(query);
     const documents = await fetchFolderDocuments();
 
     if (documents.length === 0) {
@@ -495,7 +456,8 @@ async function searchOneDriveDetailed(query) {
     const rankedDocuments = documents
       .map((document) => ({
         document,
-        score: scoreDocument(document, query)
+        score: scoreDocument(document, searchQuery),
+        excerpt: findBestExcerpt(document.body || "", searchQuery, 900)
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score)
@@ -506,22 +468,22 @@ async function searchOneDriveDetailed(query) {
     }
 
     const context = rankedDocuments
-      .map(({ document, score }, index) => [
+      .map(({ document, score, excerpt }, index) => [
         `Dokument ${index + 1}:`,
         `Izvor: OneDrive`,
         `Naslov: ${document.title}`,
         `Relevantnost: ${score}`,
-        `Sadržaj: ${truncateText(document.body, 1800)}`
+        `Sadržaj: ${excerpt || truncateText(document.body, 1800)}`
       ].join("\n"))
       .join("\n\n");
 
     return {
       context,
-      articles: rankedDocuments.map(({ document, score }) => ({
+      articles: rankedDocuments.map(({ document, score, excerpt }) => ({
         id: document.id,
         title: document.title,
         score,
-        body: truncateText(document.body, 1800),
+        body: excerpt || truncateText(document.body, 1800),
         source: "onedrive",
         url: document.url || null
       })),

@@ -1,4 +1,13 @@
 const axios = require("axios");
+const {
+  findBestExcerpt,
+  normalizeText,
+  preprocessSearchQuery,
+  scoreSearchText,
+  stripHtml,
+  tokenize,
+  truncateText
+} = require("./searchUtils");
 
 const {
   ZENDESK_SUBDOMAIN,
@@ -118,44 +127,6 @@ const helpCenterCache = {
   expiresAt: 0
 };
 
-/**
- * Remove HTML tags and compress whitespace so articles become safe, compact AI context.
- * This is intentionally simple and dependency-free for a boilerplate project.
- */
-function stripHtml(html = "") {
-  return String(html)
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Normalize text for lightweight keyword relevance scoring.
- * This is not a vector search engine, but it is a material upgrade over
- * "top 3 search hits" because it evaluates the broader article corpus.
- */
-function normalizeText(text = "") {
-  return stripHtml(text)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, " ")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenize(text = "") {
-  return normalizeText(text)
-    .split(" ")
-    .filter((token) => token.length >= 2);
-}
-
 function createArticleSearchText(article) {
   return [
     article.title || "",
@@ -180,35 +151,15 @@ function scoreArticle(article, query) {
     return 0;
   }
 
-  let score = 0;
+  let score = scoreSearchText(searchText, query);
 
   if (title.includes(normalizedQuery)) {
     score += 15;
   }
 
-  if (searchText.includes(normalizedQuery)) {
-    score += 10;
-  }
-
-  for (const token of queryTokens) {
-    if (title.includes(token)) {
-      score += 4;
-    }
-
-    if (searchText.includes(token)) {
-      score += 1;
-    }
-  }
+  score += scoreSearchText(article.title || "", query) * 2;
 
   return score;
-}
-
-function truncateText(text, maxLength = 1800) {
-  if (!text || text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, maxLength).trim()}...`;
 }
 
 function dedupeRankedArticles(rankedArticles) {
@@ -271,6 +222,7 @@ async function searchHelpCenter(query) {
 
 async function searchHelpCenterDetailed(query) {
   try {
+    const searchQuery = preprocessSearchQuery(query);
     const allArticles = await fetchAllHelpCenterArticles();
 
     if (allArticles.length === 0) {
@@ -280,7 +232,8 @@ async function searchHelpCenterDetailed(query) {
     const rankedArticles = allArticles
       .map((article) => ({
         article,
-        score: scoreArticle(article, query)
+        score: scoreArticle(article, searchQuery),
+        excerpt: findBestExcerpt(article.body || "", searchQuery, 900)
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score);
@@ -293,9 +246,9 @@ async function searchHelpCenterDetailed(query) {
     }
 
     const context = uniqueRankedArticles
-      .map(({ article, score }, index) => {
+      .map(({ article, score, excerpt }, index) => {
         const title = stripHtml(article.title || "Bez naslova");
-        const body = truncateText(stripHtml(article.body || ""));
+        const body = excerpt || truncateText(stripHtml(article.body || ""));
 
         return [
           `Članak ${index + 1}:`,
@@ -308,11 +261,11 @@ async function searchHelpCenterDetailed(query) {
 
     return {
       context: context || null,
-      articles: uniqueRankedArticles.map(({ article, score }) => ({
+      articles: uniqueRankedArticles.map(({ article, score, excerpt }) => ({
         id: article.id,
         title: stripHtml(article.title || "Bez naslova"),
         score,
-        body: truncateText(stripHtml(article.body || ""))
+        body: excerpt || truncateText(stripHtml(article.body || ""))
       })),
       topScore: uniqueRankedArticles[0]?.score || 0,
       totalMatches: uniqueRankedArticles.length

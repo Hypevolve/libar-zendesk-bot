@@ -11,12 +11,21 @@ function mergeKnowledgeResults({ zendeskKnowledge = null, oneDriveKnowledge = nu
   const oneDriveArticles = normalizeKnowledgeArticles(oneDriveKnowledge);
   const zendeskArticles = normalizeKnowledgeArticles(zendeskKnowledge);
 
-  const candidates = oneDriveArticles.length > 0
-    ? [
-        ...oneDriveArticles,
-        ...zendeskArticles
-      ].slice(0, KNOWLEDGE_CONTEXT_ITEMS)
-    : zendeskArticles.slice(0, KNOWLEDGE_CONTEXT_ITEMS);
+  const candidates = [...oneDriveArticles, ...zendeskArticles]
+    .map((entry, index) => ({
+      ...entry,
+      _sortScore: Number(entry.score) + (entry.source === "onedrive" ? 0.25 : 0),
+      _sortIndex: index
+    }))
+    .sort((left, right) => {
+      if (right._sortScore !== left._sortScore) {
+        return right._sortScore - left._sortScore;
+      }
+
+      return left._sortIndex - right._sortIndex;
+    })
+    .slice(0, KNOWLEDGE_CONTEXT_ITEMS)
+    .map(({ _sortScore, _sortIndex, ...entry }) => entry);
 
   if (candidates.length === 0) {
     return null;
