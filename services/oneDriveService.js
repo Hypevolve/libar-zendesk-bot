@@ -1,12 +1,5 @@
 const axios = require("axios");
-const fs = require("fs/promises");
-const os = require("os");
-const path = require("path");
-const { randomUUID } = require("crypto");
-const { execFile } = require("child_process");
-const { promisify } = require("util");
-
-const execFileAsync = promisify(execFile);
+const mammoth = require("mammoth");
 
 const {
   ONEDRIVE_TENANT_ID,
@@ -396,21 +389,11 @@ async function collectDocuments(accessToken, driveId, folderId) {
 }
 
 async function parseDocxBuffer(buffer) {
-  const tempFilePath = path.join(os.tmpdir(), `libar-onedrive-${randomUUID()}.docx`);
+  const result = await mammoth.extractRawText({
+    buffer
+  });
 
-  try {
-    await fs.writeFile(tempFilePath, buffer);
-    const { stdout } = await execFileAsync("/usr/bin/textutil", [
-      "-convert",
-      "txt",
-      "-stdout",
-      tempFilePath
-    ]);
-
-    return stdout.trim();
-  } finally {
-    await fs.unlink(tempFilePath).catch(() => {});
-  }
+  return String(result?.value || "").trim();
 }
 
 async function parseDocumentContent(item, buffer) {

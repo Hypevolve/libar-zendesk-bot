@@ -14,7 +14,7 @@ const app = express();
 const chatSessions = new Map();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 5;
-const BLOCKED_AUTOPILOT_TAGS = new Set(["awaiting_human", "human_active", "resolved"]);
+const BLOCKED_AUTOPILOT_TAGS = new Set(["human_active", "resolved"]);
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -541,9 +541,10 @@ function getAutomationBlockReason(ticketSummary, messages, channelType) {
   }
 
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
+  const latestMessage = getLatestPublicMessage(messages);
 
   if (tags.some((tag) => BLOCKED_AUTOPILOT_TAGS.has(tag))) {
-    return tags.includes("human_active") ? "human_active" : "awaiting_human";
+    return "human_active";
   }
 
   const conversationState = buildConversationState(ticketSummary, messages);
@@ -552,14 +553,15 @@ function getAutomationBlockReason(ticketSummary, messages, channelType) {
     return "human_active";
   }
 
-  if (conversationState.tone === "awaiting-human") {
-    return "awaiting_human";
-  }
-
-  const latestMessage = getLatestPublicMessage(messages);
-
   if (!latestMessage) {
     return "no_public_messages";
+  }
+
+  if (
+    conversationState.tone === "awaiting-human" &&
+    latestMessage.role !== "user"
+  ) {
+    return "awaiting_human";
   }
 
   if (latestMessage.role !== "user") {
