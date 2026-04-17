@@ -624,13 +624,19 @@ function getResolutionPrompt(session, ticketSummary) {
 
 function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "web_chat" }) {
   const sourceSummary = (knowledge?.articles || [])
-    .map((article) => `${article.title} (${article.score})`)
+    .map((article) => {
+      const sourceType = article.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak";
+      return `${sourceType}: ${article.title} (${article.score})`;
+    })
     .join(", ");
 
   return [
     `Kanal: ${formatChannelLabel(channelType)}`,
     `AI outcome: ${outcome.type}`,
     `Upit korisnika: ${userMessage}`,
+    knowledge?.primarySource
+      ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
+      : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
     sourceSummary ? `Korišteni izvori: ${sourceSummary}` : "Korišteni izvori: nema",
     outcome.reason ? `Razlog: ${outcome.reason}` : null
