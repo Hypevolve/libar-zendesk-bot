@@ -645,6 +645,39 @@ function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "we
     .join("\n");
 }
 
+function buildFocusedKnowledgeContext(knowledge, limit = 2) {
+  const articles = Array.isArray(knowledge?.articles) ? knowledge.articles.slice(0, limit) : [];
+
+  if (articles.length === 0) {
+    return "";
+  }
+
+  return articles
+    .map((entry, index) => [
+      `Izvor ${index + 1}:`,
+      `Tip: ${entry.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak"}`,
+      `Naslov: ${entry.title}`,
+      `Relevantnost: ${entry.score}`,
+      `Sadržaj: ${entry.body || ""}`
+    ].join("\n"))
+    .join("\n\n");
+}
+
+function shouldAttemptGroundedAnswerFallback(knowledge) {
+  const articles = Array.isArray(knowledge?.articles) ? knowledge.articles : [];
+  const topArticle = articles[0] || null;
+
+  if (!knowledge?.context || !knowledge?.topScore || !topArticle) {
+    return false;
+  }
+
+  if (knowledge.topScore < Math.max(KNOWLEDGE_MIN_TOP_SCORE + 2, 8)) {
+    return false;
+  }
+
+  return topArticle.source === "onedrive" || knowledge.primarySource === "onedrive";
+}
+
 async function determineChatOutcome(
   userMessage,
   knowledge,
@@ -696,6 +729,22 @@ async function determineChatOutcome(
   }
 
   if (aiDecision.decision === "soft_handoff") {
+    if (shouldAttemptGroundedAnswerFallback(knowledge)) {
+      const focusedContext = buildFocusedKnowledgeContext(knowledge, 2);
+      const groundedReply = await aiService.generateGroundedAnswer(userMessage, focusedContext, {
+        channelType
+      });
+
+      if (groundedReply) {
+        return {
+          type: "safe_answer",
+          stateTag: "ai_active",
+          reason: "grounded_answer_fallback",
+          customerMessage: groundedReply
+        };
+      }
+    }
+
     return {
       type: "soft_handoff",
       stateTag: "awaiting_human",

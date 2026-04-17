@@ -224,6 +224,27 @@ function buildSpamClassifierPrompt({ channelType = "email" } = {}) {
   ].join("\n");
 }
 
+function buildGroundedAnswerPrompt(context, { channelType = "unknown" } = {}) {
+  return [
+    "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
+    "",
+    "Zadatak ti je napisati kratak, koristan i prirodan odgovor korisniku isključivo na temelju dostavljenog konteksta.",
+    "",
+    "PRAVILA:",
+    "- Koristi samo informacije koje su izravno podržane kontekstom.",
+    "- Ne izmišljaj dodatne informacije.",
+    "- Ako kontekst sadrži konkretne korake ili preporuke, sažmi ih u jasan odgovor.",
+    "- Nemoj spominjati AI, kontekst, bazu znanja ni interne procese.",
+    "- Nemoj dodavati subject ni potpis.",
+    "- Vrati samo gotov odgovor za korisnika, bez JSON-a i bez dodatnih oznaka.",
+    "",
+    ...buildChannelInstructions(channelType),
+    "",
+    "KONTEKST:",
+    context || "Nema pronađenog konteksta."
+  ].join("\n");
+}
+
 function normalizeSpamClassification(parsed) {
   const label = String(parsed?.label || "").trim();
   const confidenceNumber = Number(parsed?.confidence);
@@ -351,10 +372,47 @@ async function classifySpamCandidate(message, options = {}) {
   }
 }
 
+async function generateGroundedAnswer(message, context, options = {}) {
+  try {
+    const completion = await client.chat.completions.create({
+      model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+      temperature: 0.1,
+      messages: [
+        {
+          role: "system",
+          content: buildGroundedAnswerPrompt(context, options)
+        },
+        {
+          role: "user",
+          content: String(message || "").trim()
+        }
+      ]
+    });
+
+    const reply = completion.choices?.[0]?.message?.content?.trim();
+
+    if (!reply) {
+      throw new Error("AI grounded answer was empty.");
+    }
+
+    return reply;
+  } catch (error) {
+    console.error("AI grounded answer generation failed:", {
+      message: error.message,
+      responseData: error.response?.data,
+      status: error.status
+    });
+
+    return "";
+  }
+}
+
 module.exports = {
+  buildGroundedAnswerPrompt,
   buildSystemPrompt,
   buildFallbackDecision,
   classifySpamCandidate,
+  generateGroundedAnswer,
   generateReply,
   normalizeChannelType
 };
