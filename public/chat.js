@@ -311,6 +311,18 @@ function shouldGateComposerForEntryFlow() {
   return !sessionId && onboarding.stage === "initial" && onboarding.entryFlow.stage !== "ready";
 }
 
+function shouldHideMessagesForEntryFlow() {
+  return !localStorage.getItem(storageKey) && onboarding.stage === "initial" && !closedConversationState;
+}
+
+function syncMessagesVisibility() {
+  if (!messagesEl) {
+    return;
+  }
+
+  messagesEl.classList.toggle("hidden", shouldHideMessagesForEntryFlow());
+}
+
 function syncComposerVisibility() {
   const shouldShowComposer = composerEnabled && !shouldGateComposerForEntryFlow();
 
@@ -349,6 +361,7 @@ function setEntryFlowState(nextState = {}) {
   saveOnboardingState();
   renderEntryFlow();
   syncComposerVisibility();
+  syncMessagesVisibility();
 }
 
 function getEntryFlowSummary() {
@@ -412,6 +425,7 @@ function renderEntryFlow() {
 
   const shouldShow = !localStorage.getItem(storageKey) && onboarding.stage === "initial" && !closedConversationState;
   entryFlowPanel.classList.toggle("hidden", !shouldShow);
+  syncMessagesVisibility();
 
   if (!shouldShow) {
     return;
@@ -458,6 +472,7 @@ function hideClosedConversationPanel() {
   reviewConversationButton?.classList.remove("is-active");
   renderEntryFlow();
   syncComposerVisibility();
+  syncMessagesVisibility();
 }
 
 function setResolutionPrompt(prompt) {
