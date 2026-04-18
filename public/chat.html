@@ -82,6 +82,41 @@
           <button id="new-conversation-button" class="closed-conversation-panel__button is-primary" type="button">Započni novi razgovor</button>
         </div>
       </div>
+      <section id="entry-flow-panel" class="entry-flow-panel hidden" aria-live="polite">
+        <div class="entry-flow-panel__intro">
+          <p class="entry-flow-panel__eyebrow">Brži početak</p>
+          <h2 id="entry-flow-title" class="entry-flow-panel__title">Odaberite vrstu upita</h2>
+          <p id="entry-flow-subtitle" class="entry-flow-panel__subtitle">Možete odabrati temu ili odmah napisati upit ručno.</p>
+        </div>
+
+        <div id="entry-flow-choices" class="entry-flow-panel__choices"></div>
+
+        <form id="entry-flow-prompt-form" class="entry-flow-prompt hidden">
+          <label id="entry-prompt-label" class="entry-flow-prompt__label" for="entry-prompt-input"></label>
+          <textarea
+            id="entry-prompt-input"
+            class="entry-flow-prompt__input"
+            rows="2"
+            maxlength="240"
+            placeholder=""></textarea>
+          <div class="entry-flow-prompt__actions">
+            <button id="entry-flow-back" class="entry-flow-prompt__button is-secondary" type="button">Natrag</button>
+            <button class="entry-flow-prompt__button is-primary" type="submit">Nastavi</button>
+          </div>
+        </form>
+
+        <div id="entry-flow-summary" class="entry-flow-summary hidden">
+          <div>
+            <p class="entry-flow-summary__label">Odabrana tema</p>
+            <p id="entry-flow-summary-text" class="entry-flow-summary__text"></p>
+          </div>
+          <button id="entry-flow-change" class="entry-flow-summary__button" type="button">Promijeni</button>
+        </div>
+
+        <div class="entry-flow-panel__actions">
+          <button id="entry-flow-skip" class="entry-flow-panel__skip" type="button">Napišite upit ručno</button>
+        </div>
+      </section>
       <div id="messages" class="messages"></div>
 
       <!-- ── Input Area ── -->

@@ -377,7 +377,8 @@ async function createChatTicket({
   initialMessage,
   subject,
   uploadTokens = [],
-  externalId = null
+  externalId = null,
+  additionalTags = []
 }) {
   try {
     validateZendeskConfig();
@@ -401,7 +402,7 @@ async function createChatTicket({
           email: requesterEmail
         },
         ...(externalId ? { external_id: externalId } : {}),
-        additional_tags: ["webshop_chat", "ai_chat", "ai_active"]
+        additional_tags: [...new Set(["webshop_chat", "ai_chat", "ai_active", ...additionalTags])]
       }
     });
 

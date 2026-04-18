@@ -17,6 +17,18 @@ const closedConversationTitle = document.getElementById("closed-conversation-tit
 const closedConversationText = document.getElementById("closed-conversation-text");
 const reviewConversationButton = document.getElementById("review-conversation-button");
 const newConversationButton = document.getElementById("new-conversation-button");
+const entryFlowPanel = document.getElementById("entry-flow-panel");
+const entryFlowTitle = document.getElementById("entry-flow-title");
+const entryFlowSubtitle = document.getElementById("entry-flow-subtitle");
+const entryFlowChoices = document.getElementById("entry-flow-choices");
+const entryFlowPromptForm = document.getElementById("entry-flow-prompt-form");
+const entryPromptLabel = document.getElementById("entry-prompt-label");
+const entryPromptInput = document.getElementById("entry-prompt-input");
+const entryFlowBackButton = document.getElementById("entry-flow-back");
+const entryFlowSummary = document.getElementById("entry-flow-summary");
+const entryFlowSummaryText = document.getElementById("entry-flow-summary-text");
+const entryFlowChangeButton = document.getElementById("entry-flow-change");
+const entryFlowSkipButton = document.getElementById("entry-flow-skip");
 const messageForm = document.getElementById("message-form");
 const messagesEl = document.getElementById("messages");
 const errorBox = document.getElementById("error-box");
@@ -26,6 +38,44 @@ const imageInput = document.getElementById("image-input");
 const filesIndicator = document.getElementById("pending-files-indicator");
 const pendingFilesList = document.getElementById("pending-files-list");
 const chatInputArea = document.querySelector(".chat-input-area");
+const ENTRY_FLOW_VERSION = "v1";
+const ENTRY_FLOW_INTENTS = [
+  {
+    id: "narudzba",
+    label: "Narudžba",
+    description: "Pitanja o statusu, izmjeni ili detaljima narudžbe.",
+    promptLabel: "Ako imate broj narudžbe, upišite ga ovdje.",
+    promptPlaceholder: "Primjer: #12458"
+  },
+  {
+    id: "dostava",
+    label: "Dostava",
+    description: "Rok, cijena ili način isporuke.",
+    promptLabel: "Što vas zanima oko dostave?",
+    promptPlaceholder: "Primjer: Rok dostave za Split"
+  },
+  {
+    id: "otkup_knjiga",
+    label: "Otkup knjiga",
+    description: "Želite prodati knjige ili zatražiti procjenu.",
+    promptLabel: "Koje knjige nudite za otkup?",
+    promptPlaceholder: "Primjer: 20 stručnih knjiga iz ekonomije"
+  },
+  {
+    id: "reklamacija_problem",
+    label: "Reklamacija ili problem",
+    description: "Oštećenje, pogrešna pošiljka ili drugi problem.",
+    promptLabel: "Opišite problem u jednoj rečenici.",
+    promptPlaceholder: "Primjer: Stigla je kriva knjiga"
+  },
+  {
+    id: "opci_upit",
+    label: "Opći upit",
+    description: "Treba vam pomoć oko nečeg drugog.",
+    promptLabel: "",
+    promptPlaceholder: ""
+  }
+];
 let pollTimer = null;
 let streamSource = null;
 let lastRenderedSignature = "";
@@ -59,8 +109,16 @@ const onboarding = {
     name: "",
     email: ""
   },
-  messages: []
+  messages: [],
+  entryFlow: {
+    stage: "choices",
+    selectedEntryIntent: "",
+    entryPromptAnswer: "",
+    entryFlowSkipped: false,
+    entryFlowVersion: ENTRY_FLOW_VERSION
+  }
 };
+let composerEnabled = true;
 
 function showWidget() {
   widget.classList.remove("hidden");
@@ -70,6 +128,13 @@ function showWidget() {
 
   if (!messageInput.disabled && !chatInputArea?.classList.contains("hidden")) {
     messageInput.focus();
+  } else if (entryFlowPanel && !entryFlowPanel.classList.contains("hidden")) {
+    const focusableTarget =
+      entryFlowPromptForm && !entryFlowPromptForm.classList.contains("hidden")
+        ? entryPromptInput
+        : entryFlowChoices?.querySelector("button");
+
+    focusableTarget?.focus();
   }
 }
 
@@ -175,6 +240,13 @@ function resetOnboardingState() {
     email: ""
   };
   onboarding.messages = [];
+  onboarding.entryFlow = {
+    stage: "choices",
+    selectedEntryIntent: "",
+    entryPromptAnswer: "",
+    entryFlowSkipped: false,
+    entryFlowVersion: ENTRY_FLOW_VERSION
+  };
   canonicalMessages = [];
   optimisticMessages = [];
 }
@@ -206,12 +278,177 @@ function closeStream() {
 }
 
 function setComposerEnabled(enabled) {
+  composerEnabled = enabled;
+  syncComposerVisibility();
+}
+
+function getEntryIntentConfig(intentId) {
+  return ENTRY_FLOW_INTENTS.find((intent) => intent.id === intentId) || null;
+}
+
+function normalizeEntryFlow(savedEntryFlow = {}) {
+  const selectedIntent = getEntryIntentConfig(savedEntryFlow.selectedEntryIntent)
+    ? savedEntryFlow.selectedEntryIntent
+    : "";
+  const stage = ["choices", "prompt", "ready"].includes(savedEntryFlow.stage)
+    ? savedEntryFlow.stage
+    : "choices";
+
+  return {
+    stage: selectedIntent || savedEntryFlow.entryFlowSkipped ? stage : "choices",
+    selectedEntryIntent: selectedIntent,
+    entryPromptAnswer: typeof savedEntryFlow.entryPromptAnswer === "string"
+      ? savedEntryFlow.entryPromptAnswer
+      : "",
+    entryFlowSkipped: Boolean(savedEntryFlow.entryFlowSkipped),
+    entryFlowVersion: ENTRY_FLOW_VERSION
+  };
+}
+
+function shouldGateComposerForEntryFlow() {
+  const sessionId = localStorage.getItem(storageKey);
+
+  return !sessionId && onboarding.stage === "initial" && onboarding.entryFlow.stage !== "ready";
+}
+
+function syncComposerVisibility() {
+  const shouldShowComposer = composerEnabled && !shouldGateComposerForEntryFlow();
+
   if (chatInputArea) {
-    chatInputArea.classList.toggle("hidden", !enabled);
+    chatInputArea.classList.toggle("hidden", !shouldShowComposer);
   }
 
   if (messageInput) {
-    messageInput.disabled = !enabled;
+    messageInput.disabled = !shouldShowComposer;
+  }
+}
+
+function trackEntryFlowEvent(name, extra = {}) {
+  const payload = {
+    name,
+    entryFlowVersion: ENTRY_FLOW_VERSION,
+    selectedEntryIntent: onboarding.entryFlow.selectedEntryIntent || null,
+    entryFlowSkipped: onboarding.entryFlow.entryFlowSkipped,
+    stage: onboarding.entryFlow.stage,
+    timestamp: new Date().toISOString(),
+    ...extra
+  };
+
+  window.dispatchEvent(new CustomEvent("libar-chat-entry-flow", { detail: payload }));
+
+  window.LibarChatAnalytics = window.LibarChatAnalytics || [];
+  window.LibarChatAnalytics.push(payload);
+}
+
+function setEntryFlowState(nextState = {}) {
+  onboarding.entryFlow = {
+    ...onboarding.entryFlow,
+    ...nextState,
+    entryFlowVersion: ENTRY_FLOW_VERSION
+  };
+  saveOnboardingState();
+  renderEntryFlow();
+  syncComposerVisibility();
+}
+
+function getEntryFlowSummary() {
+  if (onboarding.entryFlow.entryFlowSkipped) {
+    return "Ručno upisan upit";
+  }
+
+  const selectedIntent = getEntryIntentConfig(onboarding.entryFlow.selectedEntryIntent);
+
+  if (!selectedIntent) {
+    return "";
+  }
+
+  if (onboarding.entryFlow.entryPromptAnswer) {
+    return `${selectedIntent.label} · ${onboarding.entryFlow.entryPromptAnswer}`;
+  }
+
+  return selectedIntent.label;
+}
+
+function resetEntryFlowChoices() {
+  setEntryFlowState({
+    stage: "choices",
+    selectedEntryIntent: "",
+    entryPromptAnswer: "",
+    entryFlowSkipped: false
+  });
+}
+
+function renderEntryFlowChoices() {
+  if (!entryFlowChoices) {
+    return;
+  }
+
+  entryFlowChoices.innerHTML = "";
+
+  ENTRY_FLOW_INTENTS.forEach((intent) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "entry-flow-choice";
+    button.dataset.entryIntent = intent.id;
+
+    const title = document.createElement("span");
+    title.className = "entry-flow-choice__title";
+    title.textContent = intent.label;
+
+    const description = document.createElement("span");
+    description.className = "entry-flow-choice__description";
+    description.textContent = intent.description;
+
+    button.appendChild(title);
+    button.appendChild(description);
+    entryFlowChoices.appendChild(button);
+  });
+}
+
+function renderEntryFlow() {
+  if (!entryFlowPanel) {
+    return;
+  }
+
+  const shouldShow = !localStorage.getItem(storageKey) && onboarding.stage === "initial" && !closedConversationState;
+  entryFlowPanel.classList.toggle("hidden", !shouldShow);
+
+  if (!shouldShow) {
+    return;
+  }
+
+  const selectedIntent = getEntryIntentConfig(onboarding.entryFlow.selectedEntryIntent);
+  const showPrompt =
+    onboarding.entryFlow.stage === "prompt" &&
+    selectedIntent &&
+    selectedIntent.promptLabel;
+  const showSummary = onboarding.entryFlow.stage === "ready";
+
+  if (entryFlowTitle) {
+    entryFlowTitle.textContent = selectedIntent && showPrompt
+      ? selectedIntent.label
+      : "Odaberite vrstu upita";
+  }
+
+  if (entryFlowSubtitle) {
+    entryFlowSubtitle.textContent = selectedIntent && showPrompt
+      ? "Jedan kratak podatak pomoći će nam da brže usmjerimo razgovor."
+      : "Možete odabrati temu ili odmah napisati upit ručno.";
+  }
+
+  entryFlowChoices?.classList.toggle("hidden", onboarding.entryFlow.stage !== "choices");
+  entryFlowPromptForm?.classList.toggle("hidden", !showPrompt);
+  entryFlowSummary?.classList.toggle("hidden", !showSummary);
+  entryFlowSkipButton?.classList.toggle("hidden", onboarding.entryFlow.stage !== "choices");
+
+  if (showPrompt) {
+    entryPromptLabel.textContent = selectedIntent.promptLabel;
+    entryPromptInput.placeholder = selectedIntent.promptPlaceholder;
+    entryPromptInput.value = onboarding.entryFlow.entryPromptAnswer || "";
+  }
+
+  if (showSummary && entryFlowSummaryText) {
+    entryFlowSummaryText.textContent = getEntryFlowSummary();
   }
 }
 
@@ -219,6 +456,8 @@ function hideClosedConversationPanel() {
   closedConversationState = null;
   closedConversationPanel?.classList.add("hidden");
   reviewConversationButton?.classList.remove("is-active");
+  renderEntryFlow();
+  syncComposerVisibility();
 }
 
 function setResolutionPrompt(prompt) {
@@ -286,6 +525,7 @@ function startNewConversationFlow() {
   lastRenderedSignature = "";
   seedWelcomeState();
   updateMessages(onboarding.messages);
+  renderEntryFlow();
   applyConversationState({
     conversationState: {
       tone: "ai-active",
@@ -687,12 +927,28 @@ async function startZendeskChat() {
   const isForm = pendingFiles.length > 0;
   let body;
   let headers = {};
+  const entryPayload = {
+    entryFlowVersion: ENTRY_FLOW_VERSION,
+    ...(onboarding.entryFlow.selectedEntryIntent
+      ? { entryIntent: onboarding.entryFlow.selectedEntryIntent }
+      : {}),
+    ...(onboarding.entryFlow.entryPromptAnswer
+      ? { entryPromptAnswer: onboarding.entryFlow.entryPromptAnswer.trim() }
+      : {})
+  };
 
   if (isForm) {
     body = new FormData();
     body.append("name", onboarding.draft.name);
     body.append("email", onboarding.draft.email);
     body.append("message", onboarding.draft.firstMessage);
+    body.append("entryFlowVersion", entryPayload.entryFlowVersion);
+    if (entryPayload.entryIntent) {
+      body.append("entryIntent", entryPayload.entryIntent);
+    }
+    if (entryPayload.entryPromptAnswer) {
+      body.append("entryPromptAnswer", entryPayload.entryPromptAnswer);
+    }
     for (const file of pendingFiles) {
       body.append("attachments", file);
     }
@@ -701,7 +957,8 @@ async function startZendeskChat() {
     body = JSON.stringify({
       name: onboarding.draft.name,
       email: onboarding.draft.email,
-      message: onboarding.draft.firstMessage
+      message: onboarding.draft.firstMessage,
+      ...entryPayload
     });
   }
 
@@ -723,11 +980,15 @@ async function startZendeskChat() {
   saveSessionSnapshot(data.session);
   clearOnboardingState();
   onboarding.stage = "connected";
+  trackEntryFlowEvent("chat_started", {
+    hasPromptAnswer: Boolean(onboarding.entryFlow.entryPromptAnswer)
+  });
   if (data.session) {
     applyConversationState(data.session);
   }
   setResolutionPrompt(data.resolutionPrompt || data.session?.resolutionPrompt || null);
   applySessionMessages(data.messages);
+  renderEntryFlow();
   closeStream();
   stopPolling();
   startStream(data.sessionId);
@@ -738,6 +999,8 @@ async function handleOnboardingMessage(message) {
   if (onboarding.stage === "initial") {
     onboarding.draft.firstMessage = message;
     onboarding.stage = "awaiting_name";
+    renderEntryFlow();
+    syncComposerVisibility();
     pushMessage("assistant", "Hvala. Kako se zovete?");
     return;
   }
@@ -805,6 +1068,7 @@ async function loadExistingSession() {
       clearResolutionPrompt();
       applyConversationState({ conversationState: restoreData.conversationState });
       applySessionMessages(restoreData.messages || []);
+      renderEntryFlow();
       showClosedConversationPanel(restoreData);
       return true;
     }
@@ -824,6 +1088,7 @@ async function loadExistingSession() {
       applyConversationState(restoreData.session);
       setResolutionPrompt(restoreData.session?.resolutionPrompt || null);
       applySessionMessages(restoreData.session.messages);
+      renderEntryFlow();
       closeStream();
       stopPolling();
       startStream(restoreData.session.sessionId);
@@ -852,6 +1117,7 @@ async function loadExistingSession() {
         applyConversationState(data.session);
         setResolutionPrompt(data.session?.resolutionPrompt || null);
         applySessionMessages(data.session.messages);
+        renderEntryFlow();
 
         if (data.session?.conversationState?.tone === "resolved") {
           localStorage.removeItem(storageKey);
@@ -901,6 +1167,7 @@ async function loadExistingSession() {
       onboarding.stage = parsed.stage || "initial";
       onboarding.draft = parsed.draft || onboarding.draft;
       onboarding.messages = parsed.messages || [];
+      onboarding.entryFlow = normalizeEntryFlow(parsed.entryFlow || onboarding.entryFlow);
       canonicalMessages = [];
       optimisticMessages = [];
     } catch (error) {
@@ -911,6 +1178,7 @@ async function loadExistingSession() {
   seedWelcomeState();
   hideClosedConversationPanel();
   clearResolutionPrompt();
+  renderEntryFlow();
   setComposerEnabled(true);
   canonicalMessages = [];
   optimisticMessages = [];
@@ -924,6 +1192,9 @@ function initializeEmbedMode() {
 
   document.body.classList.add("embed-mode");
   showWidget();
+  if (!localStorage.getItem(storageKey) && onboarding.stage === "initial") {
+    trackEntryFlowEvent("widget_opened", { mode: "embed" });
+  }
   postEmbedMessage({ action: "ready" });
 }
 
@@ -942,6 +1213,9 @@ function handleEmbedMessage(event) {
 launcher.addEventListener("click", () => {
   if (widget.classList.contains("hidden")) {
     showWidget();
+    if (!localStorage.getItem(storageKey) && onboarding.stage === "initial") {
+      trackEntryFlowEvent("widget_opened");
+    }
     return;
   }
 
@@ -956,6 +1230,78 @@ reviewConversationButton?.addEventListener("click", () => {
 });
 
 newConversationButton?.addEventListener("click", startNewConversationFlow);
+entryFlowChoices?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-entry-intent]");
+
+  if (!button) {
+    return;
+  }
+
+  const selectedIntent = getEntryIntentConfig(button.dataset.entryIntent);
+
+  if (!selectedIntent) {
+    return;
+  }
+
+  trackEntryFlowEvent("intent_selected", {
+    intent: selectedIntent.id
+  });
+
+  if (!selectedIntent.promptLabel) {
+    setEntryFlowState({
+      stage: "ready",
+      selectedEntryIntent: selectedIntent.id,
+      entryPromptAnswer: "",
+      entryFlowSkipped: false
+    });
+    messageInput?.focus();
+    return;
+  }
+
+  setEntryFlowState({
+    stage: "prompt",
+    selectedEntryIntent: selectedIntent.id,
+    entryPromptAnswer: "",
+    entryFlowSkipped: false
+  });
+  entryPromptInput?.focus();
+});
+
+entryFlowSkipButton?.addEventListener("click", () => {
+  trackEntryFlowEvent("entry_skipped");
+  setEntryFlowState({
+    stage: "ready",
+    selectedEntryIntent: "",
+    entryPromptAnswer: "",
+    entryFlowSkipped: true
+  });
+  messageInput?.focus();
+});
+
+entryFlowBackButton?.addEventListener("click", () => {
+  resetEntryFlowChoices();
+});
+
+entryFlowChangeButton?.addEventListener("click", () => {
+  resetEntryFlowChoices();
+});
+
+entryFlowPromptForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const promptValue = entryPromptInput?.value.trim() || "";
+
+  setEntryFlowState({
+    stage: "ready",
+    entryPromptAnswer: promptValue,
+    entryFlowSkipped: false
+  });
+
+  trackEntryFlowEvent("prompt_completed", {
+    hasPromptAnswer: Boolean(promptValue)
+  });
+
+  messageInput?.focus();
+});
 
 messagesEl.addEventListener("click", async (event) => {
   const actionButton = event.target.closest("[data-resolve-action]");
@@ -1250,5 +1596,6 @@ messageInput.addEventListener("input", () => {
 });
 
 window.addEventListener("message", handleEmbedMessage);
+renderEntryFlowChoices();
 initializeEmbedMode();
 loadExistingSession();

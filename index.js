@@ -15,6 +15,14 @@ const chatSessions = new Map();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 5;
 const BLOCKED_AUTOPILOT_TAGS = new Set(["human_active", "resolved"]);
+const ENTRY_FLOW_VERSION = "v1";
+const ENTRY_INTENT_LABELS = {
+  narudzba: "Narudžba",
+  dostava: "Dostava",
+  otkup_knjiga: "Otkup knjiga",
+  reklamacija_problem: "Reklamacija ili problem",
+  opci_upit: "Opći upit"
+};
 const chatUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -818,6 +826,65 @@ function normalizeMessage(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeEntryIntent(value) {
+  const normalized = normalizeMessage(value).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ENTRY_INTENT_LABELS, normalized) ? normalized : "";
+}
+
+function normalizeEntryPromptAnswer(value) {
+  return normalizeMessage(value).slice(0, 240);
+}
+
+function normalizeEntryFlowVersion(value) {
+  return normalizeMessage(value) === ENTRY_FLOW_VERSION ? ENTRY_FLOW_VERSION : "";
+}
+
+function buildEntryContextMessage({ message, entryIntent, entryPromptAnswer }) {
+  const normalizedMessage = normalizeMessage(message);
+
+  if (!normalizedMessage) {
+    return "";
+  }
+
+  const parts = [normalizedMessage];
+
+  if (entryIntent && ENTRY_INTENT_LABELS[entryIntent]) {
+    parts.push(`Kategorija upita: ${ENTRY_INTENT_LABELS[entryIntent]}`);
+  }
+
+  if (entryPromptAnswer) {
+    parts.push(`Dodatne informacije: ${entryPromptAnswer}`);
+  }
+
+  return parts.join("\n");
+}
+
+function buildEntryFlowTags({ entryIntent, entryFlowVersion }) {
+  if (entryFlowVersion !== ENTRY_FLOW_VERSION) {
+    return [];
+  }
+
+  if (entryIntent) {
+    return [`entry_${entryIntent}`];
+  }
+
+  return ["entry_skipped"];
+}
+
+function buildEntryFlowNote({ entryIntent, entryPromptAnswer, entryFlowVersion }) {
+  if (entryFlowVersion !== ENTRY_FLOW_VERSION) {
+    return "";
+  }
+
+  return [
+    "Entry flow: web widget v1",
+    entryIntent
+      ? `Odabrana tema: ${ENTRY_INTENT_LABELS[entryIntent] || entryIntent}`
+      : "Odabrana tema: korisnik je preskočio quick pick",
+    entryPromptAnswer ? `Dodatni odgovor: ${entryPromptAnswer}` : "Dodatni odgovor: nema"
+  ].join("\n");
+}
+
 /**
  * Central webhook entry point for Zendesk.
  *
@@ -1008,6 +1075,9 @@ app.post("/webhook/zendesk", async (req, res) => {
 app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res) => {
   const { name, email } = req.body || {};
   const message = normalizeMessage(req.body?.message);
+  const entryIntent = normalizeEntryIntent(req.body?.entryIntent);
+  const entryPromptAnswer = normalizeEntryPromptAnswer(req.body?.entryPromptAnswer);
+  const entryFlowVersion = normalizeEntryFlowVersion(req.body?.entryFlowVersion);
   const files = getUploadedFiles(req);
 
   if (!name || !email || !message) {
@@ -1019,6 +1089,20 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
 
   try {
     const initialSessionKey = randomUUID();
+    const entryContextMessage = buildEntryContextMessage({
+      message,
+      entryIntent,
+      entryPromptAnswer
+    });
+    const entryFlowTags = buildEntryFlowTags({
+      entryIntent,
+      entryFlowVersion
+    });
+    const entryFlowNote = buildEntryFlowNote({
+      entryIntent,
+      entryPromptAnswer,
+      entryFlowVersion
+    });
     const uploadedAttachments = await zendeskService.uploadAttachments(files);
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
     const { ticketId, requesterId } = await zendeskService.createChatTicket({
@@ -1027,22 +1111,31 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       initialMessage: message,
       subject: buildChatSubject(name),
       uploadTokens,
-      externalId: initialSessionKey
+      externalId: initialSessionKey,
+      additionalTags: entryFlowTags
     });
+
+    if (entryFlowNote) {
+      await zendeskService.addInternalNote(ticketId, entryFlowNote);
+    }
 
     const session = {
       ...createSession({
-      ticketId,
-      requesterId,
-      requesterName: name,
-      requesterEmail: email,
-      messages: []
+        ticketId,
+        requesterId,
+        requesterName: name,
+        requesterEmail: email,
+        messages: [],
+        entryIntent: entryIntent || null,
+        entryPromptAnswer: entryPromptAnswer || "",
+        entryFlowVersion: entryFlowVersion || null,
+        entryFlowSkipped: entryFlowVersion === ENTRY_FLOW_VERSION && !entryIntent
       }),
       externalId: initialSessionKey
     };
 
-    const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
-    const outcome = await determineChatOutcome(message, knowledge, {
+    const knowledge = await knowledgeService.searchKnowledgeDetailed(entryContextMessage);
+    const outcome = await determineChatOutcome(entryContextMessage, knowledge, {
       hasAttachments: files.length > 0,
       channelType: "web_chat"
     });
@@ -1085,6 +1178,10 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
         requesterId: session.requesterId,
         requesterName: session.requesterName,
         requesterEmail: session.requesterEmail,
+        entryIntent: session.entryIntent,
+        entryPromptAnswer: session.entryPromptAnswer,
+        entryFlowVersion: session.entryFlowVersion,
+        entryFlowSkipped: session.entryFlowSkipped,
         conversationState: session.conversationState,
         resolutionPrompt: session.resolutionPrompt || null
       },
