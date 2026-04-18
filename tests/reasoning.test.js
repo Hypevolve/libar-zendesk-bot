@@ -151,3 +151,71 @@ test("new product query does not inherit old delivery intent", () => {
   assert.equal(conversation.reasoningResult.entities.city, "");
   assert.equal(conversation.supportPlan.route, "product_feed");
 });
+
+test("delivery follow-up keeps previous support intent", () => {
+  const conversation = analyze("A za Dubrovnik?", {
+    messages: [
+      { role: "user", content: "Kolika je dostava u Split?" },
+      { role: "assistant", content: "Dostava u Split ..." }
+    ],
+    session: {
+      lastStandaloneQuery: "Kolika je dostava u Split?",
+      workingMemory: {
+        activeIntent: "dostava_info"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
+  assert.equal(conversation.reasoningResult.entities.city, "Dubrovnik");
+  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+});
+
+test("clarification answer preserves original order-problem intent", () => {
+  const conversation = analyze("Broj je #12345", {
+    session: {
+      workingMemory: {
+        activeIntent: "narudzba_problem"
+      }
+    },
+    pendingClarification: {
+      slotKey: "order_reference",
+      intent: "narudzba_problem",
+      baseQuery: "Imam problem s narudžbom",
+      attemptCount: 1
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "narudzba_problem");
+  assert.equal(conversation.reasoningResult.entities.order_reference, "#12345");
+});
+
+test("specific buyback follow-up does not keep asking for book list", () => {
+  const conversation = analyze("A koliko traje procjena?", {
+    messages: [
+      { role: "user", content: "Želim prodati knjige" },
+      { role: "assistant", content: "Možete li ukratko napisati koje knjige nudite za otkup?" }
+    ],
+    session: {
+      workingMemory: {
+        activeIntent: "otkup_upit"
+      }
+    },
+    pendingClarification: {
+      slotKey: "book_details",
+      intent: "otkup_upit",
+      baseQuery: "Želim prodati knjige",
+      attemptCount: 1
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.deepEqual(conversation.missingSlots, []);
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
+});
+
+test("short scheduling question is not treated as closure noise", () => {
+  const conversation = analyze("može li sutra?");
+
+  assert.notEqual(conversation.reasoningResult.primaryIntent, "small_talk_or_closure");
+});

@@ -245,7 +245,7 @@ function buildIntentScores(text = "", contextText = "") {
     return scores;
   }
 
-  if (/(hvala|ok|moze|može|riješeno|rijeseno|super|odlicno|odlično)/.test(normalized) && normalized.split(" ").length <= 4) {
+  if (/(hvala|ok|riješeno|rijeseno|super|odlicno|odlično)/.test(normalized) && normalized.split(" ").length <= 4) {
     scores.small_talk_or_closure += 10;
   }
 
@@ -460,6 +460,7 @@ function buildConversationFacts(reasoningResult = {}) {
 function buildMissingSlots(intent, entities = {}, message = "", pendingClarification = null) {
   const normalized = normalizeComparableText(message);
   const missingSlots = [];
+  const hasSpecificQuestion = /\?/.test(message) || /(koliko|kada|rok|traj|cijena|moze li|može li|kako)/i.test(message);
 
   if (intent === "narudzba_status" && !entities.order_reference) {
     missingSlots.push("order_reference");
@@ -483,7 +484,7 @@ function buildMissingSlots(intent, entities = {}, message = "", pendingClarifica
     }
   }
 
-  if (intent === "otkup_upit" && !entities.book_title && !entities.quantity) {
+  if (intent === "otkup_upit" && !entities.book_title && !entities.quantity && !hasSpecificQuestion) {
     missingSlots.push("book_details");
   }
 
@@ -581,13 +582,22 @@ function analyzeConversation({
   const fallbackScores = allowHistory ? buildIntentScores(normalizedMessage, combinedText) : primaryScores;
   const ranked = allowHistory ? rankIntents(fallbackScores) : primaryRanked;
   const mappedEntryIntent = entryIntent ? mapLegacyIntent(entryIntent) : "";
+  const clarificationIntent = normalizeText(pendingClarification?.intent || "");
+  const previousIntent = normalizeText(session?.workingMemory?.activeIntent || "");
   const primaryIntent =
-    mixedIntentOrdering?.primaryIntent ||
+    ((clarificationIntent &&
+      (entities[pendingClarification?.slotKey] ||
+        (pendingClarification?.slotKey === "issue_description" && normalizedMessage.length > 8)))
+      ? clarificationIntent
+      : mixedIntentOrdering?.primaryIntent) ||
+    (isFollowUp && previousIntent && (primaryRanked[0]?.score || 0) < 6
+      ? previousIntent
+      : null) ||
     ((primaryRanked[0]?.score || 0) > 0
       ? primaryRanked[0].intent
       : (ranked[0]?.score || 0) > 0
         ? ranked[0].intent
-      : mappedEntryIntent || session?.workingMemory?.activeIntent || "general_support");
+      : mappedEntryIntent || previousIntent || "general_support");
   const secondaryIntent =
     mixedIntentOrdering?.secondaryIntent ||
     ((primaryRanked[1]?.score || 0) >= 6 && primaryRanked[1]?.intent !== primaryIntent
