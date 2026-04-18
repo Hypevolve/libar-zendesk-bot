@@ -466,8 +466,9 @@ async function addBotReplyToTicket(ticketId, replyText, options = {}) {
   const channelType = options.channelType || "web_chat";
 
   return replyToTicket(ticketId, replyText, true, {
-    additionalTags: ["ai_replied"],
+    additionalTags: [...new Set(["ai_replied", ...(options.additionalTags || [])])],
     metadata: {
+      ...(options.metadata || {}),
       libar_message_role: "assistant",
       libar_message_origin: resolveBotReplyOrigin(channelType)
     }

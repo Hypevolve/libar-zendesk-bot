@@ -166,13 +166,14 @@ function formatTime(dateIso) {
   });
 }
 
-function createMessage(role, content, createdAt = new Date().toISOString()) {
+function createMessage(role, content, createdAt = new Date().toISOString(), products = []) {
   return {
     id: crypto.randomUUID(),
     role,
     content,
     createdAt,
-    attachments: []
+    attachments: [],
+    products
   };
 }
 
@@ -573,7 +574,12 @@ function renderMessages(messages) {
 function getMessagesSignature(messages) {
   const messageSignature = messages
     .map((message) =>
-      `${message.id}:${message.role}:${message.createdAt}:${message.content}:${(message.attachments || [])
+      `${message.id}:${message.role}:${message.createdAt}:${message.content}:${(message.products || [])
+        .map(
+          (product) =>
+            `${product.id || product.title}:${product.title}:${product.priceLabel || ""}:${product.metaLine || ""}:${product.buyLink || ""}:${product.sellLink || ""}:${product.imageUrl || ""}`
+        )
+        .join(",")}:${(message.attachments || [])
         .map((attachment) => `${attachment.id || attachment.name}:${attachment.name}`)
         .join(",")}`
     )
@@ -685,6 +691,19 @@ function createMessageElement(message) {
     wrapper.appendChild(attachmentsEl);
   }
 
+  const products = Array.isArray(message.products) ? message.products : [];
+
+  if (products.length > 0) {
+    const productsEl = document.createElement("div");
+    productsEl.className = "message-products";
+
+    products.forEach((product) => {
+      productsEl.appendChild(createProductCardElement(product));
+    });
+
+    wrapper.appendChild(productsEl);
+  }
+
   const meta = document.createElement("div");
   meta.className = "message-meta";
 
@@ -700,6 +719,76 @@ function createMessageElement(message) {
 
   wrapper.appendChild(meta);
   return wrapper;
+}
+
+function createProductCardElement(product) {
+  const card = document.createElement("article");
+  card.className = "product-card";
+
+  if (product.imageUrl) {
+    const image = document.createElement("img");
+    image.className = "product-card__image";
+    image.src = product.imageUrl;
+    image.alt = product.title || "Proizvod";
+    image.loading = "lazy";
+    image.addEventListener("error", () => {
+      image.remove();
+      card.classList.add("product-card--no-image");
+    }, { once: true });
+    card.appendChild(image);
+  } else {
+    card.classList.add("product-card--no-image");
+  }
+
+  const body = document.createElement("div");
+  body.className = "product-card__body";
+
+  const title = document.createElement("h3");
+  title.className = "product-card__title";
+  title.textContent = product.title || "Pronađeni proizvod";
+  body.appendChild(title);
+
+  if (product.metaLine) {
+    const meta = document.createElement("p");
+    meta.className = "product-card__meta";
+    meta.textContent = product.metaLine;
+    body.appendChild(meta);
+  }
+
+  if (product.priceLabel) {
+    const price = document.createElement("p");
+    price.className = "product-card__price";
+    price.textContent = product.priceLabel;
+    body.appendChild(price);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "product-card__actions";
+
+  if (product.buyLink) {
+    actions.appendChild(createProductActionElement(product.buyLink, "Kupi", true));
+  }
+
+  if (product.sellLink) {
+    actions.appendChild(createProductActionElement(product.sellLink, "Otkup", false));
+  }
+
+  if (actions.children.length > 0) {
+    body.appendChild(actions);
+  }
+
+  card.appendChild(body);
+  return card;
+}
+
+function createProductActionElement(url, label, primary) {
+  const link = document.createElement("a");
+  link.className = `product-card__action ${primary ? "is-primary" : "is-secondary"}`;
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = label;
+  return link;
 }
 
 function applyConversationState(session) {

@@ -9,6 +9,7 @@ const aiService = require("./services/aiService");
 const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
 const spamFilterService = require("./services/spamFilterService");
+const productService = require("./services/productService");
 
 const app = express();
 const chatSessions = new Map();
@@ -270,6 +271,30 @@ function getZendeskAuditCustomMetadata(audit = {}) {
   return customMetadata;
 }
 
+function getMessageProductsFromMetadata(audit = {}) {
+  const customMetadata = getZendeskAuditCustomMetadata(audit);
+  const rawProducts = customMetadata.libar_products;
+
+  if (!rawProducts) {
+    return [];
+  }
+
+  if (Array.isArray(rawProducts)) {
+    return rawProducts;
+  }
+
+  if (typeof rawProducts === "string") {
+    try {
+      const parsed = JSON.parse(rawProducts);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  return [];
+}
+
 function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary) {
   const normalizedRequesterId = Number(requesterId);
   const commentAuthorId = Number(commentEvent?.author_id ?? audit?.author_id);
@@ -342,6 +367,7 @@ function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
           createdAt: audit.created_at,
           sourceChannel,
           authoredByHuman: role === "assistant" && sourceChannel !== "api",
+          products: role === "assistant" ? getMessageProductsFromMetadata(audit) : [],
           attachments: Array.isArray(commentEvent.attachments)
             ? commentEvent.attachments.map((attachment) => ({
                 id: attachment.id,
@@ -631,6 +657,9 @@ function getResolutionPrompt(session, ticketSummary) {
 }
 
 function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "web_chat" }) {
+  const productSummary = Array.isArray(outcome?.products)
+    ? outcome.products.map((product) => product.title).filter(Boolean).join(", ")
+    : "";
   const sourceSummary = (knowledge?.articles || [])
     .map((article) => {
       const sourceType = article.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak";
@@ -642,11 +671,18 @@ function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "we
     `Kanal: ${formatChannelLabel(channelType)}`,
     `AI outcome: ${outcome.type}`,
     `Upit korisnika: ${userMessage}`,
+    outcome?.source === "product_feed" ? "Primarni izvor: Product feed" : null,
     knowledge?.primarySource
       ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
       : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
-    sourceSummary ? `Korišteni izvori: ${sourceSummary}` : "Korišteni izvori: nema",
+    outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
+    productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
+    sourceSummary
+      ? `Korišteni izvori: ${sourceSummary}`
+      : outcome?.source === "product_feed"
+        ? "Korišteni izvori: product feed"
+        : "Korišteni izvori: nema",
     outcome.reason ? `Razlog: ${outcome.reason}` : null
   ]
     .filter(Boolean)
@@ -766,6 +802,22 @@ async function determineChatOutcome(
     stateTag: "ai_active",
     reason: aiDecision.reason || "context_grounded_answer",
     customerMessage: aiDecision.reply
+  };
+}
+
+function buildProductOutcome(productMatch) {
+  return {
+    type: "safe_answer",
+    source: "product_feed",
+    stateTag: "ai_active",
+    reason: "product_feed_match",
+    topScore: productMatch.topScore,
+    customerMessage: productMatch.replyText,
+    products: productMatch.products,
+    zendeskMessage:
+      productMatch.products.length > 0
+        ? `${productMatch.replyText}\n\n${productMatch.zendeskSummary}`
+        : productMatch.replyText
   };
 }
 
@@ -1134,11 +1186,27 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       externalId: initialSessionKey
     };
 
-    const knowledge = await knowledgeService.searchKnowledgeDetailed(entryContextMessage);
-    const outcome = await determineChatOutcome(entryContextMessage, knowledge, {
-      hasAttachments: files.length > 0,
-      channelType: "web_chat"
-    });
+    let knowledge = null;
+    let outcome = null;
+
+    if (files.length > 0 || isHardHandoffMessage(entryContextMessage)) {
+      outcome = await determineChatOutcome(entryContextMessage, knowledge, {
+        hasAttachments: files.length > 0,
+        channelType: "web_chat"
+      });
+    } else {
+      const productMatch = await productService.searchProducts(entryContextMessage);
+
+      if (productMatch) {
+        outcome = buildProductOutcome(productMatch);
+      } else {
+        knowledge = await knowledgeService.searchKnowledgeDetailed(entryContextMessage);
+        outcome = await determineChatOutcome(entryContextMessage, knowledge, {
+          hasAttachments: false,
+          channelType: "web_chat"
+        });
+      }
+    }
 
     if (files.length > 0) {
       await zendeskService.addTagAndNote(
@@ -1157,8 +1225,13 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
     }
 
     await zendeskService.updateConversationState(ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
-      channelType: "web_chat"
+    await zendeskService.addBotReplyToTicket(ticketId, outcome.zendeskMessage || outcome.customerMessage, {
+      channelType: "web_chat",
+      metadata: outcome.products?.length
+        ? {
+            libar_products: JSON.stringify(outcome.products)
+          }
+        : undefined
     });
     await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
       outcome,
@@ -1375,11 +1448,27 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       });
     }
 
-    const knowledge = await knowledgeService.searchKnowledgeDetailed(message);
-    const outcome = await determineChatOutcome(message, knowledge, {
-      hasAttachments: files.length > 0,
-      channelType: "web_chat"
-    });
+    let knowledge = null;
+    let outcome = null;
+
+    if (files.length > 0 || isHardHandoffMessage(message)) {
+      outcome = await determineChatOutcome(message, knowledge, {
+        hasAttachments: files.length > 0,
+        channelType: "web_chat"
+      });
+    } else {
+      const productMatch = await productService.searchProducts(message);
+
+      if (productMatch) {
+        outcome = buildProductOutcome(productMatch);
+      } else {
+        knowledge = await knowledgeService.searchKnowledgeDetailed(message);
+        outcome = await determineChatOutcome(message, knowledge, {
+          hasAttachments: false,
+          channelType: "web_chat"
+        });
+      }
+    }
 
     console.info("ai_autopilot", {
       sessionId,
@@ -1405,9 +1494,18 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     }
 
     await zendeskService.updateConversationState(session.ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(session.ticketId, outcome.customerMessage, {
-      channelType: "web_chat"
-    });
+    await zendeskService.addBotReplyToTicket(
+      session.ticketId,
+      outcome.zendeskMessage || outcome.customerMessage,
+      {
+        channelType: "web_chat",
+        metadata: outcome.products?.length
+          ? {
+              libar_products: JSON.stringify(outcome.products)
+            }
+          : undefined
+      }
+    );
     await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
       outcome,
       userMessage: message || "Šaljem privitak.",
