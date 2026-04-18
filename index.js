@@ -11,6 +11,8 @@ const oneDriveService = require("./services/oneDriveService");
 const spamFilterService = require("./services/spamFilterService");
 const productService = require("./services/productService");
 const conversationService = require("./services/conversationService");
+const memoryService = require("./services/memoryService");
+const plannerService = require("./services/plannerService");
 
 const app = express();
 const chatSessions = new Map();
@@ -237,6 +239,7 @@ function normalizeZendeskCommentContent(comment = {}) {
 
   for (const source of sources) {
     const normalized = decodeHtmlEntities(stripHtmlWithLineBreaks(source))
+      .replace(/^https?:\/\/(?:www\.)?antikvarijat-libar\.com\/?\s*$/gim, "")
       .replace(/\n[ \t]+/g, "\n")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
@@ -488,6 +491,12 @@ async function syncSessionMessages(session) {
   ]);
 
   session.messages = mapZendeskAuditsToMessages(audits, session.requesterId, ticketSummary);
+  session.requesterName = ticketSummary.requesterName || session.requesterName || "";
+  session.requesterEmail = ticketSummary.requesterEmail || session.requesterEmail || "";
+  memoryService.applyWorkingMemoryToSession(
+    session,
+    memoryService.extractLatestWorkingMemory(audits)
+  );
   session.conversationState = buildConversationState(ticketSummary, session.messages);
   session.resolutionPrompt = getResolutionPrompt(session, ticketSummary);
   session.updatedAt = new Date().toISOString();
@@ -708,6 +717,23 @@ function buildAutopilotNote({
     `AI outcome: ${outcome.type}`,
     `Upit korisnika: ${userMessage}`,
     conversation?.standaloneQuery ? `Standalone upit: ${conversation.standaloneQuery}` : null,
+    conversation?.reasoningResult?.primaryIntent
+      ? `Primary intent: ${conversation.reasoningResult.primaryIntent}`
+      : null,
+    conversation?.reasoningResult?.secondaryIntent
+      ? `Secondary intent: ${conversation.reasoningResult.secondaryIntent}`
+      : null,
+    conversation?.reasoningResult?.customerGoal
+      ? `Cilj korisnika: ${conversation.reasoningResult.customerGoal}`
+      : null,
+    conversation?.reasoningResult?.emotionalTone
+      ? `Emocionalni ton: ${conversation.reasoningResult.emotionalTone}`
+      : null,
+    conversation?.supportPlan?.route ? `Planner route: ${conversation.supportPlan.route}` : null,
+    conversation?.supportPlan?.responseMode
+      ? `Response mode: ${conversation.supportPlan.responseMode}`
+      : null,
+    conversation?.supportPlan?.toneMode ? `Tone mode: ${conversation.supportPlan.toneMode}` : null,
     conversation?.resolvedUserIntent ? `Detektirana namjera: ${conversation.resolvedUserIntent}` : null,
     conversation?.isFollowUp ? "Follow-up resolved using memory: da" : null,
     conversation?.missingSlots?.length
@@ -730,6 +756,55 @@ function buildAutopilotNote({
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildMemoryNote(session, conversation, outcome, knowledge, ticketSummary, previousMemory = null) {
+  const memory = memoryService.buildWorkingMemory({
+    session,
+    conversation,
+    outcome,
+    knowledge,
+    ticketSummary,
+    previousMemory
+  });
+
+  session.workingMemory = memory;
+  return memoryService.serializeWorkingMemory(memory);
+}
+
+function buildLifecycleOutcome(session, tone = "") {
+  if (tone === "resolved") {
+    return {
+      type: "resolved",
+      reason: "ticket_resolved"
+    };
+  }
+
+  if (tone === "human-active") {
+    return {
+      type: "human_reply",
+      reason: "human_takeover_active"
+    };
+  }
+
+  if (tone === "awaiting-human") {
+    return {
+      type: "soft_handoff",
+      reason: "awaiting_human_review"
+    };
+  }
+
+  if (tone === "awaiting-customer-detail") {
+    return {
+      type: "ask_clarifying_question",
+      reason: "awaiting_customer_detail"
+    };
+  }
+
+  return {
+    type: "safe_answer",
+    reason: "ai_active_state"
+  };
 }
 
 function buildFocusedKnowledgeContext(knowledge, limit = 2) {
@@ -777,10 +852,18 @@ function hasCriticalRiskFlags(conversation = null) {
 }
 
 function buildSearchOptions(session, conversation) {
+  const preferredSource =
+    (Array.isArray(conversation?.supportPlan?.sourcePriority) && conversation.supportPlan.sourcePriority[0]
+      ? conversation.supportPlan.sourcePriority[0].replace("_knowledge", "")
+      : "") ||
+    session?.workingMemory?.supportHistory?.lastSuccessfulSource ||
+    session?.lastKnowledgeSource ||
+    "";
+
   return {
     conversationFacts: conversation?.conversationFacts || [],
     conversationTerms: conversation?.conversationFacts || [],
-    preferredSource: session?.lastKnowledgeSource || ""
+    preferredSource
   };
 }
 
@@ -812,7 +895,11 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
     return;
   }
 
-  session.lastResolvedIntent = conversation.resolvedUserIntent || session.lastResolvedIntent || "";
+  session.lastResolvedIntent =
+    conversation.reasoningResult?.primaryIntent ||
+    conversation.resolvedUserIntent ||
+    session.lastResolvedIntent ||
+    "";
   session.lastStandaloneQuery = conversation.standaloneQuery || session.lastStandaloneQuery || "";
 
   if (outcome?.source === "product_feed" && Array.isArray(outcome.products)) {
@@ -820,6 +907,10 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
     session.lastKnowledgeSource = "product_feed";
   } else if (knowledge?.primarySource) {
     session.lastKnowledgeSource = knowledge.primarySource;
+  }
+
+  if (conversation?.supportPlan) {
+    session.lastRoute = conversation.supportPlan.route;
   }
 
   if (outcome?.type === "ask_clarifying_question") {
@@ -830,6 +921,39 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
   clearSessionClarification(session);
 }
 
+async function persistWorkingMemory(session, conversation, outcome, knowledge, ticketSummary, audits = []) {
+  if (!session?.ticketId) {
+    return null;
+  }
+
+  const previousMemory = memoryService.extractLatestWorkingMemory(audits) || session.workingMemory || null;
+  const nextMemory = memoryService.buildWorkingMemory({
+    session,
+    conversation,
+    outcome,
+    knowledge,
+    ticketSummary,
+    previousMemory
+  });
+
+  if (memoryService.areEquivalentWorkingMemories(previousMemory, nextMemory)) {
+    session.workingMemory = previousMemory || nextMemory;
+    return session.workingMemory;
+  }
+
+  const noteText = buildMemoryNote(
+    session,
+    conversation,
+    outcome,
+    knowledge,
+    ticketSummary,
+    previousMemory
+  );
+
+  await zendeskService.addInternalNote(session.ticketId, noteText);
+  return session.workingMemory;
+}
+
 async function determineChatOutcome(
   userMessage,
   knowledge,
@@ -837,7 +961,10 @@ async function determineChatOutcome(
     hasAttachments = false,
     channelType = "web_chat",
     conversation = null,
-    allowClarifyingQuestion = true
+    allowClarifyingQuestion = true,
+    customerName = "",
+    supportPlan = null,
+    reasoningResult = null
   } = {}
 ) {
   const channelMessages = getChannelMessages(channelType);
@@ -851,7 +978,11 @@ async function determineChatOutcome(
     };
   }
 
-  if (hasCriticalRiskFlags(conversation) || isHardHandoffMessage(userMessage)) {
+  if (
+    supportPlan?.route === "handoff_hard" ||
+    hasCriticalRiskFlags(conversation) ||
+    isHardHandoffMessage(userMessage)
+  ) {
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
@@ -862,8 +993,8 @@ async function determineChatOutcome(
 
   if (
     allowClarifyingQuestion &&
-    conversation?.missingSlots?.length > 0 &&
-    conversation?.canAskClarifyingQuestion &&
+    ((conversation?.missingSlots?.length > 0 && conversation?.canAskClarifyingQuestion) ||
+      supportPlan?.route === "clarify") &&
     conversation?.clarifyingQuestion
   ) {
     return {
@@ -887,9 +1018,12 @@ async function determineChatOutcome(
     channelType,
     conversationSummary: conversation?.summary || "",
     responsePlan: conversation?.responsePlan || null,
+    supportPlan,
+    reasoningResult,
     standaloneQuery: conversation?.standaloneQuery || userMessage,
     missingSlots: conversation?.missingSlots || [],
-    riskFlags: conversation?.riskFlags || []
+    riskFlags: conversation?.riskFlags || [],
+    customerName
   });
 
   if (aiDecision.decision === "hard_handoff") {
@@ -914,7 +1048,8 @@ async function determineChatOutcome(
     if (shouldAttemptGroundedAnswerFallback(knowledge)) {
       const focusedContext = buildFocusedKnowledgeContext(knowledge, 2);
       const groundedReply = await aiService.generateGroundedAnswer(userMessage, focusedContext, {
-        channelType
+        channelType,
+        customerName
       });
 
       if (groundedReply) {
@@ -994,13 +1129,37 @@ function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" 
 }
 
 function buildConversationAnalysis(session, userMessage) {
-  return conversationService.analyzeConversation({
+  const conversation = conversationService.analyzeConversation({
     message: userMessage,
     messages: session?.messages || [],
     entryIntent: session?.entryIntent || "",
     pendingClarification: session?.pendingClarification || null,
     session: session || {}
   });
+  const supportPlan = plannerService.buildSupportPlan({
+    reasoningResult: conversation.reasoningResult,
+    session,
+    hasAttachments: false
+  });
+  const responsePlan = {
+    intent: conversation.reasoningResult?.primaryIntent || "general_support",
+    nextStep:
+      supportPlan.nextBestAction === "ask_missing_detail" || supportPlan.nextBestAction === "disambiguate"
+        ? conversation.missingSlots?.[0] || "clarify"
+        : "answer",
+    steps: [
+      `Planner route: ${supportPlan.route}`,
+      `Response mode: ${supportPlan.responseMode}`,
+      `Tone mode: ${supportPlan.toneMode}`,
+      conversation.standaloneQuery ? `Standalone upit za retrieval: ${conversation.standaloneQuery.slice(0, 180)}` : ""
+    ].filter(Boolean)
+  };
+
+  return {
+    ...conversation,
+    responsePlan,
+    supportPlan
+  };
 }
 
 function shouldUseProductSearch(conversation = null) {
@@ -1008,40 +1167,46 @@ function shouldUseProductSearch(conversation = null) {
     return false;
   }
 
-  const intent = String(conversation.resolvedUserIntent || "").trim();
-  const standaloneQuery = String(conversation.standaloneQuery || "").toLowerCase();
-  const originalMessage = String(conversation.originalMessage || "").toLowerCase();
-  const hasProductAnchor = conversation.topicAnchor?.type === "product";
-  const hasBookSignals = /(knjig|udžben|udzben|isbn|autor|naslov|rabljene?|udjbenik|prodajete li)/.test(
-    `${standaloneQuery} ${originalMessage}`
-  );
+  const route = String(conversation.supportPlan?.route || "").trim();
 
-  if (hasProductAnchor) {
-    return true;
-  }
-
-  if (["dostava", "narudzba", "otkup_knjiga", "reklamacija_problem"].includes(intent)) {
+  if (conversation.supportPlan?.mustNotUseSources?.includes("product_feed")) {
     return false;
   }
 
-  return hasBookSignals;
+  if (route === "product_feed") {
+    return true;
+  }
+
+  return conversation.topicAnchor?.type === "product";
 }
 
 async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
   const conversation = buildConversationAnalysis(session, userMessage);
+  if (hasAttachments) {
+    conversation.supportPlan = plannerService.buildSupportPlan({
+      reasoningResult: conversation.reasoningResult,
+      session,
+      hasAttachments: true
+    });
+  }
   let knowledge = null;
   let outcome = null;
+  const customerName = memoryService.getFirstName(session?.requesterName || session?.workingMemory?.customerProfile?.name);
 
   if (
     hasAttachments ||
-    hasCriticalRiskFlags(conversation) ||
+    conversation.supportPlan?.route === "handoff_hard" ||
+    conversation.supportPlan?.route === "clarify" ||
     (conversation.missingSlots.length > 0 && conversation.canAskClarifyingQuestion)
   ) {
     outcome = await determineChatOutcome(userMessage, null, {
       hasAttachments,
       channelType,
       conversation,
-      allowClarifyingQuestion: true
+      allowClarifyingQuestion: true,
+      customerName,
+      supportPlan: conversation.supportPlan,
+      reasoningResult: conversation.reasoningResult
     });
   } else {
     const searchQuery = conversation.standaloneQuery || userMessage;
@@ -1060,7 +1225,10 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
         hasAttachments: false,
         channelType,
         conversation,
-        allowClarifyingQuestion: true
+        allowClarifyingQuestion: true,
+        customerName,
+        supportPlan: conversation.supportPlan,
+        reasoningResult: conversation.reasoningResult
       });
     }
   }
@@ -1333,9 +1501,15 @@ app.post("/webhook/zendesk", async (req, res) => {
     const temporarySession = {
       ticketId,
       requesterId: ticketSummary.requesterId,
+      requesterName: ticketSummary.requesterName || "",
+      requesterEmail: ticketSummary.requesterEmail || "",
       messages,
       lastKnowledgeSource: ""
     };
+    memoryService.applyWorkingMemoryToSession(
+      temporarySession,
+      memoryService.extractLatestWorkingMemory(audits)
+    );
     const { conversation, knowledge, outcome } = await resolveAutomatedOutcome(
       temporarySession,
       normalizedMessage,
@@ -1350,6 +1524,14 @@ app.post("/webhook/zendesk", async (req, res) => {
       await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
         channelType
       });
+      await persistWorkingMemory(
+        temporarySession,
+        conversation,
+        outcome,
+        knowledge,
+        ticketSummary,
+        audits
+      );
       await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
         userMessage: normalizedMessage,
@@ -1372,6 +1554,14 @@ app.post("/webhook/zendesk", async (req, res) => {
         { channelType }
       );
       await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+      await persistWorkingMemory(
+        temporarySession,
+        conversation,
+        outcome,
+        knowledge,
+        ticketSummary,
+        audits
+      );
       await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
         userMessage: normalizedMessage,
@@ -1394,6 +1584,14 @@ app.post("/webhook/zendesk", async (req, res) => {
       channelType,
       additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : []
     });
+    await persistWorkingMemory(
+      temporarySession,
+      conversation,
+      outcome,
+      knowledge,
+      ticketSummary,
+      audits
+    );
     await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
       outcome,
       userMessage: normalizedMessage,
@@ -1496,6 +1694,14 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       }),
       externalId: initialSessionKey
     };
+    session.workingMemory = {
+      customerProfile: {
+        name,
+        firstName: memoryService.getFirstName(name),
+        email,
+        source: "zendesk_requester"
+      }
+    };
 
     const { conversation, knowledge, outcome } = await resolveAutomatedOutcome(
       session,
@@ -1530,6 +1736,10 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
             libar_products: JSON.stringify(outcome.products)
           }
         : undefined
+    });
+    await persistWorkingMemory(session, conversation, outcome, knowledge, {
+      requesterName: name,
+      requesterEmail: email
     });
     await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
       outcome,
@@ -1599,6 +1809,7 @@ app.post("/api/chat/restore", async (req, res) => {
       zendeskService.getTicketSummary(ticketId)
     ]);
     const restoredMessages = mapZendeskAuditsToMessages(audits, requesterId, ticketSummary);
+    const latestMemory = memoryService.extractLatestWorkingMemory(audits);
 
     if (isClosedTicketStatus(ticketSummary.status)) {
       if (existingSession) {
@@ -1611,8 +1822,8 @@ app.post("/api/chat/restore", async (req, res) => {
         mode: "closed_session",
         ...buildClosedSessionPayload({
           ticketSummary,
-          requesterName,
-          requesterEmail,
+          requesterName: ticketSummary.requesterName || requesterName,
+          requesterEmail: ticketSummary.requesterEmail || requesterEmail,
           messages: restoredMessages
         })
       });
@@ -1620,6 +1831,9 @@ app.post("/api/chat/restore", async (req, res) => {
 
     if (existingSession && isActiveTicketStatus(ticketSummary.status)) {
       existingSession.messages = restoredMessages;
+      existingSession.requesterName = ticketSummary.requesterName || existingSession.requesterName || "";
+      existingSession.requesterEmail = ticketSummary.requesterEmail || existingSession.requesterEmail || "";
+      memoryService.applyWorkingMemoryToSession(existingSession, latestMemory);
       existingSession.conversationState = buildConversationState(ticketSummary, existingSession.messages);
       existingSession.updatedAt = new Date().toISOString();
 
@@ -1634,12 +1848,13 @@ app.post("/api/chat/restore", async (req, res) => {
     const session = createSession({
       ticketId,
       requesterId,
-      requesterName: requesterName || "",
-      requesterEmail: requesterEmail || "",
+      requesterName: ticketSummary.requesterName || requesterName || "",
+      requesterEmail: ticketSummary.requesterEmail || requesterEmail || "",
       messages: []
     });
 
     session.messages = restoredMessages;
+    memoryService.applyWorkingMemoryToSession(session, latestMemory);
     session.conversationState = buildConversationState(ticketSummary, session.messages);
     session.updatedAt = new Date().toISOString();
 
@@ -1797,6 +2012,7 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
           : undefined
       }
     );
+    await persistWorkingMemory(session, conversation, outcome, knowledge, ticketSummary);
     await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
       outcome,
       userMessage: message || "Šaljem privitak.",
@@ -1897,6 +2113,16 @@ app.post("/api/chat/resolve", async (req, res) => {
     });
 
     await syncSessionMessages(session);
+    const resolvedTicketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    const resolvedAudits = await zendeskService.getTicketAudits(session.ticketId);
+    await persistWorkingMemory(
+      session,
+      null,
+      buildLifecycleOutcome(session, "resolved"),
+      null,
+      resolvedTicketSummary,
+      resolvedAudits
+    );
     session.resolutionPrompt = null;
     broadcastSessionUpdate(session);
 
@@ -2007,11 +2233,37 @@ app.post("/webhook/zendesk/events", async (req, res) => {
 
     for (const session of sessions) {
       await syncSessionMessages(session);
+      const audits = await zendeskService.getTicketAudits(ticketId);
 
       if (session.conversationState?.tone === "human-active") {
         await zendeskService.updateConversationState(ticketId, "human_active");
+        await persistWorkingMemory(
+          session,
+          null,
+          buildLifecycleOutcome(session, "human-active"),
+          null,
+          ticketSummary,
+          audits
+        );
       } else if (session.conversationState?.tone === "awaiting-human") {
         await zendeskService.updateConversationState(ticketId, "awaiting_human");
+        await persistWorkingMemory(
+          session,
+          null,
+          buildLifecycleOutcome(session, "awaiting-human"),
+          null,
+          ticketSummary,
+          audits
+        );
+      } else if (session.conversationState?.tone === "resolved") {
+        await persistWorkingMemory(
+          session,
+          null,
+          buildLifecycleOutcome(session, "resolved"),
+          null,
+          ticketSummary,
+          audits
+        );
       } else if (session.conversationState?.tone === "ai-active") {
         await zendeskService.updateConversationState(ticketId, "ai_active");
       }

@@ -91,9 +91,12 @@ function buildSystemPrompt(
     channelType = "unknown",
     conversationSummary = "",
     responsePlan = null,
+    supportPlan = null,
+    reasoningResult = null,
     standaloneQuery = "",
     missingSlots = [],
-    riskFlags = []
+    riskFlags = [],
+    customerName = ""
   } = {}
 ) {
   return [
@@ -146,6 +149,18 @@ function buildSystemPrompt(
     "SAŽETAK RAZGOVORA:",
     conversationSummary || "Nema dodatnog sažetka razgovora.",
     "",
+    "KORISNIK:",
+    customerName
+      ? `Korisnik se zove ${customerName}. Možeš ga osloviti imenom samo kad to zvuči prirodno i nenametljivo.`
+      : "Ime korisnika nije dostupno.",
+    "",
+    "SUPPORT UNDERSTANDING:",
+    reasoningResult?.primaryIntent ? `Primary intent: ${reasoningResult.primaryIntent}` : "Primary intent: nije dostavljen",
+    reasoningResult?.secondaryIntent ? `Secondary intent: ${reasoningResult.secondaryIntent}` : null,
+    reasoningResult?.customerGoal ? `Goal: ${reasoningResult.customerGoal}` : null,
+    reasoningResult?.emotionalTone ? `Tone: ${reasoningResult.emotionalTone}` : null,
+    reasoningResult?.riskLevel ? `Risk level: ${reasoningResult.riskLevel}` : null,
+    "",
     "STANDALONE UPIT:",
     standaloneQuery || "Nije dostavljeno.",
     "",
@@ -157,6 +172,15 @@ function buildSystemPrompt(
     "",
     "RESPONSE PLAN:",
     responsePlan?.steps?.length ? responsePlan.steps.join(" ") : "Odgovori izravno ako je kontekst dovoljan.",
+    "",
+    "SUPPORT PLAN:",
+    supportPlan?.route ? `Route: ${supportPlan.route}` : null,
+    supportPlan?.responseMode ? `Response mode: ${supportPlan.responseMode}` : null,
+    supportPlan?.toneMode ? `Tone mode: ${supportPlan.toneMode}` : null,
+    typeof supportPlan?.shouldUseCustomerName === "boolean"
+      ? `Use customer name sparingly: ${supportPlan.shouldUseCustomerName ? "yes" : "no"}`
+      : null,
+    supportPlan?.nextBestAction ? `Next best action: ${supportPlan.nextBestAction}` : null,
     "",
     "FORMAT IZLAZA:",
     "Vrati isključivo valjani JSON objekt, bez markdowna, bez code blocka i bez dodatnog teksta.",
@@ -259,7 +283,7 @@ function buildSpamClassifierPrompt({ channelType = "email" } = {}) {
   ].join("\n");
 }
 
-function buildGroundedAnswerPrompt(context, { channelType = "unknown" } = {}) {
+function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerName = "" } = {}) {
   return [
     "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
     "",
@@ -271,6 +295,9 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown" } = {}) {
     "- Ako kontekst sadrži konkretne korake ili preporuke, sažmi ih u jasan odgovor.",
     "- Nemoj spominjati AI, kontekst, bazu znanja ni interne procese.",
     "- Nemoj dodavati subject ni potpis.",
+    customerName
+      ? `- Korisnik se zove ${customerName}. Ime koristi samo ako zvuči prirodno i korisno.`
+      : "- Ako ime korisnika nije poznato, nemoj ga izmišljati.",
     "- Vrati samo gotov odgovor za korisnika, bez JSON-a i bez dodatnih oznaka.",
     "",
     ...buildChannelInstructions(channelType),

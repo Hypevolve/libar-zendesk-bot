@@ -53,7 +53,7 @@ function mergeKnowledgeResults(
     articles: candidates,
     topScore: candidates[0]?.score || 0,
     totalMatches: candidates.length,
-    primarySource: oneDriveArticles.length > 0 ? "onedrive" : "zendesk"
+    primarySource: candidates[0]?.source || (oneDriveArticles.length > 0 ? "onedrive" : "zendesk")
   };
 }
 

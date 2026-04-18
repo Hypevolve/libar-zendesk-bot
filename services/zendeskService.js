@@ -56,6 +56,42 @@ function hasPlaceholderValue(value = "") {
   ].includes(normalized);
 }
 
+async function getRequesterProfile(requesterId) {
+  if (!requesterId) {
+    return {
+      id: null,
+      name: "",
+      email: ""
+    };
+  }
+
+  try {
+    validateZendeskConfig();
+
+    const response = await zendeskClient.get(`/api/v2/users/${requesterId}.json`);
+    const user = response.data?.user || {};
+
+    return {
+      id: user.id || requesterId,
+      name: sanitizeEnvValue(user.name),
+      email: sanitizeEnvValue(user.email)
+    };
+  } catch (error) {
+    console.error("Failed to fetch Zendesk requester profile:", {
+      requesterId,
+      status: error.response?.status,
+      message: error.message,
+      responseData: error.response?.data
+    });
+
+    return {
+      id: requesterId,
+      name: "",
+      email: ""
+    };
+  }
+}
+
 function validateZendeskConfig() {
   if (hasPlaceholderValue(ZENDESK_SUBDOMAIN)) {
     throw new Error(
@@ -681,6 +717,7 @@ async function getTicketSummary(ticketId) {
 
     const response = await zendeskClient.get(`/api/v2/tickets/${ticketId}.json`);
     const ticket = response.data?.ticket || {};
+    const requesterProfile = await getRequesterProfile(ticket.requester_id);
 
     return {
       id: ticket.id,
@@ -688,7 +725,9 @@ async function getTicketSummary(ticketId) {
       tags: Array.isArray(ticket.tags) ? ticket.tags : [],
       assigneeId: ticket.assignee_id || null,
       requesterId: ticket.requester_id || null,
-      externalId: ticket.external_id || null
+      externalId: ticket.external_id || null,
+      requesterName: requesterProfile.name || "",
+      requesterEmail: requesterProfile.email || ""
     };
   } catch (error) {
     console.error("Failed to fetch Zendesk ticket summary:", {
@@ -743,6 +782,7 @@ module.exports = {
   fetchAllHelpCenterArticles,
   getZendeskConfigSummary,
   getPublicTicketComments,
+  getRequesterProfile,
   getTicketAudits,
   getTicketSummary,
   normalizeText,
