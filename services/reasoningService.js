@@ -185,10 +185,6 @@ function isFollowUpMessage(text = "") {
     return false;
   }
 
-  if (normalized.split(" ").length <= 6) {
-    return true;
-  }
-
   return /^(a|a za|a sto|a što|i|i za|sto ako|što ako|koliko|ima li|jel|je li|moze li|može li|a cijena|a cijena\?)\b/.test(
     normalized
   );
@@ -389,17 +385,44 @@ function mapLegacyIntent(intent = "") {
   }
 }
 
-function buildEntities(message = "", messages = []) {
-  const merged = [...collectRecentUserMessages(messages, 4).map((item) => item.content), message].join(" ");
+function mergeEntityValue(currentValue = "", fallbackValue = "") {
+  return currentValue || fallbackValue || "";
+}
+
+function extractEntitiesFromText(text = "") {
   return {
-    city: extractCity(merged),
-    order_reference: extractOrderReference(merged),
-    book_title: extractBookTitle(merged),
-    isbn: extractIsbn(merged),
-    author: extractAuthor(merged),
-    quantity: extractQuantity(merged),
-    issue_type: detectIssueType(merged),
-    policy_topic: detectPolicyTopic(merged)
+    city: extractCity(text),
+    order_reference: extractOrderReference(text),
+    book_title: extractBookTitle(text),
+    isbn: extractIsbn(text),
+    author: extractAuthor(text),
+    quantity: extractQuantity(text),
+    issue_type: detectIssueType(text),
+    policy_topic: detectPolicyTopic(text)
+  };
+}
+
+function buildEntities(message = "", messages = [], options = {}) {
+  const currentEntities = extractEntitiesFromText(message);
+
+  if (!options.allowHistory) {
+    return currentEntities;
+  }
+
+  const historyText = collectRecentUserMessages(messages, 4)
+    .map((item) => item.content)
+    .join(" ");
+  const historyEntities = extractEntitiesFromText(historyText);
+
+  return {
+    city: mergeEntityValue(currentEntities.city, historyEntities.city),
+    order_reference: mergeEntityValue(currentEntities.order_reference, historyEntities.order_reference),
+    book_title: mergeEntityValue(currentEntities.book_title, historyEntities.book_title),
+    isbn: mergeEntityValue(currentEntities.isbn, historyEntities.isbn),
+    author: mergeEntityValue(currentEntities.author, historyEntities.author),
+    quantity: mergeEntityValue(currentEntities.quantity, historyEntities.quantity),
+    issue_type: mergeEntityValue(currentEntities.issue_type, historyEntities.issue_type),
+    policy_topic: mergeEntityValue(currentEntities.policy_topic, historyEntities.policy_topic)
   };
 }
 
@@ -549,34 +572,49 @@ function analyzeConversation({
   const normalizedMessage = normalizeText(message);
   const recentMessages = getRecentMessages(messages, 8);
   const combinedText = [...recentMessages.map((item) => item.content), normalizedMessage].join(" ");
-  const entities = buildEntities(normalizedMessage, recentMessages);
-  const scores = buildIntentScores(normalizedMessage, combinedText);
-  const ranked = rankIntents(scores);
   const mixedIntentOrdering = detectMixedIntentOrdering(normalizedMessage);
+  const isFollowUp = isFollowUpMessage(normalizedMessage);
+  const allowHistory = Boolean(isFollowUp || pendingClarification?.slotKey);
+  const entities = buildEntities(normalizedMessage, recentMessages, { allowHistory });
+  const primaryScores = buildIntentScores(normalizedMessage);
+  const primaryRanked = rankIntents(primaryScores);
+  const fallbackScores = allowHistory ? buildIntentScores(normalizedMessage, combinedText) : primaryScores;
+  const ranked = allowHistory ? rankIntents(fallbackScores) : primaryRanked;
   const mappedEntryIntent = entryIntent ? mapLegacyIntent(entryIntent) : "";
   const primaryIntent =
     mixedIntentOrdering?.primaryIntent ||
-    (ranked[0]?.score > 0
-      ? ranked[0].intent
+    ((primaryRanked[0]?.score || 0) > 0
+      ? primaryRanked[0].intent
+      : (ranked[0]?.score || 0) > 0
+        ? ranked[0].intent
       : mappedEntryIntent || session?.workingMemory?.activeIntent || "general_support");
   const secondaryIntent =
     mixedIntentOrdering?.secondaryIntent ||
-    (ranked[1]?.score >= 6 && ranked[1]?.intent !== primaryIntent ? ranked[1].intent : null);
+    ((primaryRanked[1]?.score || 0) >= 6 && primaryRanked[1]?.intent !== primaryIntent
+      ? primaryRanked[1].intent
+      : ranked[1]?.score >= 6 && ranked[1]?.intent !== primaryIntent
+        ? ranked[1].intent
+        : null);
   const topicAnchor = inferTopicAnchor(recentMessages, session);
-  const isFollowUp = isFollowUpMessage(normalizedMessage);
   const topicShiftDetected = Boolean(
     session?.workingMemory?.activeIntent &&
       primaryIntent &&
       session.workingMemory.activeIntent !== primaryIntent &&
       !isFollowUp
   );
-  const riskFlags = detectRiskFlags(combinedText);
-  const emotionalTone = detectEmotionalTone(combinedText);
+  const riskFlags = detectRiskFlags(normalizedMessage);
+  const emotionalTone = detectEmotionalTone(normalizedMessage);
   const intentConfidence = Math.min(
     0.98,
     Math.max(
       primaryIntent === "general_support" ? 0.42 : 0.55,
-      (ranked[0]?.score || 0) / Math.max((ranked[0]?.score || 0) + (ranked[1]?.score || 0) + 4, 12)
+      (primaryRanked[0]?.score || ranked[0]?.score || 0) /
+        Math.max(
+          (primaryRanked[0]?.score || ranked[0]?.score || 0) +
+            (primaryRanked[1]?.score || ranked[1]?.score || 0) +
+            4,
+          12
+        )
     )
   );
   const { missingSlots, canAskAgain } = buildMissingSlots(

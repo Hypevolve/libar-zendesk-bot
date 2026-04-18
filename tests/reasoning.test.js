@@ -125,3 +125,29 @@ test("closure/noise avoids retrieval routes", () => {
   assert.equal(conversation.supportPlan.nextBestAction, "close_or_acknowledge");
   assert.ok(conversation.supportPlan.mustNotUseSources.includes("zendesk_knowledge"));
 });
+
+test("new product query does not inherit old delivery intent", () => {
+  const conversation = analyze(
+    "Zanima me knjiga gospodarska matematika",
+    {
+      messages: [
+        { role: "user", content: "Kolika je dostava za Dubrovnik?" },
+        { role: "assistant", content: "Dostava za Dubrovnik ..." }
+      ],
+      session: {
+        lastStandaloneQuery: "Kolika je dostava za Dubrovnik?",
+        workingMemory: {
+          activeIntent: "dostava_info",
+          customerProfile: {
+            name: "Zrinko Kutnjak",
+            firstName: "Zrinko"
+          }
+        }
+      }
+    }
+  );
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
+  assert.equal(conversation.reasoningResult.entities.city, "");
+  assert.equal(conversation.supportPlan.route, "product_feed");
+});

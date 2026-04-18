@@ -980,8 +980,7 @@ async function determineChatOutcome(
 
   if (
     supportPlan?.route === "handoff_hard" ||
-    hasCriticalRiskFlags(conversation) ||
-    isHardHandoffMessage(userMessage)
+    hasCriticalRiskFlags(conversation)
   ) {
     return {
       type: "hard_handoff",
