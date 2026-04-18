@@ -806,15 +806,55 @@ async function determineChatOutcome(
 }
 
 function buildProductOutcome(productMatch) {
+  return buildProductOutcomeForChannel(productMatch, { channelType: "web_chat" });
+}
+
+function buildProductReplyForChannel(products = [], channelType = "web_chat") {
+  const normalizedChannelType = normalizeChannelType(channelType);
+  const intro =
+    products.length === 1
+      ? "Našao sam ovaj udžbenik."
+      : "Našao sam nekoliko relevantnih udžbenika.";
+  const disclaimer =
+    "Cijena i dostupnost mogu odstupati, pa ih prije kupnje provjerite na webshop linku.";
+
+  if (normalizedChannelType === "web_chat") {
+    return [intro, disclaimer].join("\n");
+  }
+
+  const productLines = products.map((product) => {
+    const parts = [`- ${product.title}`];
+
+    if (product.priceLabel) {
+      parts.push(product.priceLabel);
+    }
+
+    if (product.buyLink) {
+      parts.push(`Kupnja: ${product.buyLink}`);
+    }
+
+    if (product.sellLink) {
+      parts.push(`Otkup: ${product.sellLink}`);
+    }
+
+    return parts.join(" | ");
+  });
+
+  return [intro, ...productLines, disclaimer].join("\n");
+}
+
+function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" } = {}) {
+  const replyText = buildProductReplyForChannel(productMatch.products, channelType);
+
   return {
     type: "safe_answer",
     source: "product_feed",
     stateTag: "ai_active",
     reason: "product_feed_match",
     topScore: productMatch.topScore,
-    customerMessage: productMatch.replyText,
+    customerMessage: replyText,
     products: productMatch.products,
-    zendeskMessage: productMatch.replyText,
+    zendeskMessage: replyText,
     zendeskSummary: productMatch.zendeskSummary
   };
 }
@@ -1075,11 +1115,27 @@ app.post("/webhook/zendesk", async (req, res) => {
       });
     }
 
-    const knowledge = await knowledgeService.searchKnowledgeDetailed(normalizedMessage);
-    const outcome = await determineChatOutcome(normalizedMessage, knowledge, {
-      hasAttachments: false,
-      channelType
-    });
+    let knowledge = null;
+    let outcome = null;
+
+    if (isHardHandoffMessage(normalizedMessage)) {
+      outcome = await determineChatOutcome(normalizedMessage, knowledge, {
+        hasAttachments: false,
+        channelType
+      });
+    } else {
+      const productMatch = await productService.searchProducts(normalizedMessage);
+
+      if (productMatch) {
+        outcome = buildProductOutcomeForChannel(productMatch, { channelType });
+      } else {
+        knowledge = await knowledgeService.searchKnowledgeDetailed(normalizedMessage);
+        outcome = await determineChatOutcome(normalizedMessage, knowledge, {
+          hasAttachments: false,
+          channelType
+        });
+      }
+    }
 
     if (outcome.type !== "safe_answer") {
       await persistEscalation(
@@ -1106,7 +1162,8 @@ app.post("/webhook/zendesk", async (req, res) => {
 
     await zendeskService.updateConversationState(ticketId, outcome.stateTag);
     await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
-      channelType
+      channelType,
+      additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : []
     });
     await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
       outcome,
@@ -1114,6 +1171,12 @@ app.post("/webhook/zendesk", async (req, res) => {
       knowledge,
       channelType
     }));
+    if (outcome.source === "product_feed" && outcome.zendeskSummary) {
+      await zendeskService.addInternalNote(
+        ticketId,
+        `Product feed sažetak:\n${outcome.zendeskSummary}`
+      );
+    }
 
     return res.status(200).json({
       success: true,
