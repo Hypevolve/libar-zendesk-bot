@@ -1,10 +1,10 @@
+const { normalizeWhitespace } = require("./textUtils");
+
 const MEMORY_START = "[LIBAR_MEMORY_V1]";
 const MEMORY_END = "[/LIBAR_MEMORY_V1]";
 
 function normalizeText(value = "") {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeWhitespace(value);
 }
 
 function getFirstName(name = "") {

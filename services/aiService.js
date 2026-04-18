@@ -283,7 +283,7 @@ function buildSpamClassifierPrompt({ channelType = "email" } = {}) {
   ].join("\n");
 }
 
-function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerName = "" } = {}) {
+function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerName = "", conversationSummary = "" } = {}) {
   return [
     "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
     "",
@@ -302,9 +302,13 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
     "",
     ...buildChannelInstructions(channelType),
     "",
+    conversationSummary
+      ? `SAŽETAK RAZGOVORA:\n${conversationSummary}`
+      : "",
+    "",
     "KONTEKST:",
     context || "Nema pronađenog konteksta."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function normalizeSpamClassification(parsed) {
@@ -338,56 +342,69 @@ function normalizeSpamClassification(parsed) {
 /**
  * Ask OpenRouter-hosted model to return a structured decision object that the
  * backend can validate safely.
+ * Fix #14: Retry once with exponential backoff on transient failures.
  */
 async function generateReply(message, context, options = {}) {
-  try {
-    const completion = await client.chat.completions.create({
-      model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content: buildSystemPrompt(context, options)
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ]
-    });
+  const maxAttempts = 2;
 
-    const rawContent = completion.choices?.[0]?.message?.content?.trim();
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+        temperature: 0.35,
+        messages: [
+          {
+            role: "system",
+            content: buildSystemPrompt(context, options)
+          },
+          {
+            role: "user",
+            content: message
+          }
+        ]
+      });
 
-    if (!rawContent) {
-      throw new Error("AI response was empty.");
+      const rawContent = completion.choices?.[0]?.message?.content?.trim();
+
+      if (!rawContent) {
+        throw new Error("AI response was empty.");
+      }
+
+      const jsonPayload = extractJsonObject(rawContent);
+
+      if (!jsonPayload) {
+        throw new Error("AI response did not contain valid JSON.");
+      }
+
+      return normalizeAiDecision(JSON.parse(jsonPayload));
+    } catch (error) {
+      const isStructuralError =
+        error.message === "AI response did not contain valid JSON." ||
+        error.message === "AI response used an unsupported decision." ||
+        error.message === "AI safe_answer decision did not include a reply." ||
+        error.message === "AI clarify decision did not include a question." ||
+        error.name === "SyntaxError";
+
+      if (isStructuralError) {
+        console.error("AI reply structural error:", { message: error.message });
+        return buildFallbackDecision("invalid_structured_output");
+      }
+
+      console.error(`AI reply attempt ${attempt}/${maxAttempts} failed:`, {
+        message: error.message,
+        status: error.status
+      });
+
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        continue;
+      }
+
+      return buildFallbackDecision("ai_generation_failed");
     }
-
-    const jsonPayload = extractJsonObject(rawContent);
-
-    if (!jsonPayload) {
-      throw new Error("AI response did not contain valid JSON.");
-    }
-
-    return normalizeAiDecision(JSON.parse(jsonPayload));
-  } catch (error) {
-    console.error("AI reply generation failed:", {
-      message: error.message,
-      responseData: error.response?.data,
-      status: error.status
-    });
-
-    if (
-      error.message === "AI response did not contain valid JSON." ||
-      error.message === "AI response used an unsupported decision." ||
-      error.message === "AI safe_answer decision did not include a reply." ||
-      error.message === "AI clarify decision did not include a question." ||
-      error.name === "SyntaxError"
-    ) {
-      return buildFallbackDecision("invalid_structured_output");
-    }
-
-    return buildFallbackDecision("ai_generation_failed");
   }
+
+  return buildFallbackDecision("ai_generation_failed");
 }
 
 async function classifySpamCandidate(message, options = {}) {

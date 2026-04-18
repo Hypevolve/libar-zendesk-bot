@@ -1,17 +1,11 @@
+const { normalizeWhitespace, normalizeForComparison } = require("./textUtils");
+
 function normalizeText(value = "") {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeWhitespace(value);
 }
 
 function normalizeComparableText(value = "") {
-  return normalizeText(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}\s#-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeForComparison(value);
 }
 
 function getRecentMessages(messages = [], limit = 8) {
@@ -185,8 +179,15 @@ function isFollowUpMessage(text = "") {
     return false;
   }
 
+  // Fix #6: Strip leading acknowledgment prefixes before testing follow-up patterns.
+  const stripped = normalized
+    .replace(/^(ok|okej|oke|uredu|u redu|dobro|razumijem|shvacam|vazi|da|super|jasno|aha|moze|može)[,!.;:\s-]*/i, "")
+    .trim();
+
+  const testText = stripped || normalized;
+
   return /^(a|a za|a sto|a što|i|i za|sto ako|što ako|koliko|ima li|jel|je li|moze li|može li|a cijena|a cijena\?)\b/.test(
-    normalized
+    testText
   );
 }
 
@@ -249,19 +250,19 @@ function buildIntentScores(text = "", contextText = "") {
     scores.small_talk_or_closure += 10;
   }
 
-  if (/(dostav|isporuk|kurir|pošta|posta|rok dostave|cijena dostave|preuzimanj)/.test(normalized)) {
+  if (/(dostav|isporuk|kurir|pošta|posta|rok dostav|cijena dostav|preuzim|slanj|posiljk|pošiljk)/.test(normalized)) {
     scores.dostava_info += 8;
   }
 
-  if (/(gdje mi je|status narudzbe|status narudžbe|kad ce stici|kad će stići)/.test(normalized)) {
+  if (/(gdje mi je|status narudzbe|status narudžbe|kad ce stici|kad će stići|kad stize|kad stiže|koliko jos|koliko još)/.test(normalized)) {
     scores.narudzba_status += 9;
   }
 
-  if (/(problem s narudzbom|problem s narudžbom|ne mogu promijeniti|krivo narucio|krivo naručio)/.test(normalized)) {
+  if (/(problem s narudzbom|problem s narudžbom|ne mogu promijeniti|krivo narucio|krivo naručio|krivo poslan|pogresn|pogrešn)/.test(normalized)) {
     scores.narudzba_problem += 9;
   }
 
-  if (/(narudzb|narudžb)/.test(normalized)) {
+  if (/(narudzb|narudžb|narucio|naručio|narucen|naručen)/.test(normalized)) {
     scores.narudzba_status += 3;
     scores.narudzba_problem += 3;
   }
@@ -271,11 +272,11 @@ function buildIntentScores(text = "", contextText = "") {
     scores.general_support += 2;
   }
 
-  if (/(reklamacij|povrat|refund|kriva knjiga|ostecen|oštećen|zelim povrat|želim povrat)/.test(normalized)) {
+  if (/(reklamacij|povrat|refund|kriva knjiga|ostecen|oštećen|zelim povrat|želim povrat|vracanj|vraćanj)/.test(normalized)) {
     scores.reklamacija_povrat += 12;
   }
 
-  if (/(otkup|prodati knjig|procjen|procjenu|vrednovanj|bonus 10)/.test(normalized)) {
+  if (/(otkup|prodati knjig|prodajem|procjen|procjenu|vrednovanj|bonus 10)/.test(normalized)) {
     scores.otkup_upit += 10;
   }
 
@@ -283,7 +284,7 @@ function buildIntentScores(text = "", contextText = "") {
     scores.product_availability += 7;
   }
 
-  if (/(cijena|koliko kosta|koliko košta|koliko je)/.test(normalized)) {
+  if (/(cijena|koliko kosta|koliko košta|koliko kostaju|koliko koštaju|koliko je)/.test(normalized)) {
     scores.product_pricing += 6;
     scores.dostava_info += 3;
   }
@@ -487,10 +488,11 @@ function buildMissingSlots(intent, entities = {}, message = "", pendingClarifica
     }
   }
 
+  // Fix #18: Rename inner variable to avoid shadowing outer hasSpecificQuestion.
   if (intent === "dostava_info") {
-    const hasSpecificQuestion = /\?/.test(message) || /(rok|cijena|koliko|kada|kurir|preuzimanje)/i.test(message);
+    const hasDeliverySpecificQuestion = /\?/.test(message) || /(rok|cijena|koliko|kada|kurir|preuzimanje)/i.test(message);
 
-    if (!entities.city && !hasSpecificQuestion) {
+    if (!entities.city && !hasDeliverySpecificQuestion) {
       missingSlots.push("delivery_scope");
     }
   }
@@ -503,10 +505,13 @@ function buildMissingSlots(intent, entities = {}, message = "", pendingClarifica
     missingSlots.push("issue_description");
   }
 
+  // Fix #7: Detect topic shift — if the intent changed, reset canAskAgain regardless of slot match.
   if (pendingClarification?.slotKey && missingSlots.includes(pendingClarification.slotKey)) {
+    const intentChanged = pendingClarification.intent && pendingClarification.intent !== intent;
+
     return {
       missingSlots,
-      canAskAgain: Number(pendingClarification.attemptCount || 0) < 1
+      canAskAgain: intentChanged || Number(pendingClarification.attemptCount || 0) < 1
     };
   }
 

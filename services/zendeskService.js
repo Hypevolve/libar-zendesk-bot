@@ -645,13 +645,7 @@ async function uploadAttachment(file) {
 }
 
 async function uploadAttachments(files = []) {
-  const results = [];
-
-  for (const file of files) {
-    results.push(await uploadAttachment(file));
-  }
-
-  return results;
+  return Promise.all(files.map((file) => uploadAttachment(file)));
 }
 
 /**

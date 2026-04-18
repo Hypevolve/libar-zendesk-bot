@@ -10,14 +10,17 @@ const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
 const spamFilterService = require("./services/spamFilterService");
 const productService = require("./services/productService");
-const conversationService = require("./services/conversationService");
+const reasoningService = require("./services/reasoningService");
 const memoryService = require("./services/memoryService");
 const plannerService = require("./services/plannerService");
 
 const app = express();
 const chatSessions = new Map();
+const processedWebhookAudits = new Map();
+const WEBHOOK_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
 const chatStreams = new Map();
-const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 5;
+const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 8;
 const BLOCKED_AUTOPILOT_TAGS = new Set(["human_active", "resolved"]);
 const ENTRY_FLOW_VERSION = "v1";
 const ENTRY_INTENT_LABELS = {
@@ -43,8 +46,69 @@ const EMBED_ALLOWED_ORIGINS = String(process.env.EMBED_ALLOWED_ORIGINS || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+// --- Rate Limiting ---
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 30;
+const rateLimitStore = new Map();
+
+function rateLimiter(req, res, next) {
+  const ip = req.ip || req.connection?.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = rateLimitStore.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitStore.set(ip, { windowStart: now, count: 1 });
+    return next();
+  }
+
+  entry.count++;
+
+  if (entry.count > RATE_LIMIT_MAX) {
+    return res.status(429).json({
+      success: false,
+      error: "Too many requests. Please try again later."
+    });
+  }
+
+  return next();
+}
+
+// Periodically clean up expired rate limit entries.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitStore) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+      rateLimitStore.delete(ip);
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS * 2);
+
+// --- CORS ---
+const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function corsMiddleware(req, res, next) {
+  const origin = req.headers.origin || "";
+
+  if (CORS_ALLOWED_ORIGINS.length > 0 && origin && CORS_ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Max-Age", "86400");
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  return next();
+}
+
 // Parse incoming JSON bodies from Zendesk webhooks.
 app.use(express.json({ limit: "1mb" }));
+app.use(corsMiddleware);
 app.use(express.static(path.join(__dirname, "public")));
 
 function applyEmbedFrameHeaders(res) {
@@ -826,18 +890,11 @@ function buildFocusedKnowledgeContext(knowledge, limit = 2) {
 }
 
 function shouldAttemptGroundedAnswerFallback(knowledge) {
-  const articles = Array.isArray(knowledge?.articles) ? knowledge.articles : [];
-  const topArticle = articles[0] || null;
-
-  if (!knowledge?.context || !knowledge?.topScore || !topArticle) {
+  if (!knowledge?.context || !knowledge?.topScore) {
     return false;
   }
 
-  if (knowledge.topScore < Math.max(KNOWLEDGE_MIN_TOP_SCORE + 2, 8)) {
-    return false;
-  }
-
-  return topArticle.source === "onedrive" || knowledge.primarySource === "onedrive";
+  return knowledge.topScore >= Math.max(KNOWLEDGE_MIN_TOP_SCORE + 2, 10);
 }
 
 function hasCriticalRiskFlags(conversation = null) {
@@ -1048,7 +1105,8 @@ async function determineChatOutcome(
       const focusedContext = buildFocusedKnowledgeContext(knowledge, 2);
       const groundedReply = await aiService.generateGroundedAnswer(userMessage, focusedContext, {
         channelType,
-        customerName
+        customerName,
+        conversationSummary: conversation?.summary || ""
       });
 
       if (groundedReply) {
@@ -1128,7 +1186,7 @@ function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" 
 }
 
 function buildConversationAnalysis(session, userMessage) {
-  const conversation = conversationService.analyzeConversation({
+  const conversation = reasoningService.analyzeConversation({
     message: userMessage,
     messages: session?.messages || [],
     entryIntent: session?.entryIntent || "",
@@ -1179,6 +1237,23 @@ function shouldUseProductSearch(conversation = null) {
   return conversation.topicAnchor?.type === "product";
 }
 
+function buildClosureAcknowledgment(conversation, channelType) {
+  const channelMessages = getChannelMessages(channelType);
+  const closureReplies = [
+    "Nema na čemu! Ako vam zatreba još nešto, slobodno se javite.",
+    "Drago mi je da sam mogao pomoći. Javite se ako bude još pitanja.",
+    "Hvala vama! Tu smo ako zatreba."
+  ];
+  const index = Math.floor(Math.random() * closureReplies.length);
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "closure_acknowledgment",
+    customerMessage: closureReplies[index]
+  };
+}
+
 async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
   const conversation = buildConversationAnalysis(session, userMessage);
   if (hasAttachments) {
@@ -1192,7 +1267,14 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   let outcome = null;
   const customerName = memoryService.getFirstName(session?.requesterName || session?.workingMemory?.customerProfile?.name);
 
+  // Fix #4: Closure messages get an acknowledgment, not a handoff.
   if (
+    !hasAttachments &&
+    conversation.reasoningResult?.primaryIntent === "small_talk_or_closure" &&
+    conversation.supportPlan?.route === "clarify"
+  ) {
+    outcome = buildClosureAcknowledgment(conversation, channelType);
+  } else if (
     hasAttachments ||
     conversation.supportPlan?.route === "handoff_hard" ||
     conversation.supportPlan?.route === "clarify" ||
@@ -1392,9 +1474,23 @@ app.post("/webhook/zendesk", async (req, res) => {
     ticket_id: ticketId,
     message,
     channel: payloadChannelType,
-    has_attachments: hasAttachmentsRaw
+    has_attachments: hasAttachmentsRaw,
+    audit_id: auditId
   } = req.body || {};
   const hasAttachments = toBoolean(hasAttachmentsRaw);
+
+  // Fix #16: Webhook idempotency — skip duplicate audit processing.
+  if (auditId) {
+    const idempotencyKey = `${ticketId}:${auditId}`;
+    if (processedWebhookAudits.has(idempotencyKey)) {
+      return res.status(200).json({
+        success: true,
+        action: "ignored",
+        reason: "duplicate_webhook"
+      });
+    }
+    processedWebhookAudits.set(idempotencyKey, Date.now());
+  }
 
   // Validate the minimum contract early so upstream systems receive a clear error.
   if (!ticketId) {
@@ -1552,22 +1648,28 @@ app.post("/webhook/zendesk", async (req, res) => {
         outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
         { channelType }
       );
-      await zendeskService.updateConversationState(ticketId, outcome.stateTag);
-      await persistWorkingMemory(
-        temporarySession,
-        conversation,
-        outcome,
-        knowledge,
-        ticketSummary,
-        audits
-      );
-      await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
-        outcome,
-        userMessage: normalizedMessage,
-        knowledge,
-        channelType,
-        conversation
-      }));
+      // Fix #8: Send customer-facing message for handoff outcomes.
+      await Promise.all([
+        zendeskService.updateConversationState(ticketId, outcome.stateTag),
+        outcome.customerMessage
+          ? zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, { channelType })
+          : Promise.resolve(),
+        persistWorkingMemory(
+          temporarySession,
+          conversation,
+          outcome,
+          knowledge,
+          ticketSummary,
+          audits
+        ),
+        zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+          outcome,
+          userMessage: normalizedMessage,
+          knowledge,
+          channelType,
+          conversation
+        }))
+      ]);
 
       return res.status(200).json({
         success: true,
@@ -1578,32 +1680,38 @@ app.post("/webhook/zendesk", async (req, res) => {
       });
     }
 
-    await zendeskService.updateConversationState(ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
-      channelType,
-      additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : []
-    });
-    await persistWorkingMemory(
-      temporarySession,
-      conversation,
-      outcome,
-      knowledge,
-      ticketSummary,
-      audits
-    );
-    await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
-      outcome,
-      userMessage: normalizedMessage,
-      knowledge,
-      channelType,
-      conversation
-    }));
+    // Fix #13: Parallelize independent Zendesk write calls.
+    const safeAnswerTasks = [
+      zendeskService.updateConversationState(ticketId, outcome.stateTag),
+      zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
+        channelType,
+        additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : []
+      }),
+      persistWorkingMemory(
+        temporarySession,
+        conversation,
+        outcome,
+        knowledge,
+        ticketSummary,
+        audits
+      ),
+      zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+        outcome,
+        userMessage: normalizedMessage,
+        knowledge,
+        channelType,
+        conversation
+      }))
+    ];
     if (outcome.source === "product_feed" && outcome.zendeskSummary) {
-      await zendeskService.addInternalNote(
-        ticketId,
-        `Product feed sažetak:\n${outcome.zendeskSummary}`
+      safeAnswerTasks.push(
+        zendeskService.addInternalNote(
+          ticketId,
+          `Product feed sažetak:\n${outcome.zendeskSummary}`
+        )
       );
     }
+    await Promise.all(safeAnswerTasks);
 
     return res.status(200).json({
       success: true,
@@ -1632,7 +1740,7 @@ app.post("/webhook/zendesk", async (req, res) => {
  * - generate the first AI response
  * - mirror both sides into Zendesk
  */
-app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res) => {
+app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), async (req, res) => {
   const { name, email } = req.body || {};
   const message = normalizeMessage(req.body?.message);
   const entryIntent = normalizeEntryIntent(req.body?.entryIntent);
@@ -1881,7 +1989,7 @@ app.post("/api/chat/restore", async (req, res) => {
 /**
  * Continue an existing webshop chat session.
  */
-app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, res) => {
+app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), async (req, res) => {
   const { sessionId } = req.body || {};
   const message = normalizeMessage(req.body?.message);
   const files = getUploadedFiles(req);
@@ -2288,11 +2396,36 @@ app.post("/webhook/zendesk/events", async (req, res) => {
   }
 });
 
-// Basic health endpoint for local checks and deployment probes.
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    status: "ok"
+// Fix #20: Health-check that verifies external dependencies.
+app.get("/health", async (req, res) => {
+  const checks = {
+    zendesk: false,
+    onedrive: oneDriveService.isConfigured() ? false : "not_configured"
+  };
+
+  try {
+    await zendeskService.getZendeskConfigSummary();
+    checks.zendesk = true;
+  } catch (_error) {
+    checks.zendesk = false;
+  }
+
+  if (oneDriveService.isConfigured()) {
+    try {
+      checks.onedrive = true;
+    } catch (_error) {
+      checks.onedrive = false;
+    }
+  }
+
+  const allHealthy = checks.zendesk !== false;
+
+  res.status(allHealthy ? 200 : 503).json({
+    success: allHealthy,
+    status: allHealthy ? "ok" : "degraded",
+    checks,
+    activeSessions: chatSessions.size,
+    uptime: Math.floor(process.uptime())
   });
 });
 
@@ -2306,7 +2439,15 @@ app.get("/embed/chat", (req, res) => {
   return res.sendFile(path.join(__dirname, "public", "chat.html"));
 });
 
+// Fix #3: Gate debug endpoint behind ADMIN_TOKEN env var.
 app.get("/debug/zendesk/:ticketId", async (req, res) => {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized. Provide ?token=<ADMIN_TOKEN> to access this endpoint."
+    });
+  }
+
   try {
     const result = await zendeskService.testZendeskTicketAccess(req.params.ticketId);
 
@@ -2321,6 +2462,16 @@ app.get("/debug/zendesk/:ticketId", async (req, res) => {
     });
   }
 });
+
+// Periodically clean up expired webhook idempotency entries.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamp] of processedWebhookAudits) {
+    if (now - timestamp > WEBHOOK_IDEMPOTENCY_TTL_MS) {
+      processedWebhookAudits.delete(key);
+    }
+  }
+}, WEBHOOK_IDEMPOTENCY_TTL_MS);
 
 const port = Number(process.env.PORT) || 3000;
 

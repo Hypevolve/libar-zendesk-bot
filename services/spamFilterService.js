@@ -44,12 +44,10 @@ const LIKELY_SPAM_PATTERNS = [
   { name: "contact_me_elsewhere", regex: /\btelegram|whatsapp|signal\b/i, score: 2 }
 ];
 
+const { normalizeLowercase } = require("./textUtils");
+
 function normalizeText(value = "") {
-  return String(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+  return normalizeLowercase(value);
 }
 
 function countRegexMatches(text, regex) {
