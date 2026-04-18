@@ -826,10 +826,12 @@ function buildProductReplyForChannel(products = [], channelType = "web_chat") {
     [
       `${index + 1}. ${product.title}`,
       product.priceLabel ? `Cijena: ${product.priceLabel}` : null,
+      product.priceLabel ? "" : null,
       product.buyLink ? `Kupnja: ${product.buyLink}` : null,
+      product.buyLink && product.sellLink ? "" : null,
       product.sellLink ? `Otkup: ${product.sellLink}` : null
     ]
-      .filter(Boolean)
+      .filter((line) => line !== null)
       .join("\n")
   );
 
