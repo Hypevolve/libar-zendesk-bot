@@ -1003,6 +1003,30 @@ function buildConversationAnalysis(session, userMessage) {
   });
 }
 
+function shouldUseProductSearch(conversation = null) {
+  if (!conversation) {
+    return false;
+  }
+
+  const intent = String(conversation.resolvedUserIntent || "").trim();
+  const standaloneQuery = String(conversation.standaloneQuery || "").toLowerCase();
+  const originalMessage = String(conversation.originalMessage || "").toLowerCase();
+  const hasProductAnchor = conversation.topicAnchor?.type === "product";
+  const hasBookSignals = /(knjig|udžben|udzben|isbn|autor|naslov|rabljene?|udjbenik|prodajete li)/.test(
+    `${standaloneQuery} ${originalMessage}`
+  );
+
+  if (hasProductAnchor) {
+    return true;
+  }
+
+  if (["dostava", "narudzba", "otkup_knjiga", "reklamacija_problem"].includes(intent)) {
+    return false;
+  }
+
+  return hasBookSignals;
+}
+
 async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
   const conversation = buildConversationAnalysis(session, userMessage);
   let knowledge = null;
@@ -1021,7 +1045,9 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
   } else {
     const searchQuery = conversation.standaloneQuery || userMessage;
-    const productMatch = await productService.searchProducts(searchQuery);
+    const productMatch = shouldUseProductSearch(conversation)
+      ? await productService.searchProducts(searchQuery)
+      : null;
 
     if (productMatch) {
       outcome = buildProductOutcomeForChannel(productMatch, { channelType });
