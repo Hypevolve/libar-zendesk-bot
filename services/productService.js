@@ -1,4 +1,5 @@
 const axios = require("axios");
+const { preprocessSearchQuery } = require("./searchUtils");
 
 const PRODUCT_FEED_URL =
   process.env.PRODUCT_FEED_URL ||
@@ -12,6 +13,15 @@ let inflightFetch = null;
 
 function normalizeWhitespace(value = "") {
   return String(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function preprocessProductQuery(query = "") {
+  return normalizeWhitespace(preprocessSearchQuery(query))
+    .replace(/^(imate li|jel imate|je li dostupan|jel dostupan|trazim|tražim)[,!.:\s-]*/i, "")
+    .replace(/\b(imate li|je li dostupan|jel dostupan|dostupan|dostupna|dostupno)\b/gi, " ")
+    .replace(/[?!.;,]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -264,7 +274,7 @@ function buildProductInternalSummary(products = []) {
 }
 
 async function searchProducts(query, options = {}) {
-  const normalizedQuery = normalizeWhitespace(query);
+  const normalizedQuery = preprocessProductQuery(query);
 
   if (!normalizedQuery) {
     return null;
