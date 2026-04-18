@@ -1,5 +1,6 @@
 const axios = require("axios");
 const { preprocessSearchQuery } = require("./searchUtils");
+const { normalizeWhitespace, normalizeLowercase } = require("./textUtils");
 
 const PRODUCT_FEED_URL =
   process.env.PRODUCT_FEED_URL ||
@@ -11,12 +12,6 @@ let cachedProducts = [];
 let cacheExpiresAt = 0;
 let inflightFetch = null;
 
-function normalizeWhitespace(value = "") {
-  return String(value)
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function preprocessProductQuery(query = "") {
   return normalizeWhitespace(preprocessSearchQuery(query))
     .replace(/^(imate li|jel imate|je li dostupan|jel dostupan|trazim|tražim)[,!.:\s-]*/i, "")
@@ -27,10 +22,7 @@ function preprocessProductQuery(query = "") {
 }
 
 function normalizeSearchText(value = "") {
-  return normalizeWhitespace(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+  return normalizeLowercase(value);
 }
 
 function normalizeIsbn(value = "") {
