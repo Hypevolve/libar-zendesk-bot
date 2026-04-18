@@ -906,6 +906,15 @@ function pushOptimisticMessage(role, content, attachments = []) {
   updateMessages([...canonicalMessages, ...optimisticMessages]);
 }
 
+async function submitInitialUserMessage(message, attachments = []) {
+  if (!message) {
+    return;
+  }
+
+  pushMessage("user", message, attachments);
+  await handleOnboardingMessage(message);
+}
+
 function seedWelcomeState() {
   if (onboarding.messages.length > 0) {
     return;
@@ -927,6 +936,12 @@ async function startZendeskChat() {
   const isForm = pendingFiles.length > 0;
   let body;
   let headers = {};
+  const trackedEntryFlow = {
+    selectedEntryIntent: onboarding.entryFlow.selectedEntryIntent || null,
+    entryFlowSkipped: onboarding.entryFlow.entryFlowSkipped,
+    stage: onboarding.entryFlow.stage,
+    entryPromptAnswer: onboarding.entryFlow.entryPromptAnswer || ""
+  };
   const entryPayload = {
     entryFlowVersion: ENTRY_FLOW_VERSION,
     ...(onboarding.entryFlow.selectedEntryIntent
@@ -981,7 +996,10 @@ async function startZendeskChat() {
   clearOnboardingState();
   onboarding.stage = "connected";
   trackEntryFlowEvent("chat_started", {
-    hasPromptAnswer: Boolean(onboarding.entryFlow.entryPromptAnswer)
+    selectedEntryIntent: trackedEntryFlow.selectedEntryIntent,
+    entryFlowSkipped: trackedEntryFlow.entryFlowSkipped,
+    stage: trackedEntryFlow.stage,
+    hasPromptAnswer: Boolean(trackedEntryFlow.entryPromptAnswer)
   });
   if (data.session) {
     applyConversationState(data.session);
@@ -1290,17 +1308,24 @@ entryFlowPromptForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   const promptValue = entryPromptInput?.value.trim() || "";
 
+  trackEntryFlowEvent("prompt_completed", {
+    hasPromptAnswer: Boolean(promptValue)
+  });
+
   setEntryFlowState({
     stage: "ready",
     entryPromptAnswer: promptValue,
     entryFlowSkipped: false
   });
 
-  trackEntryFlowEvent("prompt_completed", {
-    hasPromptAnswer: Boolean(promptValue)
-  });
+  if (!promptValue) {
+    messageInput?.focus();
+    return;
+  }
 
-  messageInput?.focus();
+  submitInitialUserMessage(promptValue).catch((error) => {
+    showError(error.message);
+  });
 });
 
 messagesEl.addEventListener("click", async (event) => {
@@ -1518,8 +1543,6 @@ messageForm.addEventListener("submit", async (event) => {
   if (message) {
     if (sessionId) {
       pushOptimisticMessage("user", message, pendingAttachmentPayload);
-    } else {
-      pushMessage("user", message, pendingAttachmentPayload);
     }
   } else if (pendingAttachmentPayload.length > 0) {
     if (sessionId) {
@@ -1534,7 +1557,7 @@ messageForm.addEventListener("submit", async (event) => {
 
   if (!sessionId) {
     if (message) {
-      await handleOnboardingMessage(message);
+      await submitInitialUserMessage(message, pendingAttachmentPayload);
     }
     // Do NOT clear pendingFiles here anymore! They need to persist until startZendeskChat
     return;
