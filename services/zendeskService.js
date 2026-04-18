@@ -141,11 +141,14 @@ function createArticleSearchText(article) {
  * Simple lexical scoring across the full KB.
  * Exact phrase matches get the biggest boost, then title matches, then body coverage.
  */
-function scoreArticle(article, query) {
+function scoreArticle(article, query, options = {}) {
   const normalizedQuery = normalizeText(query);
   const queryTokens = tokenize(query);
   const title = normalizeText(article.title || "");
   const searchText = normalizeText(createArticleSearchText(article));
+  const conversationTerms = Array.isArray(options.conversationTerms)
+    ? options.conversationTerms.map((term) => normalizeText(term)).filter(Boolean)
+    : [];
 
   if (!normalizedQuery || queryTokens.length === 0 || !searchText) {
     return 0;
@@ -158,6 +161,16 @@ function scoreArticle(article, query) {
   }
 
   score += scoreSearchText(article.title || "", query) * 2;
+
+  for (const term of conversationTerms) {
+    if (!term) {
+      continue;
+    }
+
+    if (searchText.includes(term) || title.includes(term)) {
+      score += 2;
+    }
+  }
 
   return score;
 }
@@ -220,9 +233,9 @@ async function searchHelpCenter(query) {
   return result?.context || null;
 }
 
-async function searchHelpCenterDetailed(query) {
+async function searchHelpCenterDetailed(query, options = {}) {
   try {
-    const searchQuery = preprocessSearchQuery(query);
+    const searchQuery = preprocessSearchQuery(query, options);
     const allArticles = await fetchAllHelpCenterArticles();
 
     if (allArticles.length === 0) {
@@ -232,7 +245,7 @@ async function searchHelpCenterDetailed(query) {
     const rankedArticles = allArticles
       .map((article) => ({
         article,
-        score: scoreArticle(article, searchQuery),
+        score: scoreArticle(article, searchQuery, options),
         excerpt: findBestExcerpt(article.body || "", searchQuery, 900)
       }))
       .filter((entry) => entry.score > 0)
@@ -500,7 +513,13 @@ async function setTicketTags(ticketId, nextTags = []) {
 
 async function updateConversationState(ticketId, nextState, extraTags = []) {
   const ticket = await getTicketSummary(ticketId);
-  const stateTags = new Set(["ai_active", "awaiting_human", "human_active", "resolved"]);
+  const stateTags = new Set([
+    "ai_active",
+    "awaiting_human",
+    "awaiting_customer_detail",
+    "human_active",
+    "resolved"
+  ]);
   const nextTags = (ticket.tags || []).filter((tag) => !stateTags.has(tag));
 
   if (nextState) {

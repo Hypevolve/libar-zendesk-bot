@@ -105,11 +105,14 @@ if (hasPartialConfig()) {
   );
 }
 
-function scoreDocument(document, query) {
+function scoreDocument(document, query, options = {}) {
   const normalizedQuery = normalizeText(query);
   const queryTokens = tokenize(query);
   const title = normalizeText(document.title || "");
   const searchText = normalizeText(`${document.title || ""} ${document.body || ""}`);
+  const conversationTerms = Array.isArray(options.conversationTerms)
+    ? options.conversationTerms.map((term) => normalizeText(term)).filter(Boolean)
+    : [];
 
   if (!normalizedQuery || queryTokens.length === 0 || !searchText) {
     return 0;
@@ -122,6 +125,16 @@ function scoreDocument(document, query) {
   }
 
   score += scoreSearchText(document.title || "", query) * 2;
+
+  for (const term of conversationTerms) {
+    if (!term) {
+      continue;
+    }
+
+    if (searchText.includes(term) || title.includes(term)) {
+      score += 2;
+    }
+  }
 
   return score;
 }
@@ -440,13 +453,13 @@ async function fetchFolderDocuments() {
   return documents;
 }
 
-async function searchOneDriveDetailed(query) {
+async function searchOneDriveDetailed(query, options = {}) {
   if (!isConfigured()) {
     return null;
   }
 
   try {
-    const searchQuery = preprocessSearchQuery(query);
+    const searchQuery = preprocessSearchQuery(query, options);
     const documents = await fetchFolderDocuments();
 
     if (documents.length === 0) {
@@ -456,7 +469,7 @@ async function searchOneDriveDetailed(query) {
     const rankedDocuments = documents
       .map((document) => ({
         document,
-        score: scoreDocument(document, searchQuery),
+        score: scoreDocument(document, searchQuery, options),
         excerpt: findBestExcerpt(document.body || "", searchQuery, 900)
       }))
       .filter((entry) => entry.score > 0)

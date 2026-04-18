@@ -85,7 +85,17 @@ function buildChannelInstructions(channelType = "unknown") {
   ];
 }
 
-function buildSystemPrompt(context, { channelType = "unknown" } = {}) {
+function buildSystemPrompt(
+  context,
+  {
+    channelType = "unknown",
+    conversationSummary = "",
+    responsePlan = null,
+    standaloneQuery = "",
+    missingSlots = [],
+    riskFlags = []
+  } = {}
+) {
   return [
     "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
     "",
@@ -112,6 +122,7 @@ function buildSystemPrompt(context, { channelType = "unknown" } = {}) {
     "",
     "ESKALACIJSKA PRAVILA:",
     "- Ako je korisnik ljut, žali se, spominje plaćanje, povrat novca, reklamaciju, problem s narudžbom ili drugu osjetljivu situaciju, odluka mora biti hard_handoff.",
+    "- Ako nedostaje samo jedan ključan podatak i vrlo je vjerojatno da možeš pomoći nakon kratkog potpitanja, odluka treba biti ask_clarifying_question.",
     "- Ako odgovor nije jasno i dovoljno podržan kontekstom, odluka mora biti soft_handoff.",
     "- Ako korisnik pita više stvari, a samo dio je pokriven kontekstom, odgovori samo ako možeš dati i dalje točan i koristan odgovor bez nagađanja. Inače odluka mora biti soft_handoff.",
     "",
@@ -132,16 +143,33 @@ function buildSystemPrompt(context, { channelType = "unknown" } = {}) {
     "",
     ...buildChannelInstructions(channelType),
     "",
+    "SAŽETAK RAZGOVORA:",
+    conversationSummary || "Nema dodatnog sažetka razgovora.",
+    "",
+    "STANDALONE UPIT:",
+    standaloneQuery || "Nije dostavljeno.",
+    "",
+    "MISSING SLOTOVI:",
+    Array.isArray(missingSlots) && missingSlots.length > 0 ? missingSlots.join(", ") : "nema",
+    "",
+    "RISK FLAGOVI:",
+    Array.isArray(riskFlags) && riskFlags.length > 0 ? riskFlags.join(", ") : "nema",
+    "",
+    "RESPONSE PLAN:",
+    responsePlan?.steps?.length ? responsePlan.steps.join(" ") : "Odgovori izravno ako je kontekst dovoljan.",
+    "",
     "FORMAT IZLAZA:",
     "Vrati isključivo valjani JSON objekt, bez markdowna, bez code blocka i bez dodatnog teksta.",
     "Koristi točno ovu strukturu:",
     '{',
-    '  "decision": "safe_answer" | "soft_handoff" | "hard_handoff",',
+    '  "decision": "safe_answer" | "ask_clarifying_question" | "soft_handoff" | "hard_handoff",',
     '  "reply": "string",',
+    '  "clarifying_question": "string",',
     '  "reason": "string"',
     '}',
     'Pravila za JSON izlaz:',
     '- Ako je decision = safe_answer, reply mora sadržavati gotov odgovor za korisnika na hrvatskom.',
+    '- Ako je decision = ask_clarifying_question, clarifying_question mora sadržavati jedno kratko i konkretno pitanje na hrvatskom, a reply može biti isti tekst ili prazan string.',
     '- Ako je decision = soft_handoff, reply mora biti prazan string.',
     '- Ako je decision = hard_handoff, reply mora biti prazan string.',
     '- reason mora biti kratka strojno-čitljiva oznaka na engleskom, npr. "context_supported", "insufficient_context", "complaint_or_payment".',
@@ -172,9 +200,11 @@ function extractJsonObject(rawText = "") {
 function normalizeAiDecision(parsed) {
   const decision = String(parsed?.decision || "").trim();
   const reply = typeof parsed?.reply === "string" ? parsed.reply.trim() : "";
+  const clarifyingQuestion =
+    typeof parsed?.clarifying_question === "string" ? parsed.clarifying_question.trim() : "";
   const reason = typeof parsed?.reason === "string" ? parsed.reason.trim() : "";
 
-  if (!["safe_answer", "soft_handoff", "hard_handoff"].includes(decision)) {
+  if (!["safe_answer", "ask_clarifying_question", "soft_handoff", "hard_handoff"].includes(decision)) {
     throw new Error("AI response used an unsupported decision.");
   }
 
@@ -182,9 +212,14 @@ function normalizeAiDecision(parsed) {
     throw new Error("AI safe_answer decision did not include a reply.");
   }
 
+  if (decision === "ask_clarifying_question" && !clarifyingQuestion && !reply) {
+    throw new Error("AI clarify decision did not include a question.");
+  }
+
   return {
     decision,
     reply,
+    clarifyingQuestion: clarifyingQuestion || reply,
     reason: reason || "unspecified"
   };
 }
@@ -318,6 +353,7 @@ async function generateReply(message, context, options = {}) {
       error.message === "AI response did not contain valid JSON." ||
       error.message === "AI response used an unsupported decision." ||
       error.message === "AI safe_answer decision did not include a reply." ||
+      error.message === "AI clarify decision did not include a question." ||
       error.name === "SyntaxError"
     ) {
       return buildFallbackDecision("invalid_structured_output");

@@ -7,14 +7,21 @@ function normalizeKnowledgeArticles(result) {
   return Array.isArray(result?.articles) ? result.articles : [];
 }
 
-function mergeKnowledgeResults({ zendeskKnowledge = null, oneDriveKnowledge = null } = {}) {
+function mergeKnowledgeResults(
+  { zendeskKnowledge = null, oneDriveKnowledge = null } = {},
+  options = {}
+) {
   const oneDriveArticles = normalizeKnowledgeArticles(oneDriveKnowledge);
   const zendeskArticles = normalizeKnowledgeArticles(zendeskKnowledge);
+  const preferredSource = String(options.preferredSource || "").trim().toLowerCase();
 
   const candidates = [...oneDriveArticles, ...zendeskArticles]
     .map((entry, index) => ({
       ...entry,
-      _sortScore: Number(entry.score) + (entry.source === "onedrive" ? 0.25 : 0),
+      _sortScore:
+        Number(entry.score) +
+        (entry.source === "onedrive" ? 0.25 : 0) +
+        (preferredSource && entry.source === preferredSource ? 0.75 : 0),
       _sortIndex: index
     }))
     .sort((left, right) => {
@@ -50,20 +57,20 @@ function mergeKnowledgeResults({ zendeskKnowledge = null, oneDriveKnowledge = nu
   };
 }
 
-async function searchKnowledgeDetailed(query) {
+async function searchKnowledgeDetailed(query, options = {}) {
   const [zendeskKnowledge, oneDriveKnowledge] = await Promise.all([
-    zendeskService.searchHelpCenterDetailed(query),
-    oneDriveService.searchOneDriveDetailed(query)
+    zendeskService.searchHelpCenterDetailed(query, options),
+    oneDriveService.searchOneDriveDetailed(query, options)
   ]);
 
   return mergeKnowledgeResults({
     zendeskKnowledge,
     oneDriveKnowledge
-  });
+  }, options);
 }
 
-async function searchKnowledge(query) {
-  const result = await searchKnowledgeDetailed(query);
+async function searchKnowledge(query, options = {}) {
+  const result = await searchKnowledgeDetailed(query, options);
   return result?.context || null;
 }
 

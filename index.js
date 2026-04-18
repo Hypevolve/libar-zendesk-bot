@@ -10,6 +10,7 @@ const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
 const spamFilterService = require("./services/spamFilterService");
 const productService = require("./services/productService");
+const conversationService = require("./services/conversationService");
 
 const app = express();
 const chatSessions = new Map();
@@ -147,6 +148,11 @@ function getSession(sessionId) {
 function createSession(payload) {
   const sessionId = randomUUID();
   const session = {
+    pendingClarification: null,
+    lastResolvedIntent: "",
+    lastStandaloneQuery: "",
+    lastKnowledgeSource: "",
+    lastProductTitles: [],
     sessionId,
     ...payload,
     createdAt: new Date().toISOString(),
@@ -439,6 +445,17 @@ function buildConversationState(ticketSummary, messages) {
   }
 
   if (
+    tags.includes("awaiting_customer_detail") &&
+    latestPublicMessage?.role !== "user"
+  ) {
+    return {
+      tone: "awaiting-customer-detail",
+      badge: "Treba još detalja",
+      subtitle: "Trebamo još jednu kratku informaciju da bismo nastavili odgovor."
+    };
+  }
+
+  if (
     (
       tags.includes("awaiting_human") ||
       tags.includes("hitno_slike") ||
@@ -508,8 +525,6 @@ function isHardHandoffMessage(message = "") {
     "reklamacij",
     "povrat",
     "refund",
-    "narudžb",
-    "problem",
     "ljut",
     "prevara",
     "ne radi"
@@ -615,7 +630,14 @@ function getAutomationBlockReason(ticketSummary, messages, channelType) {
 
 function getResolutionPrompt(session, ticketSummary) {
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
-  const blockedTags = new Set(["ai_eskalacija", "hitno_slike", "awaiting_human", "human_active", "resolved"]);
+  const blockedTags = new Set([
+    "ai_eskalacija",
+    "hitno_slike",
+    "awaiting_human",
+    "awaiting_customer_detail",
+    "human_active",
+    "resolved"
+  ]);
 
   if (!session || !isActiveTicketStatus(ticketSummary?.status)) {
     return null;
@@ -664,7 +686,13 @@ function getResolutionPrompt(session, ticketSummary) {
   };
 }
 
-function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "web_chat" }) {
+function buildAutopilotNote({
+  outcome,
+  userMessage,
+  knowledge,
+  channelType = "web_chat",
+  conversation = null
+}) {
   const productSummary = Array.isArray(outcome?.products)
     ? outcome.products.map((product) => product.title).filter(Boolean).join(", ")
     : "";
@@ -679,6 +707,13 @@ function buildAutopilotNote({ outcome, userMessage, knowledge, channelType = "we
     `Kanal: ${formatChannelLabel(channelType)}`,
     `AI outcome: ${outcome.type}`,
     `Upit korisnika: ${userMessage}`,
+    conversation?.standaloneQuery ? `Standalone upit: ${conversation.standaloneQuery}` : null,
+    conversation?.resolvedUserIntent ? `Detektirana namjera: ${conversation.resolvedUserIntent}` : null,
+    conversation?.isFollowUp ? "Follow-up resolved using memory: da" : null,
+    conversation?.missingSlots?.length
+      ? `Missing slotovi: ${conversation.missingSlots.join(", ")}`
+      : null,
+    conversation?.riskFlags?.length ? `Risk flagovi: ${conversation.riskFlags.join(", ")}` : null,
     outcome?.source === "product_feed" ? "Primarni izvor: Product feed" : null,
     knowledge?.primarySource
       ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
@@ -730,12 +765,79 @@ function shouldAttemptGroundedAnswerFallback(knowledge) {
   return topArticle.source === "onedrive" || knowledge.primarySource === "onedrive";
 }
 
+function hasCriticalRiskFlags(conversation = null) {
+  const flags = Array.isArray(conversation?.riskFlags) ? conversation.riskFlags : [];
+
+  return (
+    flags.includes("refund") ||
+    flags.includes("payment") ||
+    flags.includes("legal_or_abuse") ||
+    flags.includes("complaint")
+  );
+}
+
+function buildSearchOptions(session, conversation) {
+  return {
+    conversationFacts: conversation?.conversationFacts || [],
+    conversationTerms: conversation?.conversationFacts || [],
+    preferredSource: session?.lastKnowledgeSource || ""
+  };
+}
+
+function clearSessionClarification(session) {
+  if (!session) {
+    return;
+  }
+
+  session.pendingClarification = null;
+}
+
+function storeSessionClarification(session, conversation, question) {
+  if (!session || !conversation || !question) {
+    return;
+  }
+
+  session.pendingClarification = {
+    slotKey: conversation.missingSlots?.[0] || "",
+    question,
+    intent: conversation.resolvedUserIntent || "",
+    baseQuery: conversation.standaloneQuery || "",
+    attemptCount: Number(session.pendingClarification?.attemptCount || 0) + 1,
+    askedAt: new Date().toISOString()
+  };
+}
+
+function updateSessionMemory(session, conversation, outcome, knowledge = null) {
+  if (!session || !conversation) {
+    return;
+  }
+
+  session.lastResolvedIntent = conversation.resolvedUserIntent || session.lastResolvedIntent || "";
+  session.lastStandaloneQuery = conversation.standaloneQuery || session.lastStandaloneQuery || "";
+
+  if (outcome?.source === "product_feed" && Array.isArray(outcome.products)) {
+    session.lastProductTitles = outcome.products.map((product) => product.title).filter(Boolean).slice(0, 3);
+    session.lastKnowledgeSource = "product_feed";
+  } else if (knowledge?.primarySource) {
+    session.lastKnowledgeSource = knowledge.primarySource;
+  }
+
+  if (outcome?.type === "ask_clarifying_question") {
+    storeSessionClarification(session, conversation, outcome.customerMessage);
+    return;
+  }
+
+  clearSessionClarification(session);
+}
+
 async function determineChatOutcome(
   userMessage,
   knowledge,
   {
     hasAttachments = false,
-    channelType = "web_chat"
+    channelType = "web_chat",
+    conversation = null,
+    allowClarifyingQuestion = true
   } = {}
 ) {
   const channelMessages = getChannelMessages(channelType);
@@ -749,12 +851,26 @@ async function determineChatOutcome(
     };
   }
 
-  if (isHardHandoffMessage(userMessage)) {
+  if (hasCriticalRiskFlags(conversation) || isHardHandoffMessage(userMessage)) {
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: "sensitive_or_complaint_topic",
       customerMessage: channelMessages.hardHandoff
+    };
+  }
+
+  if (
+    allowClarifyingQuestion &&
+    conversation?.missingSlots?.length > 0 &&
+    conversation?.canAskClarifyingQuestion &&
+    conversation?.clarifyingQuestion
+  ) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "awaiting_customer_detail",
+      reason: "missing_required_detail",
+      customerMessage: conversation.clarifyingQuestion
     };
   }
 
@@ -768,7 +884,12 @@ async function determineChatOutcome(
   }
 
   const aiDecision = await aiService.generateReply(userMessage, knowledge.context, {
-    channelType
+    channelType,
+    conversationSummary: conversation?.summary || "",
+    responsePlan: conversation?.responsePlan || null,
+    standaloneQuery: conversation?.standaloneQuery || userMessage,
+    missingSlots: conversation?.missingSlots || [],
+    riskFlags: conversation?.riskFlags || []
   });
 
   if (aiDecision.decision === "hard_handoff") {
@@ -777,6 +898,15 @@ async function determineChatOutcome(
       stateTag: "awaiting_human",
       reason: aiDecision.reason || "ai_flagged_hard_handoff",
       customerMessage: channelMessages.hardHandoff
+    };
+  }
+
+  if (aiDecision.decision === "ask_clarifying_question") {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "awaiting_customer_detail",
+      reason: aiDecision.reason || "needs_clarification",
+      customerMessage: aiDecision.clarifyingQuestion || aiDecision.reply
     };
   }
 
@@ -860,6 +990,61 @@ function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" 
     products: productMatch.products,
     zendeskMessage: replyText,
     zendeskSummary: productMatch.zendeskSummary
+  };
+}
+
+function buildConversationAnalysis(session, userMessage) {
+  return conversationService.analyzeConversation({
+    message: userMessage,
+    messages: session?.messages || [],
+    entryIntent: session?.entryIntent || "",
+    pendingClarification: session?.pendingClarification || null,
+    session: session || {}
+  });
+}
+
+async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
+  const conversation = buildConversationAnalysis(session, userMessage);
+  let knowledge = null;
+  let outcome = null;
+
+  if (
+    hasAttachments ||
+    hasCriticalRiskFlags(conversation) ||
+    (conversation.missingSlots.length > 0 && conversation.canAskClarifyingQuestion)
+  ) {
+    outcome = await determineChatOutcome(userMessage, null, {
+      hasAttachments,
+      channelType,
+      conversation,
+      allowClarifyingQuestion: true
+    });
+  } else {
+    const searchQuery = conversation.standaloneQuery || userMessage;
+    const productMatch = await productService.searchProducts(searchQuery);
+
+    if (productMatch) {
+      outcome = buildProductOutcomeForChannel(productMatch, { channelType });
+    } else {
+      knowledge = await knowledgeService.searchKnowledgeDetailed(
+        searchQuery,
+        buildSearchOptions(session, conversation)
+      );
+      outcome = await determineChatOutcome(searchQuery, knowledge, {
+        hasAttachments: false,
+        channelType,
+        conversation,
+        allowClarifyingQuestion: true
+      });
+    }
+  }
+
+  updateSessionMemory(session, conversation, outcome, knowledge);
+
+  return {
+    conversation,
+    knowledge,
+    outcome
   };
 }
 
@@ -1119,26 +1304,39 @@ app.post("/webhook/zendesk", async (req, res) => {
       });
     }
 
-    let knowledge = null;
-    let outcome = null;
-
-    if (isHardHandoffMessage(normalizedMessage)) {
-      outcome = await determineChatOutcome(normalizedMessage, knowledge, {
+    const temporarySession = {
+      ticketId,
+      requesterId: ticketSummary.requesterId,
+      messages,
+      lastKnowledgeSource: ""
+    };
+    const { conversation, knowledge, outcome } = await resolveAutomatedOutcome(
+      temporarySession,
+      normalizedMessage,
+      {
         hasAttachments: false,
         channelType
-      });
-    } else {
-      const productMatch = await productService.searchProducts(normalizedMessage);
-
-      if (productMatch) {
-        outcome = buildProductOutcomeForChannel(productMatch, { channelType });
-      } else {
-        knowledge = await knowledgeService.searchKnowledgeDetailed(normalizedMessage);
-        outcome = await determineChatOutcome(normalizedMessage, knowledge, {
-          hasAttachments: false,
-          channelType
-        });
       }
+    );
+
+    if (outcome.type === "ask_clarifying_question") {
+      await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+      await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
+        channelType
+      });
+      await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+        outcome,
+        userMessage: normalizedMessage,
+        knowledge,
+        channelType,
+        conversation
+      }));
+
+      return res.status(200).json({
+        success: true,
+        action: "customer_detail_requested",
+        channelType
+      });
     }
 
     if (outcome.type !== "safe_answer") {
@@ -1152,7 +1350,8 @@ app.post("/webhook/zendesk", async (req, res) => {
         outcome,
         userMessage: normalizedMessage,
         knowledge,
-        channelType
+        channelType,
+        conversation
       }));
 
       return res.status(200).json({
@@ -1173,7 +1372,8 @@ app.post("/webhook/zendesk", async (req, res) => {
       outcome,
       userMessage: normalizedMessage,
       knowledge,
-      channelType
+      channelType,
+      conversation
     }));
     if (outcome.source === "product_feed" && outcome.zendeskSummary) {
       await zendeskService.addInternalNote(
@@ -1271,27 +1471,14 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       externalId: initialSessionKey
     };
 
-    let knowledge = null;
-    let outcome = null;
-
-    if (files.length > 0 || isHardHandoffMessage(entryContextMessage)) {
-      outcome = await determineChatOutcome(entryContextMessage, knowledge, {
+    const { conversation, knowledge, outcome } = await resolveAutomatedOutcome(
+      session,
+      entryContextMessage,
+      {
         hasAttachments: files.length > 0,
         channelType: "web_chat"
-      });
-    } else {
-      const productMatch = await productService.searchProducts(entryContextMessage);
-
-      if (productMatch) {
-        outcome = buildProductOutcome(productMatch);
-      } else {
-        knowledge = await knowledgeService.searchKnowledgeDetailed(entryContextMessage);
-        outcome = await determineChatOutcome(entryContextMessage, knowledge, {
-          hasAttachments: false,
-          channelType: "web_chat"
-        });
       }
-    }
+    );
 
     if (files.length > 0) {
       await zendeskService.addTagAndNote(
@@ -1301,7 +1488,7 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       );
     }
 
-    if (outcome.type !== "safe_answer") {
+    if (outcome.type !== "safe_answer" && outcome.type !== "ask_clarifying_question") {
       await persistEscalation(
         ticketId,
         outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
@@ -1322,7 +1509,8 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       outcome,
       userMessage: message,
       knowledge,
-      channelType: "web_chat"
+      channelType: "web_chat",
+      conversation
     }));
     if (outcome.source === "product_feed" && outcome.zendeskSummary) {
       await zendeskService.addInternalNote(
@@ -1538,27 +1726,14 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       });
     }
 
-    let knowledge = null;
-    let outcome = null;
-
-    if (files.length > 0 || isHardHandoffMessage(message)) {
-      outcome = await determineChatOutcome(message, knowledge, {
+    const { conversation, knowledge, outcome } = await resolveAutomatedOutcome(
+      session,
+      message || "Šaljem privitak.",
+      {
         hasAttachments: files.length > 0,
         channelType: "web_chat"
-      });
-    } else {
-      const productMatch = await productService.searchProducts(message);
-
-      if (productMatch) {
-        outcome = buildProductOutcome(productMatch);
-      } else {
-        knowledge = await knowledgeService.searchKnowledgeDetailed(message);
-        outcome = await determineChatOutcome(message, knowledge, {
-          hasAttachments: false,
-          channelType: "web_chat"
-        });
       }
-    }
+    );
 
     console.info("ai_autopilot", {
       sessionId,
@@ -1575,7 +1750,7 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       );
     }
 
-    if (outcome.type !== "safe_answer") {
+    if (outcome.type !== "safe_answer" && outcome.type !== "ask_clarifying_question") {
       await persistEscalation(
         session.ticketId,
         outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
@@ -1600,7 +1775,8 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       outcome,
       userMessage: message || "Šaljem privitak.",
       knowledge,
-      channelType: "web_chat"
+      channelType: "web_chat",
+      conversation
     }));
     if (outcome.source === "product_feed" && outcome.zendeskSummary) {
       await zendeskService.addInternalNote(

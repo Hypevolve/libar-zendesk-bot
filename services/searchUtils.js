@@ -40,13 +40,22 @@ function truncateText(text, maxLength = 1800) {
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
-function preprocessSearchQuery(query = "") {
-  return String(query)
+function preprocessSearchQuery(query = "", options = {}) {
+  const conversationFacts = Array.isArray(options.conversationFacts)
+    ? options.conversationFacts.map((fact) => String(fact || "").trim()).filter(Boolean)
+    : [];
+  const baseQuery = String(query)
     .replace(/\r/g, " ")
     .replace(/^(pozdrav|bok|dobar dan|lijep pozdrav|hello|hi|hey)[,!.:\s-]*/i, "")
     .replace(/\b(zanima me|molim vas|molim|možete li mi reći|mozete li mi reci|imam pitanje|htio bih pitati|htjela bih pitati|hvala unaprijed|unaprijed hvala)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  if (conversationFacts.length === 0) {
+    return baseQuery;
+  }
+
+  return `${baseQuery} ${conversationFacts.join(" ")}`.trim();
 }
 
 function scoreSearchText(text = "", query = "") {

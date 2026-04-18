@@ -838,6 +838,8 @@ function applyConversationState(session) {
     welcomeTitle.textContent =
       state.tone === "resolved"
         ? "Prethodni razgovor je završen"
+        : state.tone === "awaiting-customer-detail"
+          ? "Trebamo još jednu informaciju"
         : "Pitajte za knjige, otkup ili narudžbu";
   }
 
