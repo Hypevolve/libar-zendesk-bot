@@ -822,25 +822,21 @@ function buildProductReplyForChannel(products = [], channelType = "web_chat") {
     return [intro, disclaimer].join("\n");
   }
 
-  const productLines = products.map((product) => {
-    const parts = [`- ${product.title}`];
+  const productBlocks = products.map((product, index) =>
+    [
+      `${index + 1}. ${product.title}`,
+      product.metaLine ? `Detalji: ${product.metaLine}` : null,
+      product.priceLabel ? `Cijena: ${product.priceLabel}` : null,
+      product.buyLink ? `Kupnja:\n${product.buyLink}` : null,
+      product.sellLink ? `Otkup:\n${product.sellLink}` : null
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
 
-    if (product.priceLabel) {
-      parts.push(product.priceLabel);
-    }
-
-    if (product.buyLink) {
-      parts.push(`Kupnja: ${product.buyLink}`);
-    }
-
-    if (product.sellLink) {
-      parts.push(`Otkup: ${product.sellLink}`);
-    }
-
-    return parts.join(" | ");
-  });
-
-  return [intro, ...productLines, disclaimer].join("\n");
+  return [intro, "", ...productBlocks.flatMap((block, index) => (index === 0 ? [block] : ["", block])), "", disclaimer]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" } = {}) {
