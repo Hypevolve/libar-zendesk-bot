@@ -405,9 +405,10 @@ function isActiveTicketStatus(status = "") {
 
 function buildConversationState(ticketSummary, messages) {
   const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
-  const humanAgentActive = messages.some(
-    (message) => message.role === "assistant" && message.authoredByHuman
-  );
+  const latestPublicMessage = getLatestPublicMessage(messages);
+  const latestHumanAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.authoredByHuman);
 
   if (ticketSummary?.status === "solved" || ticketSummary?.status === "closed" || tags.includes("resolved")) {
     return {
@@ -417,7 +418,7 @@ function buildConversationState(ticketSummary, messages) {
     };
   }
 
-  if (humanAgentActive) {
+  if (latestPublicMessage?.role === "assistant" && latestPublicMessage?.authoredByHuman) {
     return {
       tone: "human-active",
       badge: "Podrška uživo",
@@ -426,7 +427,9 @@ function buildConversationState(ticketSummary, messages) {
   }
 
   if (
-    tags.includes("human_active")
+    tags.includes("human_active") &&
+    latestPublicMessage?.role !== "user" &&
+    latestHumanAssistantMessage
   ) {
     return {
       tone: "human-active",
@@ -436,9 +439,12 @@ function buildConversationState(ticketSummary, messages) {
   }
 
   if (
-    tags.includes("awaiting_human") ||
-    tags.includes("hitno_slike") ||
-    tags.includes("ai_eskalacija")
+    (
+      tags.includes("awaiting_human") ||
+      tags.includes("hitno_slike") ||
+      tags.includes("ai_eskalacija")
+    ) &&
+    latestPublicMessage?.role !== "user"
   ) {
     return {
       tone: "awaiting-human",
@@ -574,8 +580,17 @@ function getAutomationBlockReason(ticketSummary, messages, channelType) {
     return "web_chat_managed_by_widget";
   }
 
-  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
   const latestMessage = getLatestPublicMessage(messages);
+
+  if (!latestMessage) {
+    return "no_public_messages";
+  }
+
+  if (latestMessage.role === "user") {
+    return null;
+  }
+
+  const tags = Array.isArray(ticketSummary?.tags) ? ticketSummary.tags : [];
 
   if (tags.some((tag) => BLOCKED_AUTOPILOT_TAGS.has(tag))) {
     return "human_active";
@@ -587,14 +602,7 @@ function getAutomationBlockReason(ticketSummary, messages, channelType) {
     return "human_active";
   }
 
-  if (!latestMessage) {
-    return "no_public_messages";
-  }
-
-  if (
-    conversationState.tone === "awaiting-human" &&
-    latestMessage.role !== "user"
-  ) {
+  if (conversationState.tone === "awaiting-human") {
     return "awaiting_human";
   }
 
@@ -1498,10 +1506,8 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
     await syncSessionMessages(session);
 
     if (
-      session.conversationState?.tone === "human-active" ||
-      session.conversationState?.tone === "awaiting-human" ||
-      Array.isArray(ticketSummary.tags) &&
-        (ticketSummary.tags.includes("human_active") || ticketSummary.tags.includes("awaiting_human"))
+      session.conversationState?.tone === "human-active" &&
+      session.messages?.[session.messages.length - 1]?.role !== "user"
     ) {
       session.resolutionPrompt = null;
       console.info("human_pass_through", {
