@@ -814,11 +814,29 @@ function buildProductOutcome(productMatch) {
     topScore: productMatch.topScore,
     customerMessage: productMatch.replyText,
     products: productMatch.products,
-    zendeskMessage:
-      productMatch.products.length > 0
-        ? `${productMatch.replyText}\n\n${productMatch.zendeskSummary}`
-        : productMatch.replyText
+    zendeskMessage: productMatch.replyText,
+    zendeskSummary: productMatch.zendeskSummary
   };
+}
+
+function attachProductsToLatestAssistantMessage(session, products = [], expectedContent = "") {
+  if (!session || !Array.isArray(session.messages) || products.length === 0) {
+    return;
+  }
+
+  const latestAssistantMessage = [...session.messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && !message.authoredByHuman);
+
+  if (!latestAssistantMessage) {
+    return;
+  }
+
+  if (expectedContent && latestAssistantMessage.content !== expectedContent) {
+    return;
+  }
+
+  latestAssistantMessage.products = products;
 }
 
 async function persistEscalation(ticketId, escalationType, { channelType = "web_chat" } = {}) {
@@ -1239,7 +1257,14 @@ app.post("/api/chat/start", chatUpload.array("attachments", 5), async (req, res)
       knowledge,
       channelType: "web_chat"
     }));
+    if (outcome.source === "product_feed" && outcome.zendeskSummary) {
+      await zendeskService.addInternalNote(
+        ticketId,
+        `Product feed sažetak:\n${outcome.zendeskSummary}`
+      );
+    }
     await syncSessionMessages(session);
+    attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
     broadcastSessionUpdate(session);
 
     return res.status(200).json({
@@ -1512,7 +1537,14 @@ app.post("/api/chat/message", chatUpload.array("attachments", 5), async (req, re
       knowledge,
       channelType: "web_chat"
     }));
+    if (outcome.source === "product_feed" && outcome.zendeskSummary) {
+      await zendeskService.addInternalNote(
+        session.ticketId,
+        `Product feed sažetak:\n${outcome.zendeskSummary}`
+      );
+    }
     await syncSessionMessages(session);
+    attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
     broadcastSessionUpdate(session);
 
     return res.status(200).json({

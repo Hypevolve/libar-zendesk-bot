@@ -185,9 +185,39 @@ function normalizeMessageContent(content) {
 }
 
 function applySessionMessages(sessionMessages) {
-  canonicalMessages = Array.isArray(sessionMessages) ? sessionMessages : [];
+  const incomingMessages = Array.isArray(sessionMessages) ? sessionMessages : [];
+  canonicalMessages = mergeProductDataIntoMessages(incomingMessages, canonicalMessages, onboarding.messages);
   optimisticMessages = [];
   updateMessages(canonicalMessages);
+}
+
+function mergeProductDataIntoMessages(nextMessages = [], ...messageSources) {
+  const productsByMessageId = new Map();
+
+  for (const source of messageSources) {
+    for (const message of Array.isArray(source) ? source : []) {
+      if (message?.id && Array.isArray(message.products) && message.products.length > 0) {
+        productsByMessageId.set(String(message.id), message.products);
+      }
+    }
+  }
+
+  return nextMessages.map((message) => {
+    if (Array.isArray(message.products) && message.products.length > 0) {
+      return message;
+    }
+
+    const preservedProducts = productsByMessageId.get(String(message.id));
+
+    if (!preservedProducts || preservedProducts.length === 0) {
+      return message;
+    }
+
+    return {
+      ...message,
+      products: preservedProducts
+    };
+  });
 }
 
 function formatFileSize(size) {
