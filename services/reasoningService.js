@@ -404,6 +404,17 @@ function extractEntitiesFromText(text = "") {
 
 function buildEntities(message = "", messages = [], options = {}) {
   const currentEntities = extractEntitiesFromText(message);
+  const topicAnchor = options.topicAnchor || null;
+
+  if (
+    !currentEntities.book_title &&
+    options.allowHistory &&
+    topicAnchor?.type === "product" &&
+    Array.isArray(topicAnchor.value) &&
+    topicAnchor.value[0]
+  ) {
+    currentEntities.book_title = normalizeText(topicAnchor.value[0]);
+  }
 
   if (!options.allowHistory) {
     return currentEntities;
@@ -576,7 +587,8 @@ function analyzeConversation({
   const mixedIntentOrdering = detectMixedIntentOrdering(normalizedMessage);
   const isFollowUp = isFollowUpMessage(normalizedMessage);
   const allowHistory = Boolean(isFollowUp || pendingClarification?.slotKey);
-  const entities = buildEntities(normalizedMessage, recentMessages, { allowHistory });
+  const topicAnchor = inferTopicAnchor(recentMessages, session);
+  const entities = buildEntities(normalizedMessage, recentMessages, { allowHistory, topicAnchor });
   const primaryScores = buildIntentScores(normalizedMessage);
   const primaryRanked = rankIntents(primaryScores);
   const fallbackScores = allowHistory ? buildIntentScores(normalizedMessage, combinedText) : primaryScores;
@@ -584,13 +596,18 @@ function analyzeConversation({
   const mappedEntryIntent = entryIntent ? mapLegacyIntent(entryIntent) : "";
   const clarificationIntent = normalizeText(pendingClarification?.intent || "");
   const previousIntent = normalizeText(session?.workingMemory?.activeIntent || "");
+  const canReusePreviousIntent =
+    isFollowUp &&
+    previousIntent &&
+    previousIntent !== "small_talk_or_closure" &&
+    (primaryRanked[0]?.score || 0) < 6;
   const primaryIntent =
     ((clarificationIntent &&
       (entities[pendingClarification?.slotKey] ||
         (pendingClarification?.slotKey === "issue_description" && normalizedMessage.length > 8)))
       ? clarificationIntent
       : mixedIntentOrdering?.primaryIntent) ||
-    (isFollowUp && previousIntent && (primaryRanked[0]?.score || 0) < 6
+    (canReusePreviousIntent
       ? previousIntent
       : null) ||
     ((primaryRanked[0]?.score || 0) > 0
@@ -602,10 +619,7 @@ function analyzeConversation({
     mixedIntentOrdering?.secondaryIntent ||
     ((primaryRanked[1]?.score || 0) >= 6 && primaryRanked[1]?.intent !== primaryIntent
       ? primaryRanked[1].intent
-      : ranked[1]?.score >= 6 && ranked[1]?.intent !== primaryIntent
-        ? ranked[1].intent
-        : null);
-  const topicAnchor = inferTopicAnchor(recentMessages, session);
+      : null);
   const topicShiftDetected = Boolean(
     session?.workingMemory?.activeIntent &&
       primaryIntent &&

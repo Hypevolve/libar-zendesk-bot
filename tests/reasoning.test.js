@@ -219,3 +219,25 @@ test("short scheduling question is not treated as closure noise", () => {
 
   assert.notEqual(conversation.reasoningResult.primaryIntent, "small_talk_or_closure");
 });
+
+test("product follow-up inherits previous product title from topic anchor", () => {
+  const conversation = analyze("Ima li je još na stanju?", {
+    messages: [
+      {
+        role: "assistant",
+        content: "Našao sam ovaj udžbenik.",
+        products: [{ title: "Algebra 1" }]
+      }
+    ],
+    session: {
+      lastProductTitles: ["Algebra 1"],
+      workingMemory: {
+        activeIntent: "product_availability"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
+  assert.equal(conversation.reasoningResult.entities.book_title, "Algebra 1");
+  assert.equal(conversation.supportPlan.route, "product_feed");
+});
