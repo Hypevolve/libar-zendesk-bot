@@ -756,6 +756,7 @@ test("deterministic KB reply answers strong support query even when AI generatio
 
       assert.equal(payload.success, true);
       assert.match(assistantReply, /Subotom radimo 08:00-13:00/i);
+      assert.match(assistantReply, /https:\/\/antikvarijat-libar\.com\/kontakt\//i);
 
       const healthResponse = await invokeRoute("get", "/health");
 
@@ -763,6 +764,83 @@ test("deterministic KB reply answers strong support query even when AI generatio
       assert.ok(
         Number(healthResponse.body.metrics?.counters?.deterministic_kb_answer_total || 0) >= 1
       );
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("buyback safe answer appends direct Libar website link", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addCustomerMessageToTicket", fakeZendesk.addCustomerMessageToTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(spamFilterService, "evaluateIncomingMessage", async () => ({
+    shouldBlock: false,
+    classification: "normal",
+    reason: "not_email",
+    matchedSignals: [],
+    usedAiReview: false,
+    aiClassification: null
+  }), restoreList);
+  stubMethod(productService, "searchProducts", async () => null, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async () => ({
+    context: "Izvor 1:\nTip: OneDrive dokument\nNaslov: Otkup udžbenika\nRelevantnost: 19\nSadržaj: Udžbenike možete prodati online kroz obrazac za otkup.",
+    articles: [
+      {
+        source: "onedrive",
+        title: "Otkup udžbenika",
+        body: "Udžbenike možete prodati online kroz obrazac za otkup.",
+        score: 19,
+        rankingScore: 19
+      }
+    ],
+    topScore: 19,
+    quality: {
+      scoreMargin: 4,
+      relevanceMatch: true,
+      domainMatch: true,
+      jobMatch: true,
+      directAnswerability: true,
+      hasConflict: false,
+      conflictFields: [],
+      contextConsistency: true,
+      isStrong: true,
+      isWeak: false
+    },
+    primarySource: "onedrive"
+  }), restoreList);
+  stubMethod(aiService, "generateReply", async () => ({
+    decision: "safe_answer",
+    reply: "Udžbenike možete prodati online kroz obrazac za otkup.",
+    clarifying_question: "",
+    reason: "context_supported"
+  }), restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const startResponse = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Test Kupac",
+          email: "test@example.com",
+          message: "Želim prodati knjige, koji je postupak?"
+        }
+      });
+
+      assert.equal(startResponse.statusCode, 200);
+      const assistantReply = startResponse.body.messages.findLast((message) => message.role === "assistant")?.content || "";
+
+      assert.match(assistantReply, /obrazac za otkup/i);
+      assert.match(assistantReply, /https:\/\/antikvarijat-libar\.com\/prodaj-udzbenike\//i);
     });
   } finally {
     restoreMethods(restoreList);

@@ -56,6 +56,13 @@
 - Deterministic odgovor koristi stvarne rečenice iz najrelevantnijih članaka/dokumenata.
 - Ako je LLM nedostupan, jaki KB upit i dalje može završiti točnim odgovorom.
 
+### [x] Task 8: Structured Output And Answer Validation
+**Description**: Ojačati AI decision sloj strožim structured-output pokušajem i validacijom customer-facing odgovora prije slanja.
+**Acceptance Criteria**:
+- AI sloj prvo pokušava dobiti JSON output kroz structured response format, uz fallback na postojeći parser.
+- `safe_answer` se blokira ako izgleda kao source dump, interni leak ili slabo podržan odgovor.
+- Kada quality guard presretne loš odgovor, bot ide na sigurni fallback umjesto da šalje neuredan ili netočan sadržaj korisniku.
+
 ## Quality Requirements
 - [x] Nema background procesa u komandama.
 - [x] Mobilni i postojeći widget flow ostaje kompatibilan.

@@ -391,20 +391,50 @@ async function generateReply(message, context, options = {}) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const completion = await client.chat.completions.create({
-        model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
-        temperature: 0.35,
-        messages: [
-          {
-            role: "system",
-            content: buildSystemPrompt(context, options)
+      let completion;
+
+      try {
+        completion = await client.chat.completions.create({
+          model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+          temperature: 0.35,
+          response_format: {
+            type: "json_object"
           },
-          {
-            role: "user",
-            content: message
-          }
-        ]
-      });
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(context, options)
+            },
+            {
+              role: "user",
+              content: message
+            }
+          ]
+        });
+      } catch (error) {
+        const providerRejectedStructuredOutput =
+          error?.status === 400 ||
+          /response_format|json_object|structured/i.test(String(error?.message || ""));
+
+        if (!providerRejectedStructuredOutput) {
+          throw error;
+        }
+
+        completion = await client.chat.completions.create({
+          model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+          temperature: 0.35,
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(context, options)
+            },
+            {
+              role: "user",
+              content: message
+            }
+          ]
+        });
+      }
 
       const rawContent = completion.choices?.[0]?.message?.content?.trim();
 

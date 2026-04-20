@@ -16,6 +16,8 @@ const plannerService = require("./services/plannerService");
 const runtimeStore = require("./services/runtimeStore");
 const metricsService = require("./services/metricsService");
 const { composeDeterministicReply } = require("./services/responseComposer");
+const { validateAnswerQuality } = require("./services/answerQualityService");
+const { BASE_URL, buildDirectWebsiteLinks } = require("./services/siteLinkService");
 const { normalizeForComparison } = require("./services/textUtils");
 
 const app = express();
@@ -1165,7 +1167,14 @@ function looksLikeKnowledgeTitleDump(value = "") {
   return markerCount >= 3 && !/[.!?]/.test(String(value || ""));
 }
 
-function finalizeOutcomeForCustomer(outcome = null, channelType = "web_chat") {
+function finalizeOutcomeForCustomer(
+  outcome = null,
+  {
+    channelType = "web_chat",
+    knowledge = null,
+    conversation = null
+  } = {}
+) {
   if (!outcome?.customerMessage) {
     return outcome;
   }
@@ -1176,15 +1185,20 @@ function finalizeOutcomeForCustomer(outcome = null, channelType = "web_chat") {
     outcome.zendeskMessage || outcome.customerMessage
   );
 
-  if (
-    !sanitizedCustomerMessage ||
-    (outcome.type === "safe_answer" && looksLikeKnowledgeTitleDump(sanitizedCustomerMessage))
-  ) {
+  const qualityCheck = validateAnswerQuality({
+    answer: sanitizedCustomerMessage,
+    outcomeType: outcome.type,
+    knowledge,
+    conversation
+  });
+
+  if (!sanitizedCustomerMessage || looksLikeKnowledgeTitleDump(sanitizedCustomerMessage) || !qualityCheck.isValid) {
+    metricsService.increment("answer_quality_guard_triggered_total");
     return {
       ...outcome,
       type: "soft_handoff",
       stateTag: "awaiting_human",
-      reason: "invalid_generated_reply",
+      reason: qualityCheck.isValid ? "invalid_generated_reply" : qualityCheck.reason,
       customerMessage: channelMessages.softHandoff,
       zendeskMessage: channelMessages.softHandoff
     };
@@ -1194,6 +1208,49 @@ function finalizeOutcomeForCustomer(outcome = null, channelType = "web_chat") {
     ...outcome,
     customerMessage: sanitizedCustomerMessage,
     zendeskMessage: sanitizedZendeskMessage
+  };
+}
+
+function appendDirectWebsiteLink(
+  outcome = null,
+  {
+    conversation = null,
+    knowledge = null,
+    channelType = "web_chat"
+  } = {}
+) {
+  if (!outcome?.customerMessage || !["safe_answer", "ask_clarifying_question"].includes(outcome.type)) {
+    return outcome;
+  }
+
+  const existingText = `${outcome.customerMessage}\n${outcome.zendeskMessage || ""}`;
+
+  if (existingText.includes(BASE_URL)) {
+    return outcome;
+  }
+
+  const directLinks = buildDirectWebsiteLinks({
+    conversation,
+    knowledge,
+    outcome
+  });
+
+  if (!Array.isArray(directLinks) || directLinks.length === 0) {
+    return outcome;
+  }
+
+  const formattedLinks = directLinks
+    .map((link) => `- ${link.label}: ${link.url}`)
+    .join("\n");
+  const linkBlock =
+    channelType === "email"
+      ? `Korisne poveznice:\n${formattedLinks}`
+      : `Poveznice:\n${formattedLinks}`;
+
+  return {
+    ...outcome,
+    customerMessage: [outcome.customerMessage, linkBlock].filter(Boolean).join("\n"),
+    zendeskMessage: [outcome.zendeskMessage || outcome.customerMessage, linkBlock].filter(Boolean).join("\n")
   };
 }
 
@@ -2063,7 +2120,16 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     }
   }
 
-  outcome = finalizeOutcomeForCustomer(outcome, channelType);
+  outcome = finalizeOutcomeForCustomer(outcome, {
+    channelType,
+    knowledge,
+    conversation
+  });
+  outcome = appendDirectWebsiteLink(outcome, {
+    conversation,
+    knowledge,
+    channelType
+  });
   updateSessionMemory(session, conversation, outcome, knowledge);
   recordOutcomeMetrics(outcome, conversation, knowledge);
 
