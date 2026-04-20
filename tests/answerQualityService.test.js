@@ -95,3 +95,31 @@ test("validateAnswerQuality rejects partial coverage for multi-part support ques
   assert.equal(result.isValid, false);
   assert.equal(result.reason, "partial_topic_coverage");
 });
+
+test("validateAnswerQuality rejects generic support summary when exact address is requested", () => {
+  const result = validateAnswerQuality({
+    answer:
+      "Stranica s kontakt informacijama, adresom poslovnice, radnim vremenom te osnovnim kanalima za javljanje kupaca i prodavatelja.",
+    outcomeType: "safe_answer",
+    conversation: {
+      standaloneQuery: "Koja vam je adresa i gdje se nalazite?",
+      reasoningResult: {
+        taskIntent: "support_info"
+      }
+    },
+    knowledge: {
+      quality: {
+        isStrong: true
+      },
+      articles: [
+        {
+          title: "Kontakt",
+          body: "Stranica s kontakt informacijama, adresom poslovnice i radnim vremenom."
+        }
+      ]
+    }
+  });
+
+  assert.equal(result.isValid, false);
+  assert.equal(result.reason, "missing_concrete_support_fact");
+});

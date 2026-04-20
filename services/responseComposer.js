@@ -194,6 +194,24 @@ function isSupportInfoParagraphCompatible(paragraph = "", requestedTopics = new 
   return true;
 }
 
+function hasConcreteSupportFact(paragraph = "", topic = "") {
+  const normalizedParagraph = normalizeForComparison(paragraph);
+
+  if (topic === "hours") {
+    return /\b\d{1,2}[:.]\d{2}\b/.test(normalizedParagraph) || /(ponedjeljak|petak|subota|nedjelja)/.test(normalizedParagraph);
+  }
+
+  if (topic === "location") {
+    return /(zupanijska|županijska|osijek|\b\d{1,3}[a-z]?\b)/.test(normalizedParagraph);
+  }
+
+  if (topic === "contact") {
+    return /@/.test(paragraph) || /(?:\+?\d[\d\s/-]{6,}\d)/.test(paragraph);
+  }
+
+  return true;
+}
+
 function buildParagraphCandidates(article = {}, keywords = [], options = {}) {
   const paragraphs = splitParagraphs(article.body || "");
   const candidates = [];
@@ -227,6 +245,19 @@ function buildParagraphCandidates(article = {}, keywords = [], options = {}) {
       !isSupportInfoParagraphCompatible(segment, options.requestedTopics)
     ) {
       continue;
+    }
+
+    if (options.taskIntent === "support_info") {
+      const exactFactTopics = [...(options.requestedTopics || new Set())].filter((topic) =>
+        ["hours", "location", "contact"].includes(topic)
+      );
+
+      if (
+        exactFactTopics.length > 0 &&
+        !exactFactTopics.some((topic) => hasConcreteSupportFact(segment, topic))
+      ) {
+        continue;
+      }
     }
 
     candidates.push({

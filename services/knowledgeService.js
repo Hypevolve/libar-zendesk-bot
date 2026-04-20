@@ -20,6 +20,43 @@ function normalizeSourceList(values = []) {
   return [...new Set((Array.isArray(values) ? values : []).map(normalizeSourceName).filter(Boolean))];
 }
 
+function detectRequestedSupportFacts(options = {}) {
+  const query = String(options?.standaloneQuery || options?.query || "").toLowerCase();
+  const facts = new Set();
+
+  if (/(radno vrijeme|kad radite|otvoreni|subotom|nedjeljom)/.test(query)) {
+    facts.add("hours");
+  }
+
+  if (/(adresa|gdje ste|gdje se nalazite|lokacija)/.test(query)) {
+    facts.add("address");
+  }
+
+  if (/(kontakt|telefon|email|mail)/.test(query)) {
+    facts.add("contact");
+  }
+
+  return facts;
+}
+
+function hasRequestedSupportFact(text = "", fact = "") {
+  const normalizedText = String(text || "").toLowerCase();
+
+  if (fact === "hours") {
+    return /\b\d{1,2}[:.]\d{2}\b/.test(normalizedText) || /(ponedjeljak|petak|subota|nedjelja)/.test(normalizedText);
+  }
+
+  if (fact === "address") {
+    return /(županijska|zupanijska|osijek|\b\d{1,3}[a-z]?\b)/.test(normalizedText);
+  }
+
+  if (fact === "contact") {
+    return /@/.test(normalizedText) || /(?:\+?\d[\d\s/-]{6,}\d)/.test(normalizedText);
+  }
+
+  return false;
+}
+
 function isSourceAllowed(sourceName, options = {}) {
   const normalizedSource = normalizeSourceName(sourceName);
   const allowedSources = normalizeSourceList(options.allowedSources);
@@ -43,6 +80,7 @@ function rerankEntry(entry, options = {}) {
   const questionType = String(options.questionType || "").trim();
   const activeDomain = String(options.activeDomain || "").trim();
   const activeReferenceValue = String(options?.retrievalFrame?.activeReferenceValue || "").trim().toLowerCase();
+  const requestedSupportFacts = detectRequestedSupportFacts(options);
   const sourcePriority = normalizeSourceList(options.sourcePriority);
   const sourceName = normalizeSourceName(entry.source);
   const normalizedText = `${entry.title || ""} ${entry.body || ""}`.toLowerCase();
@@ -70,6 +108,22 @@ function rerankEntry(entry, options = {}) {
 
   if (activeDomain === "support_info" && /(radno vrijeme|ponedjeljak|subota|nedjelja|adresa|osijek|županijska|zupanijska|kontakt|telefon|email|mail|plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)/.test(normalizedText)) {
     score += 8;
+  }
+
+  if ((taskIntent === "support_info" || activeDomain === "support_info") && requestedSupportFacts.size > 0) {
+    let matchedFacts = 0;
+
+    for (const fact of requestedSupportFacts) {
+      if (hasRequestedSupportFact(normalizedText, fact)) {
+        matchedFacts += 1;
+      }
+    }
+
+    score += matchedFacts * 6;
+
+    if (matchedFacts === 0) {
+      score -= 8;
+    }
   }
 
   if (taskIntent === "delivery" && /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText)) {

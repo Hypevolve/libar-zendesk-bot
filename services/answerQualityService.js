@@ -138,6 +138,24 @@ function detectAnsweredTopics(answer = "") {
   return topics;
 }
 
+function answerHasConcreteSupportFact(answer = "", topic = "") {
+  const normalized = normalizeForComparison(answer);
+
+  if (topic === "hours") {
+    return /\b\d{1,2}[:.]\d{2}\b/.test(normalized) || /(ponedjeljak|petak|subota|nedjelja)/.test(normalized);
+  }
+
+  if (topic === "location") {
+    return /(zupanijska|županijska|osijek|\b\d{1,3}[a-z]?\b)/.test(normalized);
+  }
+
+  if (topic === "contact") {
+    return /@/.test(answer) || /(?:\+?\d[\d\s/-]{6,}\d)/.test(answer);
+  }
+
+  return true;
+}
+
 function validateAnswerQuality({
   answer = "",
   outcomeType = "",
@@ -199,6 +217,17 @@ function validateAnswerQuality({
 
   const requestedTopics = detectRequestedTopics(conversation);
   const answeredTopics = detectAnsweredTopics(trimmed);
+
+  if (String(conversation?.reasoningResult?.taskIntent || "").trim() === "support_info") {
+    for (const topic of [...requestedTopics].filter((topic) => ["hours", "location", "contact"].includes(topic))) {
+      if (!answerHasConcreteSupportFact(trimmed, topic)) {
+        return {
+          isValid: false,
+          reason: "missing_concrete_support_fact"
+        };
+      }
+    }
+  }
 
   if (requestedTopics.size >= 2) {
     for (const topic of requestedTopics) {
