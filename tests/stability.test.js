@@ -98,7 +98,11 @@ test("working memory persists structured intent fields", () => {
   });
 
   assert.equal(memory.activeTaskIntent, "buyback");
+  assert.equal(memory.activeDomain, "buyback");
+  assert.equal(memory.activeUserJob, "ask_how_to");
   assert.equal(memory.activeSubjectType, "buyback_process");
+  assert.equal(memory.lastAnsweredQuestionType, "procedural");
+  assert.equal(memory.lastAnswerabilityClass, "answer_now");
   assert.deepEqual(memory.lastIntentEvidence, ["buyback_keywords", "procedural_or_policy_question"]);
   assert.equal(memory.supportHistory.lastBlockedSource, "product_feed");
 });
@@ -263,12 +267,14 @@ test("specific product query stays on product feed route", () => {
   assert.equal(supportPlan.route, "product_feed");
 });
 
-test("buyback opening without details asks exactly one slot question", () => {
+test("buyback opening without details defaults to knowledge route without clarification", () => {
   const { conversation, supportPlan } = analyze("Želim prodati knjige");
 
-  assert.deepEqual(conversation.missingSlots, ["book_details"]);
-  assert.equal(supportPlan.route, "clarify");
-  assert.match(conversation.clarifyingQuestion.toLowerCase(), /koje knjige|koliko ih/);
+  assert.deepEqual(conversation.missingSlots, []);
+  assert.equal(conversation.reasoningResult.activeDomain, "buyback");
+  assert.equal(conversation.reasoningResult.answerabilityClass, "answer_now");
+  assert.equal(conversation.reasoningResult.sourceContract, "support_only");
+  assert.equal(supportPlan.route, "onedrive_knowledge");
 });
 
 test("planner enforces buyback entry lock as support-only source policy", () => {
@@ -325,6 +331,8 @@ test("knowledge merge respects source blocking and reranks buyback article first
   assert.equal(knowledge.primarySource, "onedrive");
   assert.equal(knowledge.articles[0].title, "Otkup knjiga - postupak");
   assert.equal(knowledge.quality.relevanceMatch, true);
+  assert.equal(knowledge.quality.jobMatch, true);
+  assert.equal(knowledge.quality.contextConsistency, true);
 });
 
 test("knowledge source allowlist can fully disable zendesk retrieval candidates", () => {

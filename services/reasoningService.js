@@ -265,6 +265,22 @@ function deriveTaskIntent(intent = "") {
   }
 }
 
+function deriveActiveDomain(taskIntent = "") {
+  switch (taskIntent) {
+    case "buyback":
+    case "delivery":
+    case "product_lookup":
+    case "complaint":
+    case "closure":
+      return taskIntent;
+    case "order_status":
+    case "order_issue":
+      return "order";
+    default:
+      return "general_support";
+  }
+}
+
 function deriveSubjectType(intent = "", entities = {}, policyTopic = "") {
   if (intent === "otkup_upit") {
     return entities.book_title || entities.quantity ? "book" : "buyback_process";
@@ -690,13 +706,11 @@ function buildMissingSlots(
 
   if (
     intent === "otkup_upit" &&
-    !entities.book_title &&
-    !entities.quantity &&
     !hasSpecificQuestion &&
-    !["ask_how_to", "ask_policy", "ask_timeline", "request_estimate"].includes(actionIntent) &&
+    !["ask_how_to", "ask_policy", "ask_timeline", "request_estimate", "ask_info", "start_process"].includes(actionIntent) &&
     !isTopicLockedToBuyback
   ) {
-    missingSlots.push("book_details");
+    // Buyback should default to a procedural answer when knowledge supports it.
   }
 
   if (intent === "reklamacija_povrat" && !entities.issue_type && normalized.split(" ").length <= 5) {
@@ -821,7 +835,78 @@ function buildIntentEvidence(message = "", reasoningResult = {}) {
     evidence.push("mixed_intent_detected");
   }
 
+  if (reasoningResult.answerabilityClass) {
+    evidence.push(`answerability_${reasoningResult.answerabilityClass}`);
+  }
+
   return evidence;
+}
+
+function buildSourceContract(taskIntent = "", primaryIntent = "") {
+  if (taskIntent === "product_lookup" || primaryIntent === "product_availability" || primaryIntent === "product_pricing") {
+    return "product_allowed";
+  }
+
+  if (["buyback", "delivery", "order_status", "order_issue", "complaint"].includes(taskIntent)) {
+    return "support_only";
+  }
+
+  return "knowledge_first";
+}
+
+function buildTopicShiftConfidence({
+  previousIntent = "",
+  primaryIntent = "",
+  canReusePreviousIntent = false,
+  isExplicitProductLookup = false,
+  isFollowUp = false
+} = {}) {
+  if (!previousIntent || previousIntent === primaryIntent) {
+    return isFollowUp ? 0.18 : 0;
+  }
+
+  if (isExplicitProductLookup && primaryIntent === "product_availability") {
+    return 0.92;
+  }
+
+  if (canReusePreviousIntent) {
+    return 0.22;
+  }
+
+  return isFollowUp ? 0.58 : 0.74;
+}
+
+function deriveAnswerabilityClass({
+  taskIntent = "",
+  actionIntent = "",
+  riskLevel = "low",
+  missingSlots = [],
+  supportPlanRoute = "",
+  questionType = ""
+} = {}) {
+  if (riskLevel === "high") {
+    return "handoff";
+  }
+
+  if (supportPlanRoute === "clarify" || missingSlots.length > 0) {
+    return "ask_one_question";
+  }
+
+  if (
+    taskIntent === "buyback" &&
+    ["ask_how_to", "ask_policy", "ask_timeline", "request_estimate", "ask_info", "start_process"].includes(actionIntent)
+  ) {
+    return "answer_now";
+  }
+
+  if (
+    ["delivery", "order_status"].includes(taskIntent) &&
+    ["procedural", "status", "info"].includes(questionType)
+  ) {
+    return "answer_now";
+  }
+
+  return "answer_now";
 }
 
 function analyzeConversation({
@@ -845,16 +930,31 @@ function analyzeConversation({
   const ranked = allowHistory ? rankIntents(fallbackScores) : primaryRanked;
   const mappedEntryIntent = entryIntent ? mapEntryFlowIntentToPrimaryIntent(entryIntent) : "";
   const clarificationIntent = normalizeText(pendingClarification?.intent || "");
+  const clarificationTaskIntent = normalizeText(pendingClarification?.activeTaskIntent || "");
   const previousIntent = normalizeText(session?.workingMemory?.activeIntent || "");
+  const previousTaskIntent = normalizeText(session?.workingMemory?.activeTaskIntent || "");
+  const activeDomainMemory = normalizeText(session?.workingMemory?.activeDomain || "");
   const canReusePreviousIntent =
     isFollowUp &&
     previousIntent &&
     previousIntent !== "small_talk_or_closure" &&
     (primaryRanked[0]?.score || 0) < 6;
+  const explicitProductLookup = isExplicitProductLookupMessage(normalizedMessage, entities);
+  const strongNewIntent =
+    Boolean(primaryRanked[0]?.intent) &&
+    primaryRanked[0].intent !== clarificationIntent &&
+    Number(primaryRanked[0]?.score || 0) >= 6;
+  const clarificationLooksAnswered =
+    Boolean(pendingClarification?.slotKey) &&
+    normalizedMessage.length > 1 &&
+    !strongNewIntent &&
+    (!explicitProductLookup ||
+      (clarificationTaskIntent && clarificationTaskIntent === "product_lookup"));
   const primaryIntent =
     ((clarificationIntent &&
-      (entities[pendingClarification?.slotKey] ||
-        (pendingClarification?.slotKey === "issue_description" && normalizedMessage.length > 8)))
+      ((entities[pendingClarification?.slotKey] ||
+        (pendingClarification?.slotKey === "issue_description" && normalizedMessage.length > 8)) ||
+        clarificationLooksAnswered))
       ? clarificationIntent
       : mixedIntentOrdering?.primaryIntent) ||
     (canReusePreviousIntent
@@ -891,6 +991,7 @@ function analyzeConversation({
     )
   );
   const taskIntent = deriveTaskIntent(primaryIntent);
+  const activeDomain = deriveActiveDomain(taskIntent);
   const subjectType = deriveSubjectType(primaryIntent, entities, entities.policy_topic);
   const actionIntent = deriveActionIntent(primaryIntent, normalizedMessage, entities);
   const questionType = classifyQuestionType(actionIntent, normalizedMessage);
@@ -909,7 +1010,14 @@ function analyzeConversation({
       entryTopicLock: session?.entryTopicLock || session?.workingMemory?.entryTopicLock || ""
     }
   );
-  const customerGoal = deriveCustomerGoal(primaryIntent, entities, normalizedMessage);
+  const sourceContract = buildSourceContract(taskIntent, primaryIntent);
+  const topicShiftConfidence = buildTopicShiftConfidence({
+    previousIntent,
+    primaryIntent,
+    canReusePreviousIntent,
+    isExplicitProductLookup: explicitProductLookup,
+    isFollowUp
+  });
   const riskLevel =
     riskFlags.includes("legal_or_abuse") ||
     riskFlags.includes("payment") ||
@@ -919,11 +1027,24 @@ function analyzeConversation({
       : riskFlags.includes("complaint") || emotionalTone === "frustrated"
         ? "medium"
         : "low";
+  const answerabilityClass = deriveAnswerabilityClass({
+    taskIntent,
+    actionIntent,
+    riskLevel,
+    missingSlots,
+    supportPlanRoute: secondaryIntent ? "clarify" : "",
+    questionType
+  });
+  const customerGoal = deriveCustomerGoal(primaryIntent, entities, normalizedMessage);
   const reasoningResult = {
     primaryIntent,
     secondaryIntent,
     intentConfidence,
     taskIntent,
+    activeDomain:
+      activeDomain ||
+      activeDomainMemory ||
+      (previousTaskIntent ? deriveActiveDomain(previousTaskIntent) : ""),
     actionIntent,
     subjectType,
     journeyStage,
@@ -933,7 +1054,21 @@ function analyzeConversation({
     emotionalTone,
     riskLevel,
     missingSlots,
-    topicShiftDetected
+    topicShiftDetected,
+    sourceContract,
+    topicShiftConfidence,
+    answerabilityClass,
+    intentFrame: {
+      activeDomain:
+        activeDomain ||
+        activeDomainMemory ||
+        (previousTaskIntent ? deriveActiveDomain(previousTaskIntent) : ""),
+      userJob: actionIntent,
+      questionType,
+      topicShiftConfidence,
+      answerabilityClass,
+      sourceContract
+    }
   };
   const intentEvidence = buildIntentEvidence(normalizedMessage, reasoningResult);
   const standaloneQuery = buildStandaloneQuery({
@@ -974,9 +1109,11 @@ function analyzeConversation({
       `Intent: ${primaryIntent}`,
       secondaryIntent ? `Secondary intent: ${secondaryIntent}` : "",
       taskIntent ? `Task intent: ${taskIntent}` : "",
+      reasoningResult.activeDomain ? `Active domain: ${reasoningResult.activeDomain}` : "",
       actionIntent ? `Action intent: ${actionIntent}` : "",
       subjectType ? `Subject type: ${subjectType}` : "",
       questionType ? `Question type: ${questionType}` : "",
+      answerabilityClass ? `Answerability: ${answerabilityClass}` : "",
       conversationFacts.length > 0 ? `Facts: ${conversationFacts.join("; ")}` : "",
       topicShiftDetected ? "Detected topic shift." : "",
       riskFlags.length > 0 ? `Risk: ${riskFlags.join(", ")}` : "",

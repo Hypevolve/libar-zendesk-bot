@@ -252,8 +252,10 @@ test("how to sell books resolves to procedural buyback intent", () => {
 
   assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
   assert.equal(conversation.reasoningResult.taskIntent, "buyback");
+  assert.equal(conversation.reasoningResult.activeDomain, "buyback");
   assert.equal(conversation.reasoningResult.actionIntent, "ask_how_to");
   assert.equal(conversation.reasoningResult.questionType, "procedural");
+  assert.equal(conversation.reasoningResult.answerabilityClass, "answer_now");
   assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 
@@ -300,6 +302,34 @@ test("book valuation stays on buyback intent and not product lookup", () => {
 
   assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
   assert.equal(conversation.reasoningResult.actionIntent, "request_estimate");
+  assert.notEqual(conversation.supportPlan.route, "product_feed");
+});
+
+test("buyback follow-up about textbooks stays in buyback domain", () => {
+  const conversation = analyze("A za udžbenike?", {
+    messages: [
+      { role: "user", content: "Želim prodati knjige" },
+      { role: "assistant", content: "Možete poslati popis naslova za otkup." }
+    ],
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      },
+      lastStandaloneQuery: "Želim prodati knjige",
+      workingMemory: {
+        activeIntent: "otkup_upit",
+        activeDomain: "buyback",
+        activeTaskIntent: "buyback",
+        activeUserJob: "ask_how_to"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.activeDomain, "buyback");
+  assert.equal(conversation.reasoningResult.sourceContract, "support_only");
   assert.notEqual(conversation.supportPlan.route, "product_feed");
 });
 

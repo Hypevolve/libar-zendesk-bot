@@ -97,7 +97,8 @@ function buildSystemPrompt(
     missingSlots = [],
     riskFlags = [],
     customerName = "",
-    knowledgeQuality = null
+    knowledgeQuality = null,
+    responsePolicy = null
   } = {}
 ) {
   const blockedSources = Array.isArray(supportPlan?.mustNotUseSources)
@@ -167,6 +168,7 @@ function buildSystemPrompt(
     reasoningResult?.primaryIntent ? `Primary intent: ${reasoningResult.primaryIntent}` : "Primary intent: nije dostavljen",
     reasoningResult?.secondaryIntent ? `Secondary intent: ${reasoningResult.secondaryIntent}` : null,
     reasoningResult?.taskIntent ? `Task intent: ${reasoningResult.taskIntent}` : null,
+    reasoningResult?.activeDomain ? `Active domain: ${reasoningResult.activeDomain}` : null,
     reasoningResult?.actionIntent ? `Action intent: ${reasoningResult.actionIntent}` : null,
     reasoningResult?.subjectType ? `Subject type: ${reasoningResult.subjectType}` : null,
     reasoningResult?.journeyStage ? `Journey stage: ${reasoningResult.journeyStage}` : null,
@@ -198,12 +200,17 @@ function buildSystemPrompt(
       ? `Use customer name sparingly: ${supportPlan.shouldUseCustomerName ? "yes" : "no"}`
       : null,
     supportPlan?.nextBestAction ? `Next best action: ${supportPlan.nextBestAction}` : null,
+    responsePolicy?.mode ? `Response policy mode: ${responsePolicy.mode}` : null,
+    responsePolicy?.brevity ? `Response brevity: ${responsePolicy.brevity}` : null,
+    Array.isArray(responsePolicy?.forbiddenContent) && responsePolicy.forbiddenContent.length > 0
+      ? `Forbidden content: ${responsePolicy.forbiddenContent.join(", ")}`
+      : null,
     blockedSources ? `Blocked sources: ${blockedSources}` : null,
     Array.isArray(supportPlan?.selectedSources) && supportPlan.selectedSources.length > 0
       ? `Allowed sources: ${supportPlan.selectedSources.join(", ")}`
       : null,
     knowledgeQuality
-      ? `Knowledge quality: top=${knowledgeQuality.topScore || 0}, margin=${knowledgeQuality.scoreMargin || 0}, relevance=${knowledgeQuality.relevanceMatch ? "yes" : "no"}`
+      ? `Knowledge quality: top=${knowledgeQuality.topScore || 0}, margin=${knowledgeQuality.scoreMargin || 0}, relevance=${knowledgeQuality.relevanceMatch ? "yes" : "no"}, jobMatch=${knowledgeQuality.jobMatch ? "yes" : "no"}, contextConsistency=${knowledgeQuality.contextConsistency ? "yes" : "no"}`
       : null,
     "",
     "FORMAT IZLAZA:",

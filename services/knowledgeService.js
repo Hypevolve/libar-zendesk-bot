@@ -40,6 +40,7 @@ function rerankEntry(entry, options = {}) {
   const actionIntent = String(options.actionIntent || "").trim();
   const subjectType = String(options.subjectType || "").trim();
   const questionType = String(options.questionType || "").trim();
+  const activeDomain = String(options.activeDomain || "").trim();
   const sourcePriority = normalizeSourceList(options.sourcePriority);
   const sourceName = normalizeSourceName(entry.source);
   const normalizedText = `${entry.title || ""} ${entry.body || ""}`.toLowerCase();
@@ -56,9 +57,13 @@ function rerankEntry(entry, options = {}) {
     if (/(otkup|procjen|vrednovanj|prodati|bonus)/.test(normalizedText)) {
       score += 8;
     }
-    if (/(kupnja|webshop|na stanju|isbn)/.test(normalizedText)) {
-      score -= 4;
+    if (/(kupnja|webshop|na stanju|isbn|autor|cijena knjige)/.test(normalizedText)) {
+      score -= 6;
     }
+  }
+
+  if (activeDomain === "buyback" && /(otkup|uvjeti|postupak|proces|procjen|koraci|pošaljite|pošalji)/.test(normalizedText)) {
+    score += 4;
   }
 
   if (taskIntent === "delivery" && /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText)) {
@@ -96,29 +101,53 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
   const taskIntent = String(options.taskIntent || "").trim();
   const actionIntent = String(options.actionIntent || "").trim();
   const questionType = String(options.questionType || "").trim();
+  const activeDomain = String(options.activeDomain || "").trim();
   const normalizedText = `${top?.title || ""} ${top?.body || ""}`.toLowerCase();
 
   let relevanceMatch = false;
+  let jobMatch = false;
+  let contextConsistency = true;
 
   if (taskIntent === "buyback") {
     relevanceMatch = /(otkup|procjen|vrednovanj|prodati|bonus)/.test(normalizedText);
+    jobMatch = /(postupak|proces|uvjeti|koraci|pošaljite|pošalji|procjen|vrednovanj|otkup)/.test(normalizedText);
+    contextConsistency = !/(webshop|na stanju|isbn|autor|kupnja)/.test(normalizedText);
   } else if (taskIntent === "delivery") {
     relevanceMatch = /(dostav|isporuk|rok|kurir|pošt|pošta)/.test(normalizedText);
+    jobMatch = /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText);
   } else if (taskIntent === "order_status" || questionType === "status") {
     relevanceMatch = /(narudžb|narudzb|status|broj narudžbe|broj narudzbe)/.test(normalizedText);
+    jobMatch = relevanceMatch;
   } else if (actionIntent === "ask_how_to") {
     relevanceMatch = /(kako|koraci|postupak|potrebno|trebate|pošaljite|pošalji)/.test(normalizedText);
+    jobMatch = relevanceMatch;
   } else {
     relevanceMatch = topScore > 0;
+    jobMatch = relevanceMatch;
   }
+
+  if (!jobMatch && activeDomain === "buyback") {
+    jobMatch = /(otkup|postupak|uvjeti|procjen|pošaljite)/.test(normalizedText);
+  }
+
+  const isStrong =
+    topScore > 0 &&
+    relevanceMatch &&
+    jobMatch &&
+    contextConsistency &&
+    (scoreMargin >= KNOWLEDGE_MIN_SCORE_MARGIN || topScore >= 16);
+  const isWeak = topScore <= 0 || !relevanceMatch || !jobMatch || !contextConsistency;
 
   return {
     topScore,
     secondScore,
     scoreMargin,
     relevanceMatch,
-    isStrong: topScore > 0 && relevanceMatch && (scoreMargin >= KNOWLEDGE_MIN_SCORE_MARGIN || topScore >= 16),
-    isWeak: topScore <= 0 || !relevanceMatch
+    jobMatch,
+    contextConsistency,
+    acceptanceReason: isStrong ? "context_and_job_match" : isWeak ? "insufficient_job_match" : "ambiguous_match",
+    isStrong,
+    isWeak
   };
 }
 

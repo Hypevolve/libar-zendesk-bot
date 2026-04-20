@@ -819,9 +819,16 @@ function buildAutopilotNote({
       : null,
     conversation?.resolvedUserIntent ? `Detektirana namjera: ${conversation.resolvedUserIntent}` : null,
     conversation?.reasoningResult?.taskIntent ? `Task intent: ${conversation.reasoningResult.taskIntent}` : null,
+    conversation?.reasoningResult?.activeDomain ? `Active domain: ${conversation.reasoningResult.activeDomain}` : null,
     conversation?.reasoningResult?.actionIntent ? `Action intent: ${conversation.reasoningResult.actionIntent}` : null,
     conversation?.reasoningResult?.subjectType ? `Subject type: ${conversation.reasoningResult.subjectType}` : null,
     conversation?.reasoningResult?.questionType ? `Question type: ${conversation.reasoningResult.questionType}` : null,
+    conversation?.reasoningResult?.answerabilityClass
+      ? `Answerability class: ${conversation.reasoningResult.answerabilityClass}`
+      : null,
+    conversation?.reasoningResult?.sourceContract
+      ? `Source contract: ${conversation.reasoningResult.sourceContract}`
+      : null,
     conversation?.reasoningResult?.journeyStage ? `Journey stage: ${conversation.reasoningResult.journeyStage}` : null,
     Number.isFinite(Number(conversation?.reasoningResult?.intentConfidence))
       ? `Intent confidence: ${Number(conversation.reasoningResult.intentConfidence).toFixed(2)}`
@@ -840,7 +847,7 @@ function buildAutopilotNote({
       : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
     knowledge?.quality
-      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
+      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
       : null,
     outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
     productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
@@ -958,6 +965,7 @@ function buildSearchOptions(session, conversation) {
   return {
     conversationFacts: conversation?.conversationFacts || [],
     conversationTerms: conversation?.conversationFacts || [],
+    retrievalFrame: conversation?.retrievalFrame || null,
     preferredSource,
     allowedSources:
       conversation?.supportPlan?.selectedSources?.length
@@ -968,10 +976,18 @@ function buildSearchOptions(session, conversation) {
         ? conversation.supportPlan.mustNotUseSources
         : entryTopicSourcePolicy?.blockedSources || [],
     sourcePriority: conversation?.supportPlan?.sourcePriority || [],
+    activeDomain: conversation?.reasoningResult?.activeDomain || "",
+    userJob: conversation?.reasoningResult?.actionIntent || "",
     taskIntent: conversation?.reasoningResult?.taskIntent || "",
     actionIntent: conversation?.reasoningResult?.actionIntent || "",
     subjectType: conversation?.reasoningResult?.subjectType || "",
-    questionType: conversation?.reasoningResult?.questionType || ""
+    questionType: conversation?.reasoningResult?.questionType || "",
+    contextCarryover: {
+      activeDomain: session?.workingMemory?.activeDomain || "",
+      activeUserJob: session?.workingMemory?.activeUserJob || "",
+      activeReferenceType: session?.workingMemory?.activeReferenceType || "",
+      activeReferenceValue: session?.workingMemory?.activeReferenceValue || ""
+    }
   };
 }
 
@@ -1061,7 +1077,12 @@ function storeSessionClarification(session, conversation, question) {
   session.pendingClarification = {
     slotKey: conversation.missingSlots?.[0] || "",
     question,
-    intent: conversation.resolvedUserIntent || "",
+    intent: conversation.reasoningResult?.primaryIntent || conversation.resolvedUserIntent || "",
+    activeDomain: conversation?.reasoningResult?.activeDomain || "",
+    activeTaskIntent: conversation?.reasoningResult?.taskIntent || "",
+    userJob: conversation?.reasoningResult?.actionIntent || "",
+    expectedAnswerType: conversation?.reasoningResult?.questionType || "",
+    sourceContract: conversation?.reasoningResult?.sourceContract || "",
     baseQuery: conversation.standaloneQuery || "",
     attemptCount: Number(session.pendingClarification?.attemptCount || 0) + 1,
     askedAt: new Date().toISOString()
@@ -1159,7 +1180,8 @@ async function determineChatOutcome(
     clarifyAfterKnowledge = false,
     customerName = "",
     supportPlan = null,
-    reasoningResult = null
+    reasoningResult = null,
+    responsePolicy = null
   } = {}
 ) {
   const channelMessages = getChannelMessages(channelType);
@@ -1187,6 +1209,7 @@ async function determineChatOutcome(
 
   const hasClarifyingNeed = Boolean(
     allowClarifyingQuestion &&
+      (responsePolicy?.mode === "ask_one_question" || supportPlan?.route === "clarify") &&
       ((conversation?.missingSlots?.length > 0 && conversation?.canAskClarifyingQuestion) ||
         supportPlan?.route === "clarify") &&
       conversation?.clarifyingQuestion
@@ -1241,6 +1264,7 @@ async function determineChatOutcome(
     (allowClarifyingQuestion || clarifyAfterKnowledge) &&
     knowledge?.quality &&
     !knowledge.quality.isStrong &&
+    responsePolicy?.mode === "ask_one_question" &&
     conversation?.clarifyingQuestion
   ) {
     return {
@@ -1261,8 +1285,18 @@ async function determineChatOutcome(
     missingSlots: conversation?.missingSlots || [],
     riskFlags: conversation?.riskFlags || [],
     customerName,
-    knowledgeQuality: knowledge?.quality || null
+    knowledgeQuality: knowledge?.quality || null,
+    responsePolicy
   });
+
+  if (responsePolicy?.mode === "answer_now" && aiDecision.decision === "ask_clarifying_question") {
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "forced_answer_now",
+      customerMessage: aiDecision.reply || channelMessages.softHandoff
+    };
+  }
 
   if (aiDecision.decision === "hard_handoff") {
     return {
@@ -1388,6 +1422,43 @@ function buildConversationAnalysis(session, userMessage) {
     session: plannerSession,
     hasAttachments: false
   });
+  const responsePolicy = {
+    mode:
+      baseConversation.reasoningResult?.answerabilityClass === "ask_one_question"
+        ? "ask_one_question"
+        : baseConversation.reasoningResult?.answerabilityClass === "handoff"
+          ? "handoff"
+          : "answer_now",
+    brevity:
+      ["buyback", "delivery", "order"].includes(baseConversation.reasoningResult?.activeDomain)
+        ? "procedural_short"
+        : "short",
+    forbiddenContent:
+      baseConversation.reasoningResult?.sourceContract === "support_only"
+        ? ["product_links", "webshop_mentions", "multi_questioning"]
+        : []
+  };
+  const retrievalFrame = {
+    activeDomain: baseConversation.reasoningResult?.activeDomain || "",
+    userJob: baseConversation.reasoningResult?.actionIntent || "",
+    questionType: baseConversation.reasoningResult?.questionType || "",
+    subjectType: baseConversation.reasoningResult?.subjectType || "",
+    activeReferenceType:
+      baseConversation.reasoningResult?.entities?.order_reference
+        ? "order"
+        : baseConversation.reasoningResult?.entities?.city
+          ? "city"
+          : baseConversation.reasoningResult?.entities?.book_title
+            ? "book"
+            : "",
+    activeReferenceValue:
+      baseConversation.reasoningResult?.entities?.order_reference ||
+      baseConversation.reasoningResult?.entities?.city ||
+      baseConversation.reasoningResult?.entities?.book_title ||
+      "",
+    allowedSources: supportPlan.selectedSources || [],
+    blockedSources: supportPlan.mustNotUseSources || []
+  };
   const responsePlan = {
     intent: baseConversation.reasoningResult?.primaryIntent || "general_support",
     taskIntent: baseConversation.reasoningResult?.taskIntent || "",
@@ -1417,6 +1488,8 @@ function buildConversationAnalysis(session, userMessage) {
     entryTopicLockActive: Boolean(plannerSession?.entryTopicLock),
     entryTopicLockReleased,
     effectiveEntryTopicLock: plannerSession?.entryTopicLock || "",
+    retrievalFrame,
+    responsePolicy,
     responsePlan,
     supportPlan
   };
@@ -1430,9 +1503,15 @@ function shouldUseProductSearch(conversation = null) {
   const route = String(conversation.supportPlan?.route || "").trim();
   const primaryIntent = String(conversation.reasoningResult?.primaryIntent || "").trim();
   const taskIntent = String(conversation.reasoningResult?.taskIntent || "").trim();
+  const activeDomain = String(conversation.reasoningResult?.activeDomain || "").trim();
+  const sourceContract = String(conversation.reasoningResult?.sourceContract || "").trim();
   const effectiveEntryTopicLock = String(conversation.effectiveEntryTopicLock || "").trim();
 
   if (conversation.supportPlan?.mustNotUseSources?.includes("product_feed")) {
+    return false;
+  }
+
+  if (sourceContract !== "product_allowed") {
     return false;
   }
 
@@ -1440,7 +1519,7 @@ function shouldUseProductSearch(conversation = null) {
     return false;
   }
 
-  if (taskIntent && taskIntent !== "product_lookup") {
+  if ((activeDomain && activeDomain !== "product_lookup") || (taskIntent && taskIntent !== "product_lookup")) {
     return false;
   }
 
@@ -1514,7 +1593,8 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       allowClarifyingQuestion: true,
       customerName,
       supportPlan: conversation.supportPlan,
-      reasoningResult: conversation.reasoningResult
+      reasoningResult: conversation.reasoningResult,
+      responsePolicy: conversation.responsePolicy
     });
   } else {
     const searchQuery = conversation.standaloneQuery || userMessage;
@@ -1537,7 +1617,8 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
         clarifyAfterKnowledge: preferKnowledgeBeforeClarify,
         customerName,
         supportPlan: conversation.supportPlan,
-        reasoningResult: conversation.reasoningResult
+        reasoningResult: conversation.reasoningResult,
+        responsePolicy: conversation.responsePolicy
       });
     }
   }

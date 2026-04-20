@@ -17,6 +17,40 @@ function getFirstName(name = "") {
   return normalized.split(" ")[0] || "";
 }
 
+function deriveActiveDomain(taskIntent = "") {
+  switch (String(taskIntent || "").trim()) {
+    case "buyback":
+    case "delivery":
+    case "product_lookup":
+    case "complaint":
+    case "closure":
+      return String(taskIntent || "").trim();
+    case "order_status":
+    case "order_issue":
+      return "order";
+    default:
+      return "";
+  }
+}
+
+function deriveQuestionType(actionIntent = "") {
+  switch (String(actionIntent || "").trim()) {
+    case "ask_how_to":
+      return "procedural";
+    case "ask_policy":
+      return "policy";
+    case "check_status":
+      return "status";
+    case "check_availability":
+    case "check_price":
+      return "lookup";
+    case "request_estimate":
+      return "estimate";
+    default:
+      return "";
+  }
+}
+
 function buildCustomerProfile({ session = null, ticketSummary = null, previousMemory = null } = {}) {
   const previousProfile = previousMemory?.customerProfile || {};
   const name =
@@ -64,13 +98,36 @@ function buildWorkingMemory({
       conversation?.reasoningResult?.secondaryIntent ||
       previousMemory?.secondaryIntent ||
       "",
+    activeDomain:
+      conversation?.reasoningResult?.activeDomain ||
+      deriveActiveDomain(conversation?.reasoningResult?.taskIntent) ||
+      previousMemory?.activeDomain ||
+      "",
     activeTaskIntent:
       conversation?.reasoningResult?.taskIntent ||
       previousMemory?.activeTaskIntent ||
       "",
+    activeUserJob:
+      conversation?.reasoningResult?.actionIntent ||
+      previousMemory?.activeUserJob ||
+      "",
     activeSubjectType:
       conversation?.reasoningResult?.subjectType ||
       previousMemory?.activeSubjectType ||
+      "",
+    activeReferenceType:
+      conversation?.reasoningResult?.entities?.order_reference
+        ? "order"
+        : conversation?.reasoningResult?.entities?.city
+          ? "city"
+          : conversation?.reasoningResult?.entities?.book_title
+            ? "book"
+            : previousMemory?.activeReferenceType || "",
+    activeReferenceValue:
+      conversation?.reasoningResult?.entities?.order_reference ||
+      conversation?.reasoningResult?.entities?.city ||
+      conversation?.reasoningResult?.entities?.book_title ||
+      previousMemory?.activeReferenceValue ||
       "",
     entryTopicLock:
       session?.entryTopicLock ||
@@ -132,6 +189,35 @@ function buildWorkingMemory({
         ? conversation.intentEvidence.slice(0, 6)
         : Array.isArray(previousMemory?.lastIntentEvidence)
           ? previousMemory.lastIntentEvidence.slice(0, 6)
+          : [],
+    lastAnsweredQuestionType:
+      conversation?.reasoningResult?.questionType ||
+      deriveQuestionType(conversation?.reasoningResult?.actionIntent) ||
+      previousMemory?.lastAnsweredQuestionType ||
+      "",
+    lastAnswerabilityClass:
+      conversation?.reasoningResult?.answerabilityClass ||
+      (conversation?.reasoningResult?.riskLevel === "high"
+        ? "handoff"
+        : Array.isArray(conversation?.missingSlots) && conversation.missingSlots.length > 0
+          ? "ask_one_question"
+          : conversation?.reasoningResult?.taskIntent
+            ? "answer_now"
+            : "") ||
+      previousMemory?.lastAnswerabilityClass ||
+      "",
+    topicShiftHistory:
+      conversation?.reasoningResult?.topicShiftDetected
+        ? [
+            ...(Array.isArray(previousMemory?.topicShiftHistory) ? previousMemory.topicShiftHistory.slice(-4) : []),
+            {
+              from: previousMemory?.activeDomain || previousMemory?.activeIntent || "",
+              to: conversation?.reasoningResult?.activeDomain || conversation?.reasoningResult?.primaryIntent || "",
+              at: new Date().toISOString()
+            }
+          ]
+        : Array.isArray(previousMemory?.topicShiftHistory)
+          ? previousMemory.topicShiftHistory.slice(-5)
           : [],
     customerProfile,
     supportHistory: {
@@ -240,6 +326,16 @@ function applyWorkingMemoryToSession(session, memory = null) {
     session.pendingClarification = {
       slotKey: memory.openSlots[0],
       intent: memory.activeIntent || "",
+      activeDomain: memory.activeDomain || "",
+      activeTaskIntent: memory.activeTaskIntent || "",
+      userJob: memory.activeUserJob || "",
+      expectedAnswerType: memory.lastAnsweredQuestionType || "",
+      sourceContract:
+        memory.activeDomain && memory.activeDomain !== "product_lookup"
+          ? "support_only"
+          : memory.activeTaskIntent === "product_lookup"
+            ? "product_allowed"
+            : "knowledge_first",
       baseQuery: memory.lastStandaloneQuery || "",
       attemptCount: Number(memory.clarificationTurnCount || 0),
       askedAt: memory.updatedAt || null
@@ -256,6 +352,7 @@ function normalizeComparableMemory(memory = {}) {
   return {
     activeIntent: memory.activeIntent || "",
     secondaryIntent: memory.secondaryIntent || "",
+    activeDomain: memory.activeDomain || "",
     openSlots: Array.isArray(memory.openSlots) ? memory.openSlots : [],
     resolvedSlots: Array.isArray(memory.resolvedSlots) ? memory.resolvedSlots : [],
     lastStandaloneQuery: memory.lastStandaloneQuery || "",
@@ -265,11 +362,17 @@ function normalizeComparableMemory(memory = {}) {
     lastProductContext: Array.isArray(memory.lastProductContext) ? memory.lastProductContext : [],
     clarificationTurnCount: Number(memory.clarificationTurnCount || 0),
     activeTaskIntent: memory.activeTaskIntent || "",
+    activeUserJob: memory.activeUserJob || "",
     activeSubjectType: memory.activeSubjectType || "",
+    activeReferenceType: memory.activeReferenceType || "",
+    activeReferenceValue: memory.activeReferenceValue || "",
     entryTopicLock: memory.entryTopicLock || "",
     entryTopicSourcePolicy: memory.entryTopicSourcePolicy || null,
     lastResolvedEntity: memory.lastResolvedEntity || "",
     lastIntentEvidence: Array.isArray(memory.lastIntentEvidence) ? memory.lastIntentEvidence : [],
+    lastAnsweredQuestionType: memory.lastAnsweredQuestionType || "",
+    lastAnswerabilityClass: memory.lastAnswerabilityClass || "",
+    topicShiftHistory: Array.isArray(memory.topicShiftHistory) ? memory.topicShiftHistory : [],
     customerProfile: {
       name: normalizeText(memory.customerProfile?.name),
       firstName: normalizeText(memory.customerProfile?.firstName),

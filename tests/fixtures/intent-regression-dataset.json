@@ -4,7 +4,7 @@
     "intent": "otkup_upit",
     "desiredSource": "onedrive",
     "shouldUseProductFeed": false,
-    "expectedOutcome": "clarify_or_answer"
+    "expectedOutcome": "answer"
   },
   {
     "message": "Kako mogu prodati knjige?",
@@ -31,6 +31,20 @@
     "message": "Kolika je dostava za Dubrovnik?",
     "intent": "dostava_info",
     "desiredSource": "zendesk",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  },
+  {
+    "message": "A koliko traje?",
+    "intent": "otkup_upit",
+    "desiredSource": "onedrive",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  },
+  {
+    "message": "A za udžbenike?",
+    "intent": "otkup_upit",
+    "desiredSource": "onedrive",
     "shouldUseProductFeed": false,
     "expectedOutcome": "answer"
   }

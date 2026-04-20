@@ -167,6 +167,8 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
     primaryIntent === "reklamacija_povrat" ||
     primaryIntent === "narudzba_problem" ||
     reasoningResult.riskLevel === "high";
+  const answerabilityClass = normalizeIntent(reasoningResult.answerabilityClass);
+  const sourceContract = normalizeIntent(reasoningResult.sourceContract);
   const toneMode =
     reasoningResult.emotionalTone === "frustrated"
       ? "deescalation"
@@ -180,6 +182,10 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
   let responseMode = "direct_answer";
   let nextBestAction = "answer_now";
 
+  if (sourceContract === "support_only") {
+    route = route === "product_feed" ? "onedrive_knowledge" : route;
+  }
+
   if (hasAttachments) {
     route = "handoff_hard";
     responseMode = "escalate";
@@ -192,13 +198,19 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
     route = "clarify";
     responseMode = "direct_answer";
     nextBestAction = "close_or_acknowledge";
-  } else if (missingSlots.length > 0) {
+  } else if (answerabilityClass === "ask_one_question" && missingSlots.length > 0) {
     route = "clarify";
     responseMode = "clarify";
     nextBestAction = "ask_missing_detail";
   } else if (route === "clarify") {
-    responseMode = "clarify";
-    nextBestAction = "disambiguate";
+    if (answerabilityClass === "answer_now") {
+      route = primaryIntent === "otkup_upit" ? "onedrive_knowledge" : "zendesk_knowledge";
+      responseMode = "procedural_answer";
+      nextBestAction = "answer_now";
+    } else {
+      responseMode = "clarify";
+      nextBestAction = "disambiguate";
+    }
   } else if (primaryIntent === "narudzba_status" || primaryIntent === "dostava_info" || primaryIntent === "otkup_upit") {
     responseMode = "procedural_answer";
   } else if (isComplaint) {
@@ -211,6 +223,8 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
     toneMode,
     shouldUseCustomerName: shouldUseCustomerName(reasoningResult, session),
     nextBestAction,
+    answerabilityClass,
+    sourceContract,
     selectedSources: sourcePlan.selectedSources,
     sourcePriority: sourcePlan.sourcePriority,
     mustNotUseSources: sourcePlan.mustNotUseSources,
