@@ -1075,104 +1075,67 @@ function buildAutopilotNote({
   channelType = "web_chat",
   conversation = null
 }) {
-  const productSummary = Array.isArray(outcome?.products)
-    ? outcome.products.map((product) => product.title).filter(Boolean).join(", ")
-    : "";
-  const sourceSummary = (knowledge?.articles || [])
-    .map((article) => {
-      const sourceType = article.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak";
-      return `${sourceType}: ${article.title} (${article.rankingScore || article.score})`;
-    })
-    .join(", ");
-
-  return [
+  const topArticles = Array.isArray(knowledge?.articles) ? knowledge.articles.slice(0, 2) : [];
+  const sourceSummary = topArticles
+    .map((article) => article.title)
+    .filter(Boolean)
+    .join(" | ");
+  const selectedSources = Array.isArray(conversation?.supportPlan?.selectedSources)
+    ? conversation.supportPlan.selectedSources
+    : [];
+  const blockedSources = Array.isArray(conversation?.supportPlan?.mustNotUseSources)
+    ? conversation.supportPlan.mustNotUseSources
+    : [];
+  const summaryLine = [
     `Kanal: ${formatChannelLabel(channelType)}`,
-    `AI outcome: ${outcome.type}`,
-    `Upit korisnika: ${userMessage}`,
-    conversation?.standaloneQuery ? `Standalone upit: ${conversation.standaloneQuery}` : null,
-    conversation?.reasoningResult?.primaryIntent
-      ? `Primary intent: ${conversation.reasoningResult.primaryIntent}`
-      : null,
-    conversation?.reasoningResult?.secondaryIntent
-      ? `Secondary intent: ${conversation.reasoningResult.secondaryIntent}`
-      : null,
-    conversation?.reasoningResult?.customerGoal
-      ? `Cilj korisnika: ${conversation.reasoningResult.customerGoal}`
-      : null,
-    conversation?.reasoningResult?.emotionalTone
-      ? `Emocionalni ton: ${conversation.reasoningResult.emotionalTone}`
-      : null,
-    conversation?.supportPlan?.route ? `Planner route: ${conversation.supportPlan.route}` : null,
-    conversation?.supportPlan?.responseMode
-      ? `Response mode: ${conversation.supportPlan.responseMode}`
-      : null,
-    conversation?.supportPlan?.toneMode ? `Tone mode: ${conversation.supportPlan.toneMode}` : null,
-    conversation?.responsePolicy?.mode ? `Response policy mode: ${conversation.responsePolicy.mode}` : null,
-    conversation?.responsePolicy?.brevity
-      ? `Response policy brevity: ${conversation.responsePolicy.brevity}`
-      : null,
-    conversation?.entryTopicLockActive
-      ? `Entry topic lock active: ${conversation.effectiveEntryTopicLock || "yes"}`
-      : null,
-    Array.isArray(conversation?.supportPlan?.selectedSources) && conversation.supportPlan.selectedSources.length > 0
-      ? `Allowed sources: ${conversation.supportPlan.selectedSources.join(", ")}`
-      : null,
-    Array.isArray(conversation?.supportPlan?.mustNotUseSources) && conversation.supportPlan.mustNotUseSources.length > 0
-      ? `Blocked sources: ${conversation.supportPlan.mustNotUseSources.join(", ")}`
-      : null,
-    conversation?.resolvedUserIntent ? `Detektirana namjera: ${conversation.resolvedUserIntent}` : null,
-    conversation?.reasoningResult?.taskIntent ? `Task intent: ${conversation.reasoningResult.taskIntent}` : null,
-    conversation?.reasoningResult?.activeDomain ? `Active domain: ${conversation.reasoningResult.activeDomain}` : null,
-    conversation?.reasoningResult?.actionIntent ? `Action intent: ${conversation.reasoningResult.actionIntent}` : null,
-    conversation?.reasoningResult?.subjectType ? `Subject type: ${conversation.reasoningResult.subjectType}` : null,
-    conversation?.reasoningResult?.questionType ? `Question type: ${conversation.reasoningResult.questionType}` : null,
-    conversation?.reasoningResult?.answerabilityClass
-      ? `Answerability class: ${conversation.reasoningResult.answerabilityClass}`
-      : null,
-    conversation?.reasoningResult?.topicShiftType
-      ? `Topic shift type: ${conversation.reasoningResult.topicShiftType}`
-      : null,
-    Number.isFinite(Number(conversation?.reasoningResult?.topicShiftConfidence))
-      ? `Topic shift confidence: ${Number(conversation.reasoningResult.topicShiftConfidence).toFixed(2)}`
-      : null,
-    conversation?.reasoningResult?.sourceContract
-      ? `Source contract: ${conversation.reasoningResult.sourceContract}`
-      : null,
-    conversation?.reasoningResult?.journeyStage ? `Journey stage: ${conversation.reasoningResult.journeyStage}` : null,
-    Number.isFinite(Number(conversation?.reasoningResult?.intentConfidence))
-      ? `Intent confidence: ${Number(conversation.reasoningResult.intentConfidence).toFixed(2)}`
-      : null,
-    Array.isArray(conversation?.intentEvidence) && conversation.intentEvidence.length > 0
-      ? `Intent evidence: ${conversation.intentEvidence.join(", ")}`
-      : null,
-    conversation?.isFollowUp ? "Follow-up resolved using memory: da" : null,
-    conversation?.missingSlots?.length
-      ? `Missing slotovi: ${conversation.missingSlots.join(", ")}`
-      : null,
-    conversation?.riskFlags?.length ? `Risk flagovi: ${conversation.riskFlags.join(", ")}` : null,
-    outcome?.source === "product_feed" ? "Primarni izvor: Product feed" : null,
+    `Ishod: ${outcome?.type || "unknown"}`,
+    conversation?.supportPlan?.route ? `Ruta: ${conversation.supportPlan.route}` : null,
+    conversation?.reasoningResult?.taskIntent ? `Tema: ${conversation.reasoningResult.taskIntent}` : null
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const analysisLine = [
+    conversation?.reasoningResult?.actionIntent ? `Akcija: ${conversation.reasoningResult.actionIntent}` : null,
+    conversation?.reasoningResult?.questionType ? `Pitanje: ${conversation.reasoningResult.questionType}` : null,
+    conversation?.reasoningResult?.emotionalTone ? `Ton: ${conversation.reasoningResult.emotionalTone}` : null,
+    conversation?.isFollowUp ? "Follow-up: da" : null
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const knowledgeLine = [
     knowledge?.primarySource
       ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
-      : null,
-    knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
-    knowledge?.quality
-      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, domainMatch=${knowledge.quality.domainMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, directAnswerability=${knowledge.quality.directAnswerability ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}, conflict=${knowledge.quality.hasConflict ? "yes" : "no"}`
-      : null,
-    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
-      ? `Knowledge conflict fields: ${knowledge.quality.conflictFields.join(", ")}`
-      : null,
-    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
-      ? `Knowledge conflict fields: ${knowledge.quality.conflictFields.join(", ")}`
-      : null,
-    outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
-    productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
-    sourceSummary
-      ? `Korišteni izvori: ${sourceSummary}`
       : outcome?.source === "product_feed"
-        ? "Korišteni izvori: product feed"
-        : "Korišteni izvori: nema",
-    outcome.reason ? `Razlog: ${outcome.reason}` : null,
-    `Final outcome: ${outcome?.type || "unknown"}`
+        ? "Primarni izvor: Product feed"
+        : null,
+    knowledge?.quality?.isStrong ? "Knowledge: strong" : null,
+    knowledge?.quality?.isWeak ? "Knowledge: weak" : null,
+    knowledge?.quality?.hasConflict ? "Knowledge: conflict" : null,
+    Number.isFinite(Number(knowledge?.topScore)) ? `Score: ${Number(knowledge.topScore).toFixed(2)}` : null
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  return [
+    summaryLine,
+    `Korisnik: ${userMessage}`,
+    conversation?.standaloneQuery && conversation.standaloneQuery !== userMessage
+      ? `Standalone upit: ${conversation.standaloneQuery}`
+      : null,
+    analysisLine || null,
+    selectedSources.length > 0 ? `Dozvoljeni izvori: ${selectedSources.join(", ")}` : null,
+    blockedSources.length > 0 ? `Blokirani izvori: ${blockedSources.join(", ")}` : null,
+    conversation?.missingSlots?.length ? `Nedostaje: ${conversation.missingSlots.join(", ")}` : null,
+    conversation?.riskFlags?.length ? `Rizici: ${conversation.riskFlags.join(", ")}` : null,
+    knowledgeLine || null,
+    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
+      ? `Konfliktna polja: ${knowledge.quality.conflictFields.join(", ")}`
+      : null,
+    sourceSummary ? `Korišteni izvori: ${sourceSummary}` : null,
+    Array.isArray(outcome?.products) && outcome.products.length > 0
+      ? `Proizvodi: ${outcome.products.map((product) => product.title).filter(Boolean).join(", ")}`
+      : null,
+    outcome?.reason ? `Razlog: ${outcome.reason}` : null
   ]
     .filter(Boolean)
     .join("\n");

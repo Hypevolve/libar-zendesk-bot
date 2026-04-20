@@ -881,8 +881,8 @@ test("facebook webhook handles support shift and deduplicates repeated audits", 
       assert.equal(fakeZendesk.state.publicReplies.at(-1).metadata.libar_task_intent, "support_info");
       const latestInternalNote = fakeZendesk.state.internalNotes.at(-1).body;
       assert.match(latestInternalNote, /Kanal: facebook/);
-      assert.match(latestInternalNote, /Response policy mode:/);
-      assert.match(latestInternalNote, /Topic shift type:/);
+      assert.match(latestInternalNote, /Ishod:/);
+      assert.match(latestInternalNote, /Korišteni izvori:/);
     });
   } finally {
     restoreMethods(restoreList);
