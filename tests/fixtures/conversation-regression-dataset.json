@@ -1,0 +1,210 @@
+[
+  {
+    "channel": "web_chat",
+    "history": [],
+    "message": "Želim prodati knjige",
+    "session": {
+      "entryTopicLock": "buyback",
+      "entryTopicSourcePolicy": {
+        "allowedSources": ["onedrive_knowledge", "zendesk_knowledge"],
+        "blockedSources": ["product_feed"]
+      }
+    },
+    "expectedDomain": "buyback",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "onedrive_knowledge"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Htio bih prodati knjige" },
+      { "role": "assistant", "content": "Možete ih donijeti u antikvarijat ili poslati popis za procjenu." }
+    ],
+    "message": "Koje vam je radno vrijeme?",
+    "session": {
+      "entryTopicLock": "buyback",
+      "entryTopicSourcePolicy": {
+        "allowedSources": ["onedrive_knowledge", "zendesk_knowledge"],
+        "blockedSources": ["product_feed"]
+      },
+      "workingMemory": {
+        "activeDomain": "buyback",
+        "activeUserJob": "ask_how_to"
+      }
+    },
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "support_to_support_shift",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Htio bih prodati knjige" },
+      { "role": "assistant", "content": "Možete ih donijeti u antikvarijat ili poslati popis za procjenu." }
+    ],
+    "message": "Imate li Algebra 1?",
+    "session": {
+      "entryTopicLock": "buyback",
+      "entryTopicSourcePolicy": {
+        "allowedSources": ["onedrive_knowledge", "zendesk_knowledge"],
+        "blockedSources": ["product_feed"]
+      },
+      "workingMemory": {
+        "activeDomain": "buyback",
+        "activeTaskIntent": "buyback",
+        "activeIntent": "otkup_upit"
+      }
+    },
+    "expectedDomain": "product_lookup",
+    "expectedUserJob": "check_availability",
+    "expectedTopicShiftType": "support_to_product_shift",
+    "expectedSourceContract": "product_allowed",
+    "shouldUseProductFeed": true,
+    "expectedRoute": "product_feed"
+  },
+  {
+    "channel": "facebook",
+    "history": [],
+    "message": "Gdje se nalazite?",
+    "session": {},
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  },
+  {
+    "channel": "facebook",
+    "history": [
+      { "role": "user", "content": "Kolika je dostava za Split?" },
+      { "role": "assistant", "content": "Dostava za Split je ..." }
+    ],
+    "message": "A koje vam je radno vrijeme?",
+    "session": {
+      "workingMemory": {
+        "activeDomain": "delivery",
+        "activeUserJob": "ask_general_info"
+      }
+    },
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "support_to_support_shift",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  },
+  {
+    "channel": "facebook",
+    "history": [
+      { "role": "assistant", "content": "Našao sam ovaj udžbenik.", "products": [{ "title": "Algebra 1" }] }
+    ],
+    "message": "Ima li je još na stanju?",
+    "session": {
+      "lastProductTitles": ["Algebra 1"],
+      "workingMemory": {
+        "activeDomain": "product_lookup"
+      }
+    },
+    "expectedDomain": "product_lookup",
+    "expectedUserJob": "check_availability",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "product_allowed",
+    "shouldUseProductFeed": true,
+    "expectedRoute": "product_feed"
+  },
+  {
+    "channel": "email",
+    "history": [],
+    "message": "Koje vam je radno vrijeme?",
+    "session": {},
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  },
+  {
+    "channel": "email",
+    "history": [
+      { "role": "user", "content": "Želim prodati knjige" },
+      { "role": "assistant", "content": "Knjige možete donijeti u antikvarijat ili poslati popis za procjenu." }
+    ],
+    "message": "A koja je adresa?",
+    "session": {
+      "workingMemory": {
+        "activeDomain": "buyback",
+        "activeUserJob": "ask_how_to"
+      }
+    },
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "support_to_support_shift",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  },
+  {
+    "channel": "email",
+    "history": [],
+    "message": "Gdje mi je narudžba?",
+    "session": {},
+    "expectedDomain": "order",
+    "expectedUserJob": "check_status",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "clarify"
+  },
+  {
+    "channel": "email",
+    "history": [],
+    "message": "Imam problem s narudžbom",
+    "session": {},
+    "expectedDomain": "order",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "clarify"
+  },
+  {
+    "channel": "web_chat",
+    "history": [],
+    "message": "Kolika je dostava i imate li knjigu Algebra 1?",
+    "session": {},
+    "expectedDomain": "delivery",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "clarify"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Koje vam je radno vrijeme?" },
+      { "role": "assistant", "content": "Radimo od ponedjeljka do petka..." }
+    ],
+    "message": "A gdje se nalazite?",
+    "session": {
+      "workingMemory": {
+        "activeDomain": "support_info",
+        "activeUserJob": "ask_general_info"
+      }
+    },
+    "expectedDomain": "support_info",
+    "expectedUserJob": "ask_general_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "zendesk_knowledge"
+  }
+]

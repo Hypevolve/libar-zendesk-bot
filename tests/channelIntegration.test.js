@@ -1,0 +1,670 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-openrouter-key";
+
+const { app, resetRuntimeState } = require("../index");
+const zendeskService = require("../services/zendeskService");
+const aiService = require("../services/aiService");
+const knowledgeService = require("../services/knowledgeService");
+const productService = require("../services/productService");
+const spamFilterService = require("../services/spamFilterService");
+
+function stubMethod(target, key, replacement, restoreList) {
+  restoreList.push([target, key, target[key]]);
+  target[key] = replacement;
+}
+
+function restoreMethods(restoreList) {
+  while (restoreList.length > 0) {
+    const [target, key, original] = restoreList.pop();
+    target[key] = original;
+  }
+}
+
+function createFakeZendesk() {
+  let nextTicketId = 1000;
+  let nextRequesterId = 5000;
+  let nextAuditId = 1;
+  const agentId = 999001;
+  const tickets = new Map();
+  const publicReplies = [];
+  const internalNotes = [];
+
+  function nowIso() {
+    return new Date(Date.now() + nextAuditId * 1000).toISOString();
+  }
+
+  function buildAudit({
+    ticketId,
+    authorId,
+    body,
+    channel,
+    isPublic = true,
+    metadata = {},
+    attachments = []
+  }) {
+    const auditId = nextAuditId++;
+    return {
+      id: auditId,
+      author_id: authorId,
+      created_at: nowIso(),
+      via: {
+        channel
+      },
+      metadata: {
+        custom: metadata
+      },
+      events: [
+        {
+          id: auditId,
+          type: "Comment",
+          author_id: authorId,
+          public: isPublic,
+          via: {
+            channel
+          },
+          body,
+          plain_body: body,
+          html_body: body,
+          attachments
+        }
+      ],
+      _ticketId: ticketId
+    };
+  }
+
+  function ensureTicket(ticketId) {
+    const ticket = tickets.get(Number(ticketId));
+    if (!ticket) {
+      throw new Error(`Unknown fake ticket ${ticketId}`);
+    }
+    return ticket;
+  }
+
+  function applyStateTag(ticket, stateTag) {
+    const transientTags = new Set([
+      "human_active",
+      "awaiting_human",
+      "awaiting_customer_detail",
+      "resolved"
+    ]);
+    ticket.summary.tags = (ticket.summary.tags || []).filter((tag) => !transientTags.has(tag));
+
+    if (stateTag === "awaiting_human") {
+      ticket.summary.tags.push("awaiting_human");
+    } else if (stateTag === "awaiting_customer_detail") {
+      ticket.summary.tags.push("awaiting_customer_detail");
+    } else if (stateTag === "human_active") {
+      ticket.summary.tags.push("human_active");
+    } else if (stateTag === "resolved") {
+      ticket.summary.tags.push("resolved");
+      ticket.summary.status = "solved";
+    }
+  }
+
+  function seedInboundTicket({
+    channel,
+    requesterName,
+    requesterEmail,
+    message,
+    tags = [],
+    attachments = []
+  }) {
+    const ticketId = nextTicketId++;
+    const requesterId = nextRequesterId++;
+    const summary = {
+      id: ticketId,
+      status: "open",
+      tags: [...tags],
+      requesterId,
+      requesterName,
+      requesterEmail
+    };
+    const audits = [
+      buildAudit({
+        ticketId,
+        authorId: requesterId,
+        body: message,
+        channel,
+        isPublic: true,
+        attachments
+      })
+    ];
+    tickets.set(ticketId, {
+      summary,
+      audits
+    });
+    return {
+      ticketId,
+      requesterId
+    };
+  }
+
+  return {
+    state: {
+      tickets,
+      publicReplies,
+      internalNotes
+    },
+    seedInboundTicket,
+    uploadAttachments: async (files = []) =>
+      files.map((file, index) => ({
+        token: `upload-${index + 1}`,
+        fileName: file.originalname || file.name || `file-${index + 1}`
+      })),
+    createChatTicket: async ({
+      requesterName,
+      requesterEmail,
+      initialMessage,
+      additionalTags = [],
+      externalId = null
+    }) => {
+      const ticketId = nextTicketId++;
+      const requesterId = nextRequesterId++;
+      const summary = {
+        id: ticketId,
+        status: "new",
+        tags: ["webshop_chat", ...additionalTags],
+        requesterId,
+        requesterName,
+        requesterEmail,
+        externalId
+      };
+      const audits = [
+        buildAudit({
+          ticketId,
+          authorId: requesterId,
+          body: initialMessage,
+          channel: "web",
+          isPublic: true
+        })
+      ];
+      tickets.set(ticketId, {
+        summary,
+        audits
+      });
+      return {
+        ticketId,
+        requesterId
+      };
+    },
+    addCustomerMessageToTicket: async (ticketId, requesterId, body, uploadTokens = []) => {
+      const ticket = ensureTicket(ticketId);
+      ticket.audits.push(buildAudit({
+        ticketId,
+        authorId: requesterId,
+        body,
+        channel: "web",
+        isPublic: true,
+        attachments: uploadTokens.map((token, index) => ({
+          id: `${token}-${index}`,
+          file_name: `${token}.jpg`,
+          content_type: "image/jpeg",
+          size: 1000,
+          content_url: `https://example.com/${token}`
+        }))
+      }));
+    },
+    addBotReplyToTicket: async (ticketId, body, { channelType = "web_chat", metadata = {} } = {}) => {
+      const ticket = ensureTicket(ticketId);
+      publicReplies.push({
+        ticketId,
+        body,
+        channelType,
+        metadata
+      });
+      ticket.audits.push(buildAudit({
+        ticketId,
+        authorId: agentId,
+        body,
+        channel:
+          channelType === "facebook"
+            ? "facebook"
+            : channelType === "email"
+              ? "email"
+              : "api",
+        isPublic: true,
+        metadata: {
+          ...metadata,
+          libar_message_role: "assistant"
+        }
+      }));
+    },
+    addInternalNote: async (ticketId, body) => {
+      ensureTicket(ticketId);
+      internalNotes.push({
+        ticketId,
+        body
+      });
+    },
+    addTagAndNote: async (ticketId, tag, note) => {
+      const ticket = ensureTicket(ticketId);
+      if (!ticket.summary.tags.includes(tag)) {
+        ticket.summary.tags.push(tag);
+      }
+      internalNotes.push({
+        ticketId,
+        body: note
+      });
+    },
+    updateConversationState: async (ticketId, stateTag) => {
+      const ticket = ensureTicket(ticketId);
+      applyStateTag(ticket, stateTag);
+    },
+    getTicketSummary: async (ticketId) => {
+      const ticket = ensureTicket(ticketId);
+      return {
+        ...ticket.summary,
+        tags: [...ticket.summary.tags]
+      };
+    },
+    getTicketAudits: async (ticketId) => {
+      const ticket = ensureTicket(ticketId);
+      return ticket.audits.map((audit) => ({
+        ...audit,
+        events: audit.events.map((event) => ({
+          ...event,
+          attachments: Array.isArray(event.attachments) ? [...event.attachments] : []
+        }))
+      }));
+    }
+  };
+}
+
+function getRouteHandler(method, routePath) {
+  const stack = app._router?.stack || [];
+  const layer = stack.find((entry) => entry.route?.path === routePath && entry.route?.methods?.[method]);
+
+  if (!layer) {
+    throw new Error(`Route ${method.toUpperCase()} ${routePath} not found`);
+  }
+
+  return layer.route.stack[layer.route.stack.length - 1].handle;
+}
+
+function createMockResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    headers: {},
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    end(payload = null) {
+      this.body = payload;
+      return this;
+    },
+    sendFile(filePath) {
+      this.body = { filePath };
+      return this;
+    },
+    setHeader(name, value) {
+      this.headers[name] = value;
+    }
+  };
+}
+
+async function invokeRoute(method, routePath, reqOverrides = {}) {
+  const handler = getRouteHandler(method, routePath);
+  const req = {
+    body: {},
+    files: [],
+    headers: {},
+    query: {},
+    params: {},
+    method: method.toUpperCase(),
+    ip: "127.0.0.1",
+    ...reqOverrides
+  };
+  const res = createMockResponse();
+
+  await handler(req, res);
+  return res;
+}
+
+async function withRuntimeReset(run) {
+  try {
+    await run();
+  } finally {
+    resetRuntimeState();
+  }
+}
+
+function buildKnowledgeResult({
+  source = "zendesk",
+  title,
+  body,
+  score = 18
+}) {
+  return {
+    context: [
+      "Izvor 1:",
+      `Tip: ${source === "onedrive" ? "OneDrive dokument" : "Zendesk članak"}`,
+      `Naslov: ${title}`,
+      `Relevantnost: ${score}`,
+      `Sadržaj: ${body}`
+    ].join("\n"),
+    articles: [
+      {
+        source,
+        title,
+        body,
+        score,
+        rankingScore: score
+      }
+    ],
+    topScore: score,
+    quality: {
+      scoreMargin: 4,
+      relevanceMatch: true,
+      domainMatch: true,
+      jobMatch: true,
+      directAnswerability: true,
+      contextConsistency: true,
+      isStrong: true,
+      isWeak: false
+    },
+    primarySource: source
+  };
+}
+
+test("web chat flow keeps support info follow-up on knowledge path and supports restore", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addCustomerMessageToTicket", fakeZendesk.addCustomerMessageToTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(spamFilterService, "evaluateIncomingMessage", async () => ({
+    shouldBlock: false,
+    classification: "normal",
+    reason: "not_email",
+    matchedSignals: [],
+    usedAiReview: false,
+    aiClassification: null
+  }), restoreList);
+  stubMethod(productService, "searchProducts", async (query) => {
+    if (/algebra 1/i.test(query)) {
+      return {
+        topScore: 97,
+        zendeskSummary: "Algebra 1",
+        products: [
+          {
+            title: "Algebra 1",
+            priceLabel: "12,00 €",
+            buyLink: "https://antikvarijat-libar.com/algebra-1"
+          }
+        ]
+      };
+    }
+
+    return null;
+  }, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async (query, options = {}) => {
+    if (options.activeDomain === "buyback") {
+      return buildKnowledgeResult({
+        source: "onedrive",
+        title: "Otkup knjiga - postupak",
+        body: "Za otkup donesite knjige u antikvarijat ili pošaljite popis za procjenu."
+      });
+    }
+
+    return buildKnowledgeResult({
+      source: "zendesk",
+      title: "Radno vrijeme i kontakt",
+      body: "Radimo ponedjeljak-petak 08:00-20:00, subotom 08:00-13:00."
+    });
+  }, restoreList);
+  stubMethod(aiService, "generateReply", async (message, _context, options = {}) => {
+    if (options.reasoningResult?.activeDomain === "buyback") {
+      return {
+        decision: "safe_answer",
+        reply: "Knjige možete donijeti u antikvarijat ili poslati popis za procjenu.",
+        clarifying_question: "",
+        reason: "context_supported"
+      };
+    }
+
+    if (options.reasoningResult?.activeDomain === "support_info") {
+      return {
+        decision: "safe_answer",
+        reply: "Radimo od ponedjeljka do petka 08:00-20:00, a subotom 08:00-13:00.",
+        clarifying_question: "",
+        reason: "context_supported"
+      };
+    }
+
+    return {
+      decision: "safe_answer",
+      reply: "Našao sam knjigu Algebra 1.",
+      clarifying_question: "",
+      reason: "context_supported"
+    };
+  }, restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const startResponse = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Želim prodati knjige",
+          entryIntent: "otkup_knjiga",
+          entryFlowVersion: "v1"
+        }
+      });
+      assert.equal(startResponse.statusCode, 200);
+
+      const startJson = startResponse.body;
+      assert.equal(startJson.session.entryTopicLock, "buyback");
+      assert.equal(startJson.messages.at(-1).supportTaskIntent, "buyback");
+      assert.deepEqual(startJson.messages.at(-1).products, []);
+
+      const followUpResponse = await invokeRoute("post", "/api/chat/message", {
+        body: {
+          sessionId: startJson.sessionId,
+          message: "Koje vam je radno vrijeme?"
+        }
+      });
+      assert.equal(followUpResponse.statusCode, 200);
+
+      const followUpJson = followUpResponse.body;
+      const latestAssistant = [...followUpJson.messages].reverse().find((message) => message.role === "assistant");
+      assert.equal(latestAssistant.supportTaskIntent, "support_info");
+      assert.deepEqual(latestAssistant.products, []);
+
+      const restoreResponse = await invokeRoute("post", "/api/chat/restore", {
+        body: {
+          ticketId: startJson.ticketId,
+          requesterId: startJson.session.requesterId,
+          requesterName: "Ana Horvat",
+          requesterEmail: "ana@example.com"
+        }
+      });
+      assert.equal(restoreResponse.statusCode, 200);
+
+      const restoreJson = restoreResponse.body;
+      assert.equal(restoreJson.mode, "active_session");
+      assert.equal(restoreJson.session.messages.at(-1).supportTaskIntent, "support_info");
+      assert.equal(fakeZendesk.state.publicReplies.length >= 2, true);
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("facebook webhook handles support shift and deduplicates repeated audits", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+  const seeded = fakeZendesk.seedInboundTicket({
+    channel: "facebook",
+    requesterName: "Zrinko Kutnjak",
+    requesterEmail: "zrinko@example.com",
+    message: "Htio bih prodati knjige"
+  });
+
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(spamFilterService, "evaluateIncomingMessage", async () => ({
+    shouldBlock: false,
+    classification: "normal",
+    reason: "not_email",
+    matchedSignals: [],
+    usedAiReview: false,
+    aiClassification: null
+  }), restoreList);
+  stubMethod(productService, "searchProducts", async () => null, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async (query, options = {}) => {
+    if (options.activeDomain === "buyback") {
+      return buildKnowledgeResult({
+        source: "onedrive",
+        title: "Otkup knjiga - postupak",
+        body: "Za otkup donesite knjige u antikvarijat ili pošaljite popis za procjenu."
+      });
+    }
+
+    return buildKnowledgeResult({
+      source: "zendesk",
+      title: "Radno vrijeme i kontakt",
+      body: "Radimo ponedjeljak-petak 08:00-20:00, subotom 08:00-13:00."
+    });
+  }, restoreList);
+  stubMethod(aiService, "generateReply", async (_message, _context, options = {}) => ({
+    decision: "safe_answer",
+    reply:
+      options.reasoningResult?.activeDomain === "support_info"
+        ? "Radimo od ponedjeljka do petka 08:00-20:00, a subotom 08:00-13:00."
+        : "Knjige možete donijeti u antikvarijat ili poslati popis za procjenu.",
+    clarifying_question: "",
+    reason: "context_supported"
+  }), restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const firstResponse = await invokeRoute("post", "/webhook/zendesk", {
+        body: {
+          ticket_id: seeded.ticketId,
+          audit_id: "fb-a1",
+          channel: "facebook"
+        }
+      });
+      assert.equal(firstResponse.statusCode, 200);
+      const firstJson = firstResponse.body;
+      assert.equal(firstJson.action, "customer_reply_sent");
+      assert.equal(firstJson.channelType, "facebook");
+      assert.equal(fakeZendesk.state.publicReplies.at(-1).metadata.libar_task_intent, "buyback");
+
+      const duplicateResponse = await invokeRoute("post", "/webhook/zendesk", {
+        body: {
+          ticket_id: seeded.ticketId,
+          audit_id: "fb-a1",
+          channel: "facebook"
+        }
+      });
+      const duplicateJson = duplicateResponse.body;
+      assert.equal(duplicateJson.reason, "duplicate_webhook");
+
+      const ticket = fakeZendesk.state.tickets.get(seeded.ticketId);
+      const requesterId = ticket.summary.requesterId;
+      ticket.audits.push({
+        id: 9999,
+        author_id: requesterId,
+        created_at: new Date(Date.now() + 5000).toISOString(),
+        via: { channel: "facebook" },
+        metadata: { custom: {} },
+        events: [
+          {
+            id: 9999,
+            type: "Comment",
+            author_id: requesterId,
+            public: true,
+            via: { channel: "facebook" },
+            body: "Koje vam je radno vrijeme?",
+            plain_body: "Koje vam je radno vrijeme?",
+            html_body: "Koje vam je radno vrijeme?",
+            attachments: []
+          }
+        ]
+      });
+
+      const shiftResponse = await invokeRoute("post", "/webhook/zendesk", {
+        body: {
+          ticket_id: seeded.ticketId,
+          audit_id: "fb-a2",
+          channel: "facebook"
+        }
+      });
+      assert.equal(shiftResponse.statusCode, 200);
+      const shiftJson = shiftResponse.body;
+      assert.equal(shiftJson.channelType, "facebook");
+      assert.equal(fakeZendesk.state.publicReplies.at(-1).metadata.libar_task_intent, "support_info");
+      const latestInternalNote = fakeZendesk.state.internalNotes.at(-1).body;
+      assert.match(latestInternalNote, /Kanal: facebook/);
+      assert.match(latestInternalNote, /Response policy mode:/);
+      assert.match(latestInternalNote, /Topic shift type:/);
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("email webhook blocks spam before automation", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+  const seeded = fakeZendesk.seedInboundTicket({
+    channel: "email",
+    requesterName: "Spam Sender",
+    requesterEmail: "spam@example.com",
+    message: "Guest post opportunity for your website"
+  });
+
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(spamFilterService, "evaluateIncomingMessage", async () => ({
+    shouldBlock: true,
+    classification: "spam",
+    reason: "guest_post_pitch",
+    matchedSignals: ["guest_post_pitch"],
+    usedAiReview: false,
+    aiClassification: null
+  }), restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const response = await invokeRoute("post", "/webhook/zendesk", {
+        body: {
+          ticket_id: seeded.ticketId,
+          audit_id: "em-a1",
+          channel: "email"
+        }
+      });
+      assert.equal(response.statusCode, 200);
+
+      const json = response.body;
+      assert.equal(json.action, "ignored_spam");
+      assert.equal(json.channelType, "email");
+      assert.match(fakeZendesk.state.internalNotes.at(-1).body, /Spam filter \(email\)/);
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});

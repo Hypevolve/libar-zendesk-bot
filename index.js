@@ -75,7 +75,7 @@ function rateLimiter(req, res, next) {
 }
 
 // Periodically clean up expired rate limit entries.
-setInterval(() => {
+const rateLimitCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of rateLimitStore) {
     if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
@@ -83,6 +83,7 @@ setInterval(() => {
     }
   }
 }, RATE_LIMIT_WINDOW_MS * 2);
+rateLimitCleanupInterval.unref?.();
 
 // --- CORS ---
 const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -231,6 +232,13 @@ function createSession(payload) {
 
   chatSessions.set(sessionId, session);
   return session;
+}
+
+function resetRuntimeState() {
+  chatSessions.clear();
+  chatStreams.clear();
+  processedWebhookAudits.clear();
+  rateLimitStore.clear();
 }
 
 function findSessionByTicketId(ticketId) {
@@ -808,6 +816,10 @@ function buildAutopilotNote({
       ? `Response mode: ${conversation.supportPlan.responseMode}`
       : null,
     conversation?.supportPlan?.toneMode ? `Tone mode: ${conversation.supportPlan.toneMode}` : null,
+    conversation?.responsePolicy?.mode ? `Response policy mode: ${conversation.responsePolicy.mode}` : null,
+    conversation?.responsePolicy?.brevity
+      ? `Response policy brevity: ${conversation.responsePolicy.brevity}`
+      : null,
     conversation?.entryTopicLockActive
       ? `Entry topic lock active: ${conversation.effectiveEntryTopicLock || "yes"}`
       : null,
@@ -828,6 +840,9 @@ function buildAutopilotNote({
       : null,
     conversation?.reasoningResult?.topicShiftType
       ? `Topic shift type: ${conversation.reasoningResult.topicShiftType}`
+      : null,
+    Number.isFinite(Number(conversation?.reasoningResult?.topicShiftConfidence))
+      ? `Topic shift confidence: ${Number(conversation.reasoningResult.topicShiftConfidence).toFixed(2)}`
       : null,
     conversation?.reasoningResult?.sourceContract
       ? `Source contract: ${conversation.reasoningResult.sourceContract}`
@@ -859,7 +874,8 @@ function buildAutopilotNote({
       : outcome?.source === "product_feed"
         ? "Korišteni izvori: product feed"
         : "Korišteni izvori: nema",
-    outcome.reason ? `Razlog: ${outcome.reason}` : null
+    outcome.reason ? `Razlog: ${outcome.reason}` : null,
+    `Final outcome: ${outcome?.type || "unknown"}`
   ]
     .filter(Boolean)
     .join("\n");
@@ -1063,7 +1079,7 @@ function shouldReleaseEntryTopicLock(session, conversation) {
 
   if (currentLock === "buyback") {
     if (nextTaskIntent === "product_lookup") {
-      return confidence >= 0.72 && Boolean(conversation?.isExplicitProductLookup);
+      return Boolean(conversation?.isExplicitProductLookup) && confidence >= 0.55;
     }
 
     if (nextTaskIntent === "support_info") {
@@ -2136,20 +2152,18 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       await zendeskService.addInternalNote(ticketId, entryFlowNote);
     }
 
-    const session = {
-      ...createSession({
-        ticketId,
-        requesterId,
-        requesterName: name,
-        requesterEmail: email,
-        messages: [],
-        entryIntent: entryIntent || null,
-        entryPromptAnswer: entryPromptAnswer || "",
-        entryFlowVersion: entryFlowVersion || null,
-        entryFlowSkipped: entryFlowVersion === ENTRY_FLOW_VERSION && !entryIntent
-      }),
+    const session = createSession({
+      ticketId,
+      requesterId,
+      requesterName: name,
+      requesterEmail: email,
+      messages: [],
+      entryIntent: entryIntent || null,
+      entryPromptAnswer: entryPromptAnswer || "",
+      entryFlowVersion: entryFlowVersion || null,
+      entryFlowSkipped: entryFlowVersion === ENTRY_FLOW_VERSION && !entryIntent,
       externalId: initialSessionKey
-    };
+    });
     const entryTopicPolicy = buildEntryTopicPolicy(entryIntent);
     session.entryTopicLock = entryTopicPolicy.entryTopicLock;
     session.entryTopicSourcePolicy = entryTopicPolicy.entryTopicSourcePolicy;
@@ -2826,7 +2840,7 @@ app.get("/debug/zendesk/:ticketId", async (req, res) => {
 });
 
 // Periodically clean up expired webhook idempotency entries.
-setInterval(() => {
+const webhookIdempotencyCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, timestamp] of processedWebhookAudits) {
     if (now - timestamp > WEBHOOK_IDEMPOTENCY_TTL_MS) {
@@ -2834,9 +2848,33 @@ setInterval(() => {
     }
   }
 }, WEBHOOK_IDEMPOTENCY_TTL_MS);
+webhookIdempotencyCleanupInterval.unref?.();
 
 const port = Number(process.env.PORT) || 3000;
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+function startServer(listenPort = port) {
+  return app.listen(listenPort, () => {
+    console.log(`Server listening on port ${listenPort}`);
+  });
+}
+
+if (require.main === module) {
+  startServer(port);
+}
+
+module.exports = {
+  app,
+  startServer,
+  resetRuntimeState,
+  __internal: {
+    buildConversationAnalysis,
+    buildAutopilotNote,
+    buildConversationState,
+    detectTicketChannelType,
+    formatChannelLabel,
+    getAutomationBlockReason,
+    getChannelMessages,
+    mapZendeskAuditsToMessages,
+    normalizeChannelType
+  }
+};
