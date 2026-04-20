@@ -53,12 +53,86 @@ const QUERY_ALIASES = [
     terms: ["adresa", "lokacija", "kontakt", "telefon", "email"]
   },
   {
+    pattern: /\b(adresa|gdje|lokacija).*\b(otkup\w*|poslovnic\w*|osobn\w*|fizick\w*)\b|\b(otkup\w*|poslovnic\w*|osobn\w*|fizick\w*).*\b(adresa|gdje|lokacija)\b/u,
+    terms: ["zupanijska 17", "osijek", "fizicki otkup", "osobni dolazak", "poslovnica"]
+  },
+  {
     pattern: /\b(dostava|isporuka|pošiljka|posiljka|kurir|rok dostave)\b/,
     terms: ["dostava", "isporuka", "pošiljka", "rok dostave", "kurir"]
   },
   {
+    pattern: /\b(kucnu adresu|kućnu adresu|doma|na adresu)\b.*\b(dostava|slanje|kupnja|narudzba|narudžba)\b|\b(dostava|slanje|kupnja|narudzba|narudžba)\b.*\b(kucnu adresu|kućnu adresu|doma|na adresu)\b/u,
+    terms: ["dostava na kucnu adresu", "gls", "mbe", "5 97 eur"]
+  },
+  {
+    pattern: /\b(za koliko dana stize|za koliko dana stiže|koliko traje dostava|rok dostave|kada stize narudzba|kada stiže narudžba)\b/u,
+    terms: ["1 do 2 radna dana", "gls", "mbe", "boxnow", "narudzbe saljemo iduci radni dan"]
+  },
+  {
     pattern: /\b(gls|boxnow|paketomat|tisak paket|overseas)\b/,
     terms: ["gls", "boxnow", "paketomat", "dostava", "isporuka", "cijena dostave"]
+  },
+  {
+    pattern: /\b(3 knjige|tri knjige|3 udzbenika|tri udzbenika|manje od 4 knjige|manje od četiri knjige)\b/,
+    terms: ["3 ili manje knjiga", "2 70 eur", "dostava", "online otkup"]
+  },
+  {
+    pattern: /\b(samo tri knjige|jednu do tri knjige|3 knjige na otkup|manje od 4 knjige)\b/u,
+    terms: ["3 ili manje knjiga", "2 70 eur", "dostava pri online otkupu"]
+  },
+  {
+    pattern: /\b(cetiri knjige|četiri knjige|4\+ knjige|4 ili vise knjiga|4 ili više knjiga|besplatna dostava)\b/u,
+    terms: ["4 ili vise knjiga", "dostava je besplatna", "mi pokrivamo trosak slanja", "online otkup"]
+  },
+  {
+    pattern: /\b(dostava besplatna|besplatna kod online otkupa|online otkup besplatan)\b/u,
+    terms: ["4 ili vise knjiga", "dostava je besplatna", "mi pokrivamo trosak slanja", "online otkup"]
+  },
+  {
+    pattern: /\b(od koliko knjiga|koliko knjiga treba).*\b(besplatna|pokrivate dostavu|online otkup)\b|\b(besplatna|pokrivate dostavu|online otkup)\b.*\b(od koliko knjiga|koliko knjiga treba)\b/u,
+    terms: ["4 ili vise knjiga", "dostava je besplatna", "mi pokrivamo trosak slanja", "online otkup"]
+  },
+  {
+    pattern: /\b(što trebam donijeti|sto trebam donijeti|što donijeti|sto donijeti|fizick\w*\s+otkup|osobn\w*\s+dolazak)\b/u,
+    terms: [
+      "sto donijeti sa sobom",
+      "knjige koje zelite prodati",
+      "slozene i ciste",
+      "oib ili broj osobne",
+      "otkupni blok",
+      "fizicki otkup",
+      "osobni dolazak"
+    ]
+  },
+  {
+    pattern: /\b(dokument|osobna|osobnu|oib).*\b(poslovnic\w*|otkup\w*|knjige)\b|\b(poslovnic\w*|otkup\w*|knjige).*\b(dokument|osobna|osobnu|oib)\b/u,
+    terms: [
+      "sto donijeti sa sobom",
+      "oib ili broj osobne",
+      "otkupni blok",
+      "knjige koje zelite prodati"
+    ]
+  },
+  {
+    pattern: /\b(kad|kada).*\b(novac|isplata|gotovina)\b.*\b(fizick\w*|poslovnic\w*|osobn\w*)\b|\b(fizick\w*|poslovnic\w*|osobn\w*)\b.*\b(kad|kada).*\b(novac|isplata|gotovina)\b/u,
+    terms: [
+      "fizicki otkup",
+      "odmah gotovina na blagajni",
+      "isplata je odmah u gotovini",
+      "odmah pri predaji"
+    ]
+  },
+  {
+    pattern: /\b(isti\w*\s+knjig|isti\w*\s+udzbenik|puno istih knjiga|vise istih knjiga|više istih knjiga)\b/u,
+    terms: [
+      "20 istog udzbenika",
+      "20+ istog udzbenika",
+      "odobrenje direktora"
+    ]
+  },
+  {
+    pattern: /\b(hrpu istih udzbenika|hrpu istih knjiga|puno istih udzbenika)\b/u,
+    terms: ["20+ istog udzbenika", "odobrenje direktora"]
   },
   {
     pattern: /\b(narudžba|narudzba|status narudžbe|broj narudžbe|order)\b/,
@@ -73,8 +147,49 @@ const QUERY_ALIASES = [
     terms: ["otkup", "procjena", "vrednovanje", "prodati knjige", "bonus"]
   },
   {
+    pattern: /\b(na koji način|koje opcije|kako mogu predati|predati knjige|donijeti osobno|poslati knjige)\b/u,
+    terms: [
+      "na koji nacin mozete predati knjige",
+      "fizicki otkup",
+      "online otkup",
+      "donosite knjige osobno",
+      "knjige saljete kurirskom sluzbom"
+    ]
+  },
+  {
+    pattern: /\b(osnovn\w*\s+škol|osnovn\w*\s+skol|fakultet\w*|beletristik\w*|roman\w*)\b/u,
+    terms: [
+      "osnovna skola",
+      "ne otkupljujemo",
+      "knjige za osnovnu skolu",
+      "fakultet",
+      "beletristika",
+      "romani"
+    ]
+  },
+  {
     pattern: /\b(plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)\b/,
     terms: ["plaćanje", "kartica", "gotovina", "pouzeće"]
+  },
+  {
+    pattern: /\b(aircash)\b/,
+    terms: ["aircash", "isplata na aircash nije dostupna", "ne vrsimo isplatu"]
+  },
+  {
+    pattern: /\b(dostavljac nije dosao|dostavljač nije došao|kurir nije dosao|kurir nije došao|nije pokupio paket|nije dosao po paket|nije došao po paket)\b/u,
+    terms: ["sto ako dostavljac ne dode", "preuzimanje potvrdeno u sustavu", "kontaktirajte nas", "novi termin preuzimanja"]
+  },
+  {
+    pattern: /\b(kontakt|kontakti|telefon|email|mail|odgovarate|rok odgovora)\b/u,
+    terms: ["telefon", "031 201 230", "email", "odgovaramo u roku 1 radnog dana"]
+  },
+  {
+    pattern: /\b(povrat|zamjena|vratiti|vracam|vraćam|krivi udzbenik|krivi udžbenik|racun za povrat|račun za povrat)\b/u,
+    terms: ["povrat i zamjena", "unutar 2 tjedna", "predocenje racuna", "fotografiju racuna"]
+  },
+  {
+    pattern: /\b(loyalty|vjern\w*\s+kup\w*|nagrade|popusti za vjerne|lojalnost)\b/u,
+    terms: ["loyalty program", "5 udzbenika", "ukupno 8 udzbenika", "ukupno 11 udzbenika", "5 popusta", "10 popusta", "besplatna dostava"]
   }
 ];
 
@@ -172,7 +287,53 @@ function scoreSearchText(text = "", query = "") {
   score += Math.round(tokenCoverage * 6);
 
   const exactPhraseBonuses = expandQueryTerms(query).filter((term) => searchableText.includes(term));
-  score += exactPhraseBonuses.length * 4;
+  score += exactPhraseBonuses.length * 8;
+
+  if (/(3|tri).*(knjig|udzbenik).*(otkup)|otkup.*(3|tri).*(knjig|udzbenik)/.test(normalizedQuery) &&
+      /(3 ili manje knjiga|2 70 eur)/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(4|\bcetiri\b).*(knjig|udzbenik).*(otkup)|otkup.*(4|\bcetiri\b).*(knjig|udzbenik)|besplatna dostava/.test(normalizedQuery) &&
+      /(4 ili vise knjiga|dostava je besplatna|mi pokrivamo trosak slanja)/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(povrat|zamjena)/.test(normalizedQuery) && /(rok|kada|koliki)/.test(normalizedQuery) &&
+      /2 tjedna/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(kontakt|telefon|email|mail)/.test(normalizedQuery) && /(odgovarate|rok|kada)/.test(normalizedQuery) &&
+      /(1 radnog dana|031 201 230)/.test(searchableText)) {
+    score += 14;
+  }
+
+  if (/r1/.test(normalizedQuery) && /r1 racun/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(pbz|zaba)/.test(normalizedQuery) && /(pbz|zaba)/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(gdje mi je paket|pratiti posiljku|tracking|link za pracenje)/.test(normalizedQuery) &&
+      /(tracking broj|link za pracenje)/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/naljepnic/.test(normalizedQuery) && /naljepnic/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(kamo|gdje).*(dodem|dođem|osobno)|nosim osobno/.test(normalizedQuery) &&
+      /(zupanijska 17|osijek)/.test(searchableText)) {
+    score += 16;
+  }
+
+  if (/^sadrzaj\b/.test(searchableText) || (searchableText.match(/clanak\s+\d+/g) || []).length >= 3) {
+    score -= 8;
+  }
 
   return score;
 }
@@ -194,6 +355,15 @@ function splitIntoSegments(text = "") {
   return baseSegments.flatMap((segment) => {
     if (segment.length <= 420) {
       return [segment];
+    }
+
+    const lineSegments = segment
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lineSegments.length > 1) {
+      return lineSegments;
     }
 
     return segment
@@ -224,20 +394,41 @@ function findBestExcerpt(text = "", query = "", maxLength = 900) {
     return truncateText(stripHtml(text), maxLength);
   }
 
-  const excerptParts = [topSegment.segment];
+  let startIndex = topSegment.index;
+  let endIndex = topSegment.index;
+  let excerpt = topSegment.segment;
+  let previousSegmentsAdded = 0;
+  let nextSegmentsAdded = 0;
 
-  const previousSegment = segments[topSegment.index - 1];
-  const nextSegment = segments[topSegment.index + 1];
+  // Expand around the best hit so short heading/table fragments keep
+  // the nearby factual lines they depend on.
+  while (startIndex > 0 && previousSegmentsAdded < 8) {
+    const candidate = segments[startIndex - 1];
+    const nextExcerpt = `${candidate} ${excerpt}`.replace(/\s+/g, " ").trim();
 
-  if (previousSegment && previousSegment.length < 260) {
-    excerptParts.unshift(previousSegment);
+    if (nextExcerpt.length > maxLength) {
+      break;
+    }
+
+    startIndex -= 1;
+    previousSegmentsAdded += 1;
+    excerpt = nextExcerpt;
   }
 
-  if (nextSegment && nextSegment.length < 320) {
-    excerptParts.push(nextSegment);
+  while (endIndex < segments.length - 1 && nextSegmentsAdded < 14) {
+    const candidate = segments[endIndex + 1];
+    const nextExcerpt = `${excerpt} ${candidate}`.replace(/\s+/g, " ").trim();
+
+    if (nextExcerpt.length > maxLength) {
+      break;
+    }
+
+    endIndex += 1;
+    nextSegmentsAdded += 1;
+    excerpt = nextExcerpt;
   }
 
-  return truncateText(excerptParts.join(" ").replace(/\s+/g, " ").trim(), maxLength);
+  return truncateText(excerpt, maxLength);
 }
 
 module.exports = {

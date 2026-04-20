@@ -142,6 +142,8 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
     "- Ako korisnik pita dvije ili tri povezane stvari, odgovori kratko po istom redoslijedu.",
     "- Ako korisnik traži samo potvrdu ili kratku činjenicu, nemoj širiti odgovor u nepotreban postupak.",
     "- Ako kontekst ne pokriva stvarni korisnikov posao ili pitanje, radije ne odgovaraj.",
+    "- Sve činjenice poput cijena, rokova, datuma, radnog vremena, adresa, emailova, telefona i naziva načina plaćanja prepiši točno kako pišu u kontekstu.",
+    "- Nemoj mijenjati brojke, valutu, raspone, uvjete ni redoslijed koraka iz konteksta.",
     "- Nemoj spominjati AI, kontekst, bazu znanja ni interne procese.",
     "- Nemoj dodavati subject ni potpis.",
     customerName

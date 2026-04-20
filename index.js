@@ -2535,6 +2535,7 @@ module.exports = {
     getChannelMessages,
     mapZendeskAuditsToMessages,
     normalizeChannelType,
-    normalizeZendeskCommentContent
+    normalizeZendeskCommentContent,
+    resolveAutomatedOutcome
   }
 };

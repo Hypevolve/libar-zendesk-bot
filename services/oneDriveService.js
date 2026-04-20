@@ -168,6 +168,15 @@ function scoreDocument(document, query, options = {}) {
     score += 5;
   }
 
+  if (
+    /(donijeti|doneti|sa sobom)/.test(normalizedQuery) &&
+    /(fizicki|poslovnic)/.test(normalizedQuery) &&
+    /(oib|broj osobne|otkupni blok|sto donijeti sa sobom)/.test(searchText) &&
+    /(fizicki|poslovnic|donosite knjige|otkup)/.test(searchText)
+  ) {
+    score += 12;
+  }
+
   if (/\bgls\b/.test(normalizedQuery) && /\bgls\b/.test(searchText)) {
     score += 8;
   }
@@ -455,7 +464,9 @@ async function downloadDocument(accessToken, item) {
   return {
     id: item.id,
     title: item.name,
-    body: truncateText(body, 4000),
+    // Keep the full parsed document so retrieval can reach later articles
+    // inside larger Help Center exports. Excerpts are truncated later.
+    body,
     path: item.parentReference?.path || "",
     url: item.webUrl || null,
     lastModifiedAt: item.lastModifiedDateTime || null,
@@ -515,7 +526,7 @@ async function searchOneDriveDetailed(query, options = {}) {
       .map((document) => ({
         document,
         score: scoreDocument(document, searchQuery, options),
-        excerpt: findBestExcerpt(document.body || "", searchQuery, 900)
+        excerpt: findBestExcerpt(document.body || "", searchQuery, 2400)
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score)
@@ -531,7 +542,7 @@ async function searchOneDriveDetailed(query, options = {}) {
         `Izvor: OneDrive`,
         `Naslov: ${document.title}`,
         `Relevantnost: ${score}`,
-        `Sadržaj: ${excerpt || truncateText(document.body, 1800)}`
+        `Sadržaj: ${excerpt || truncateText(document.body, 2400)}`
       ].join("\n"))
       .join("\n\n");
 
@@ -541,7 +552,7 @@ async function searchOneDriveDetailed(query, options = {}) {
         id: document.id,
         title: document.title,
         score,
-        body: excerpt || truncateText(document.body, 1800),
+        body: excerpt || truncateText(document.body, 2400),
         source: "onedrive",
         url: document.url || null
       })),
