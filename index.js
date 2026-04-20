@@ -188,6 +188,112 @@ function toBoolean(value) {
   return false;
 }
 
+function firstDefinedValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function hasAttachmentEntries(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function extractZendeskWebhookEnvelope(payload = {}) {
+  const ticketId = firstDefinedValue(
+    payload.ticket_id,
+    payload.ticketId,
+    payload.ticket?.id,
+    payload.ticket_event?.ticket?.id,
+    payload.ticket_event?.ticket_id,
+    payload.event?.ticket?.id
+  );
+
+  const message = firstNonEmptyString(
+    payload.message,
+    payload.latest_public_comment,
+    payload.latestPublicComment,
+    payload.latest_comment,
+    payload.latestComment,
+    payload.comment?.body,
+    payload.comment?.plain_body,
+    payload.comment?.html_body,
+    payload.ticket?.latest_public_comment,
+    payload.ticket?.latestPublicComment,
+    payload.ticket?.latest_comment,
+    payload.ticket?.latestComment,
+    payload.ticket?.comment?.body,
+    payload.ticket?.comment?.plain_body,
+    payload.ticket?.comment?.html_body,
+    payload.ticket_event?.comment?.body,
+    payload.ticket_event?.comment?.plain_body,
+    payload.ticket_event?.comment?.html_body,
+    payload.ticket_event?.ticket?.latest_public_comment,
+    payload.ticket_event?.ticket?.latest_comment,
+    payload.event?.comment?.body
+  );
+
+  const channelType = firstDefinedValue(
+    payload.channel,
+    payload.channel_type,
+    payload.channelType,
+    payload.via?.channel,
+    payload.ticket?.via?.channel,
+    payload.ticket?.channel,
+    payload.ticket_event?.via?.channel,
+    payload.ticket_event?.ticket?.via?.channel,
+    payload.ticket_event?.ticket?.channel,
+    payload.event?.ticket?.via?.channel
+  );
+
+  const auditId = firstDefinedValue(
+    payload.audit_id,
+    payload.auditId,
+    payload.ticket_event?.id,
+    payload.ticket_event?.audit_id,
+    payload.ticket?.latest_audit_id,
+    payload.event?.id
+  );
+
+  const hasAttachments =
+    toBoolean(
+      firstDefinedValue(
+        payload.has_attachments,
+        payload.hasAttachments,
+        payload.comment?.has_attachments,
+        payload.ticket?.has_attachments,
+        payload.ticket?.comment?.has_attachments,
+        payload.ticket_event?.comment?.has_attachments
+      )
+    ) ||
+    hasAttachmentEntries(payload.attachments) ||
+    hasAttachmentEntries(payload.comment?.attachments) ||
+    hasAttachmentEntries(payload.ticket?.attachments) ||
+    hasAttachmentEntries(payload.ticket?.comment?.attachments) ||
+    hasAttachmentEntries(payload.ticket_event?.comment?.attachments);
+
+  return {
+    ticketId,
+    message,
+    channelType,
+    auditId,
+    hasAttachments
+  };
+}
+
 function normalizeChannelType(value = "") {
   return aiService.normalizeChannelType(value);
 }
@@ -2157,33 +2263,32 @@ async function buildExistingSessionStartResponse(session, res, { duplicateStartP
 /**
  * Central webhook entry point for Zendesk.
  *
- * Expected payload shape:
- * {
- *   "ticket_id": 12345,
- *   "message": "Customer message text...",
- *   "has_attachments": false
- * }
+ * Accepted payloads include the legacy flat contract plus nested Zendesk
+ * trigger/event shapes where ticket/comment data may sit under `ticket`,
+ * `comment`, or `ticket_event`.
  */
-app.post("/webhook/zendesk", async (req, res) => {
+async function processZendeskWebhookPayload(payload = {}) {
   const {
-    ticket_id: ticketId,
+    ticketId,
     message,
-    channel: payloadChannelType,
-    has_attachments: hasAttachmentsRaw,
-    audit_id: auditId
-  } = req.body || {};
-  const hasAttachments = toBoolean(hasAttachmentsRaw);
+    channelType: payloadChannelType,
+    hasAttachments,
+    auditId
+  } = extractZendeskWebhookEnvelope(payload);
 
   // Fix #16: Webhook idempotency — skip duplicate audit processing.
   if (auditId) {
     const idempotencyKey = `${ticketId}:${auditId}`;
     if (processedWebhookAudits.has(idempotencyKey)) {
       metricsService.increment("webhook_duplicate_ignored_total");
-      return res.status(200).json({
-        success: true,
-        action: "ignored",
-        reason: "duplicate_webhook"
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored",
+          reason: "duplicate_webhook"
+        }
+      };
     }
     processedWebhookAudits.set(idempotencyKey, Date.now());
     scheduleRuntimePersist();
@@ -2191,10 +2296,13 @@ app.post("/webhook/zendesk", async (req, res) => {
 
   // Validate the minimum contract early so upstream systems receive a clear error.
   if (!ticketId) {
-    return res.status(400).json({
-      success: false,
-      error: "Invalid payload. 'ticket_id' is required."
-    });
+    return {
+      status: 400,
+      body: {
+        success: false,
+        error: "Invalid payload. 'ticket_id' is required."
+      }
+    };
   }
 
   try {
@@ -2211,12 +2319,15 @@ app.post("/webhook/zendesk", async (req, res) => {
     const blockReason = getAutomationBlockReason(ticketSummary, messages, channelType);
 
     if (blockReason) {
-      return res.status(200).json({
-        success: true,
-        action: "ignored",
-        reason: blockReason,
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored",
+          reason: blockReason,
+          channelType
+        }
+      };
     }
 
     const latestUserMessage = getLatestUserMessage(messages);
@@ -2226,12 +2337,15 @@ app.post("/webhook/zendesk", async (req, res) => {
       Array.isArray(latestUserMessage?.attachments) && latestUserMessage.attachments.length > 0;
 
     if (!normalizedMessage && !latestMessageHasAttachments && !hasAttachments) {
-      return res.status(200).json({
-        success: true,
-        action: "ignored",
-        reason: "empty_customer_message",
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored",
+          reason: "empty_customer_message",
+          channelType
+        }
+      };
     }
 
     const effectiveHasAttachments = hasAttachments || latestMessageHasAttachments;
@@ -2249,12 +2363,15 @@ app.post("/webhook/zendesk", async (req, res) => {
         ["suspected_spam"]
       );
 
-      return res.status(200).json({
-        success: true,
-        action: "ignored_spam",
-        channelType,
-        reason: spamFilterResult.reason
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored_spam",
+          channelType,
+          reason: spamFilterResult.reason
+        }
+      };
     }
 
     if (effectiveHasAttachments) {
@@ -2274,20 +2391,26 @@ app.post("/webhook/zendesk", async (req, res) => {
         channelType
       }));
 
-      return res.status(200).json({
-        success: true,
-        action: "attachment_escalation",
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "attachment_escalation",
+          channelType
+        }
+      };
     }
 
     if (!latestMessage || latestMessage.role !== "user") {
-      return res.status(200).json({
-        success: true,
-        action: "ignored",
-        reason: "latest_message_not_user",
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored",
+          reason: "latest_message_not_user",
+          channelType
+        }
+      };
     }
 
     const temporarySession = {
@@ -2298,10 +2421,6 @@ app.post("/webhook/zendesk", async (req, res) => {
       messages,
       lastKnowledgeSource: ""
     };
-    memoryService.applyWorkingMemoryToSession(
-      temporarySession,
-      memoryService.extractLatestWorkingMemory(audits)
-    );
     const { knowledge, outcome } = await resolveAutomatedOutcome(
       temporarySession,
       normalizedMessage,
@@ -2326,11 +2445,14 @@ app.post("/webhook/zendesk", async (req, res) => {
         channelType,
       }));
 
-      return res.status(200).json({
-        success: true,
-        action: "customer_detail_requested",
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "customer_detail_requested",
+          channelType
+        }
+      };
     }
 
     if (outcome.type !== "safe_answer") {
@@ -2353,13 +2475,16 @@ app.post("/webhook/zendesk", async (req, res) => {
         }))
       ]);
 
-      return res.status(200).json({
-        success: true,
-        action: "ai_escalation",
-        escalationType:
-          outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
-        channelType
-      });
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ai_escalation",
+          escalationType:
+            outcome.type === "hard_handoff" ? "[ESKALACIJA_HITNO]" : "[ESKALACIJA_NEZNANJE]",
+          channelType
+        }
+      };
     }
 
     // Fix #13: Parallelize independent Zendesk write calls.
@@ -2394,11 +2519,14 @@ app.post("/webhook/zendesk", async (req, res) => {
     }
     await Promise.all(safeAnswerTasks);
 
-    return res.status(200).json({
-      success: true,
-      action: "customer_reply_sent",
-      channelType
-    });
+    return {
+      status: 200,
+      body: {
+        success: true,
+        action: "customer_reply_sent",
+        channelType
+      }
+    };
   } catch (error) {
     // Keep the response clean for webhook consumers while logging the full detail locally.
     logError("Webhook processing failed:", {
@@ -2407,11 +2535,19 @@ app.post("/webhook/zendesk", async (req, res) => {
       ticketId
     });
 
-    return res.status(500).json({
-      success: false,
-      error: "Internal server error while processing Zendesk webhook."
-    });
+    return {
+      status: 500,
+      body: {
+        success: false,
+        error: "Internal server error while processing Zendesk webhook."
+      }
+    };
   }
+}
+
+app.post("/webhook/zendesk", async (req, res) => {
+  const result = await processZendeskWebhookPayload(req.body || {});
+  return res.status(result.status).json(result.body);
 });
 
 /**
@@ -3283,6 +3419,7 @@ module.exports = {
     buildConversationState,
     buildConversationStateFromOutcome,
     detectTicketChannelType,
+    extractZendeskWebhookEnvelope,
     finalizeOutcomeForCustomer,
     formatChannelLabel,
     getAutomationBlockReason,
@@ -3295,6 +3432,7 @@ module.exports = {
     mapZendeskAuditsToMessages,
     normalizeChannelType,
     normalizeZendeskCommentContent,
+    processZendeskWebhookPayload,
     resolveAutomatedOutcome,
     updateSessionRouteMemory,
     validateAnswerQuality
