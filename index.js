@@ -1275,7 +1275,7 @@ function buildAutopilotNote({
     ? `Korišteni dokument: ${knowledge.articles[0].title}`
     : outcome?.source === "product_feed" && Array.isArray(outcome?.products) && outcome.products.length > 0
       ? `Korišteni proizvod: ${outcome.products[0].title}`
-      : "Odgovor nije pronađen na OneDrive-u.";
+      : "Odgovor nije pronađen u bazi znanja.";
 
   return [
     summaryLine,
@@ -1819,7 +1819,7 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
   }
 
   if (
-    /(troskovi dostave|cijena dostave|dostava|isporuka|paketomat|gls|boxnow|box now|pouzecem|pouzece)/.test(
+    /(troskovi dostave|cijena dostave|dostava|dostavn\w*|isporuka|paketomat|gls|boxnow|box now|pouzecem|pouzece)/.test(
       normalizedMessage
     )
   ) {

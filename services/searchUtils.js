@@ -57,8 +57,20 @@ const QUERY_ALIASES = [
     terms: ["zupanijska 17", "osijek", "fizicki otkup", "osobni dolazak", "poslovnica"]
   },
   {
-    pattern: /\b(dostava|isporuka|pošiljka|posiljka|kurir|rok dostave)\b/,
+    pattern: /\b(dostava|dostavn\w*|isporuka|pošiljka|posiljka|kurir|rok dostave)\b/,
     terms: ["dostava", "isporuka", "pošiljka", "rok dostave", "kurir"]
+  },
+  {
+    pattern: /\b(dostavn\w*\s+opcij\w*|opcij\w*\s+dostav\w*)\b/u,
+    terms: [
+      "dostava",
+      "opcije dostave",
+      "dostava na kucnu adresu",
+      "boxnow paketomat",
+      "osobno preuzimanje",
+      "gls",
+      "mbe"
+    ]
   },
   {
     pattern: /\b(kucnu adresu|kućnu adresu|doma|na adresu)\b.*\b(dostava|slanje|kupnja|narudzba|narudžba)\b|\b(dostava|slanje|kupnja|narudzba|narudžba)\b.*\b(kucnu adresu|kućnu adresu|doma|na adresu)\b/u,

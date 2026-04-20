@@ -124,6 +124,27 @@ test("searchOneDriveDetailed returns exact KB facts across the full Help Center 
   }
 });
 
+test("searchOneDriveDetailed retrieves delivery options for paraphrased 'dostavne opcije' queries", async () => {
+  const { service, restore } = loadFreshOneDriveService({
+    items: [
+      createDocItem("Libar_HelpCenter_Top6.docx"),
+      createDocItem("Libar_HelpCenter_Clanci7-15.docx"),
+      createDocItem("Libar_HelpCenter_Clanci16-18.docx")
+    ]
+  });
+
+  try {
+    const result = await service.searchOneDriveDetailed("Koje dostavne opcije nudite?");
+
+    assert.ok(result?.context, "expected context for delivery-options paraphrase");
+    assert.match(result.context, /(GLS|MBE)/i);
+    assert.match(result.context, /(BOXNOW|paketomat)/i);
+    assert.match(result.context, /(5,97 EUR|3,50 EUR|osobno preuzimanje)/i);
+  } finally {
+    restore();
+  }
+});
+
 test("searchOneDriveDetailed resolves 1000 user-question regressions against the KB export set", async () => {
   const { service, restore } = loadFreshOneDriveService({
     items: [
