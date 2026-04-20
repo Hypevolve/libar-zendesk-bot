@@ -253,16 +253,58 @@ const FACT_GROUPS = [
   }
 ];
 
+const DATASET_TARGET_SIZE = 1000;
+const QUESTION_VARIANTS_PER_BASE = 10;
+
+function lowercaseFirst(value = "") {
+  if (!value) {
+    return value;
+  }
+
+  return `${value.charAt(0).toLowerCase()}${value.slice(1)}`;
+}
+
+const QUESTION_VARIANT_BUILDERS = [
+  (question) => question,
+  (question) => `Bok, ${lowercaseFirst(question)}`,
+  (question) => `Pozdrav, ${lowercaseFirst(question)}`,
+  (question) => `Molim vas, ${lowercaseFirst(question)}`,
+  (question) => `Imam pitanje, ${lowercaseFirst(question)}`,
+  (question) => `${question} Hvala unaprijed.`,
+  (question) => `Bok! ${question}`,
+  (question) => `Pozdrav! ${question}`,
+  (question) => `Možete li mi reći ${lowercaseFirst(question)}`,
+  (question) => `Zanima me, ${lowercaseFirst(question)}`
+];
+
+function buildQuestionVariants(question = "") {
+  return QUESTION_VARIANT_BUILDERS.map((builder) =>
+    builder(String(question || "").trim()).replace(/\s+/g, " ").trim()
+  );
+}
+
 const knowledgeRegressionCases = FACT_GROUPS.flatMap((group) =>
-  group.questions.map((query, index) => ({
-    id: `${group.id}-${index + 1}`,
-    channel: CHANNEL_SEQUENCE[index % CHANNEL_SEQUENCE.length],
-    query,
-    patterns: group.patterns
-  }))
+  group.questions.flatMap((question, questionIndex) =>
+    buildQuestionVariants(question).map((query, variantIndex) => ({
+      id: `${group.id}-${questionIndex + 1}-${variantIndex + 1}`,
+      groupId: group.id,
+      channel: CHANNEL_SEQUENCE[(questionIndex * QUESTION_VARIANTS_PER_BASE + variantIndex) % CHANNEL_SEQUENCE.length],
+      query,
+      patterns: group.patterns
+    }))
+  )
 );
 
+if (knowledgeRegressionCases.length !== DATASET_TARGET_SIZE) {
+  throw new Error(
+    `Expected exactly ${DATASET_TARGET_SIZE} knowledge regression cases, got ${knowledgeRegressionCases.length}.`
+  );
+}
+
 module.exports = {
+  CHANNEL_SEQUENCE,
+  DATASET_TARGET_SIZE,
   FACT_GROUPS,
+  QUESTION_VARIANTS_PER_BASE,
   knowledgeRegressionCases
 };

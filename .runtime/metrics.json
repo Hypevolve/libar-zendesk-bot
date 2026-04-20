@@ -1,4 +1,6 @@
 {
-  "counters": {},
-  "updatedAt": "2026-04-20T12:45:52.345Z"
+  "counters": {
+    "answer_quality_guard_triggered_total": 340
+  },
+  "updatedAt": "2026-04-20T18:06:21.880Z"
 }

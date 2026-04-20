@@ -1,96 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const axios = require("axios");
 const { knowledgeRegressionCases } = require("./fixtures/knowledgeRegressionDataset");
-
-const KNOWLEDGE_DIR = "/Users/zrinko/Downloads/Bot Knowledge Base";
-
-function loadFreshOneDriveService({ items }) {
-  const originalEnv = {
-    ONEDRIVE_TENANT_ID: process.env.ONEDRIVE_TENANT_ID,
-    ONEDRIVE_CLIENT_ID: process.env.ONEDRIVE_CLIENT_ID,
-    ONEDRIVE_CLIENT_SECRET: process.env.ONEDRIVE_CLIENT_SECRET,
-    ONEDRIVE_DRIVE_ID: process.env.ONEDRIVE_DRIVE_ID,
-    ONEDRIVE_FOLDER_ID: process.env.ONEDRIVE_FOLDER_ID,
-    ONEDRIVE_SITE_ID: process.env.ONEDRIVE_SITE_ID,
-    ONEDRIVE_FOLDER_URL: process.env.ONEDRIVE_FOLDER_URL
-  };
-  const originalCreate = axios.create;
-  const originalPost = axios.post;
-  const originalGet = axios.get;
-
-  process.env.ONEDRIVE_TENANT_ID = "tenant";
-  process.env.ONEDRIVE_CLIENT_ID = "client";
-  process.env.ONEDRIVE_CLIENT_SECRET = "secret";
-  process.env.ONEDRIVE_DRIVE_ID = "drive";
-  process.env.ONEDRIVE_FOLDER_ID = "folder";
-  delete process.env.ONEDRIVE_SITE_ID;
-  delete process.env.ONEDRIVE_FOLDER_URL;
-
-  axios.create = () => ({
-    get: async () => ({
-      data: {
-        value: items
-      }
-    })
-  });
-
-  axios.post = async () => ({
-    data: {
-      access_token: "token",
-      expires_in: 3600
-    }
-  });
-
-  axios.get = async (url) => {
-    const matchedItem = items.find((item) => item["@microsoft.graph.downloadUrl"] === url);
-
-    if (!matchedItem) {
-      throw new Error(`Unexpected download URL: ${url}`);
-    }
-
-    const filePath = path.join(KNOWLEDGE_DIR, matchedItem.name);
-    return {
-      data: fs.readFileSync(filePath)
-    };
-  };
-
-  delete require.cache[require.resolve("../services/oneDriveService")];
-  const service = require("../services/oneDriveService");
-
-  return {
-    service,
-    restore() {
-      axios.create = originalCreate;
-      axios.post = originalPost;
-      axios.get = originalGet;
-
-      for (const [key, value] of Object.entries(originalEnv)) {
-        if (typeof value === "undefined") {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
-
-      delete require.cache[require.resolve("../services/oneDriveService")];
-    }
-  };
-}
-
-function createDocItem(name) {
-  return {
-    id: name,
-    name,
-    size: fs.statSync(path.join(KNOWLEDGE_DIR, name)).size,
-    file: { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
-    parentReference: { path: "/drive/root:/Knowledge" },
-    webUrl: `https://example.test/${encodeURIComponent(name)}`,
-    "@microsoft.graph.downloadUrl": `https://download.test/${encodeURIComponent(name)}`
-  };
-}
+const {
+  createDocItem,
+  loadFreshOneDriveService
+} = require("./helpers/oneDriveTestHarness");
 
 test("searchOneDriveDetailed can retrieve facts from later sections of large KB exports", async () => {
   const { service, restore } = loadFreshOneDriveService({
@@ -210,7 +124,7 @@ test("searchOneDriveDetailed returns exact KB facts across the full Help Center 
   }
 });
 
-test("searchOneDriveDetailed resolves 100 user-question regressions against the KB export set", async () => {
+test("searchOneDriveDetailed resolves 1000 user-question regressions against the KB export set", async () => {
   const { service, restore } = loadFreshOneDriveService({
     items: [
       createDocItem("Libar_HelpCenter_Top6.docx"),
@@ -220,9 +134,15 @@ test("searchOneDriveDetailed resolves 100 user-question regressions against the 
   });
 
   try {
-    assert.equal(knowledgeRegressionCases.length, 100, "expected exactly 100 generated regression questions");
+    assert.equal(knowledgeRegressionCases.length, 1000, "expected exactly 1000 generated regression questions");
+    const groupCounts = new Map();
+    const channelCounts = new Map();
+    const startedAt = Date.now();
 
     for (const testCase of knowledgeRegressionCases) {
+      groupCounts.set(testCase.groupId, (groupCounts.get(testCase.groupId) || 0) + 1);
+      channelCounts.set(testCase.channel, (channelCounts.get(testCase.channel) || 0) + 1);
+
       const result = await service.searchOneDriveDetailed(testCase.query);
 
       assert.ok(result?.context, `expected context for [${testCase.channel}] ${testCase.query}`);
@@ -235,6 +155,26 @@ test("searchOneDriveDetailed resolves 100 user-question regressions against the 
         );
       }
     }
+
+    const durationMs = Date.now() - startedAt;
+
+    assert.equal(groupCounts.size, 25, "expected regression coverage for all 25 fact groups");
+
+    for (const [groupId, count] of groupCounts.entries()) {
+      assert.equal(count, 40, `expected exactly 40 generated questions for group ${groupId}`);
+    }
+
+    assert.deepEqual(
+      Object.fromEntries([...channelCounts.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+      {
+        email: 250,
+        facebook: 250,
+        web_chat: 500
+      },
+      "expected deterministic balanced channel distribution"
+    );
+
+    assert.ok(durationMs < 30_000, `expected full 1000-question regression to finish under 30s, got ${durationMs}ms`);
   } finally {
     restore();
   }

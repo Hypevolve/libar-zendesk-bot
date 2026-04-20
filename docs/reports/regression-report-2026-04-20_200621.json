@@ -1,0 +1,63 @@
+{
+  "generatedAt": "2026-04-20T18:06:00.125Z",
+  "knowledge": {
+    "totalCases": 1000,
+    "passedCases": 1000,
+    "failedCases": 0,
+    "durationMs": 21613,
+    "passRate": 100,
+    "groupDistribution": {
+      "aircash-unavailable": 40,
+      "buyback-basic-school": 40,
+      "buyback-faculty-books": 40,
+      "buyback-methods": 40,
+      "buyback-romanesque": 40,
+      "contact-channels": 40,
+      "courier-no-show": 40,
+      "delivery-times": 40,
+      "home-delivery-price": 40,
+      "installments": 40,
+      "locker-delivery-price": 40,
+      "loyalty-program": 40,
+      "no-self-dropoff": 40,
+      "online-buyback-free-shipping": 40,
+      "online-buyback-payout-timing": 40,
+      "online-buyback-small-shipping": 40,
+      "package-label": 40,
+      "physical-buyback-address": 40,
+      "physical-buyback-payment": 40,
+      "physical-buyback-what-to-bring": 40,
+      "r1-invoice": 40,
+      "return-and-exchange": 40,
+      "same-title-limit": 40,
+      "tracking-info": 40,
+      "working-hours": 40
+    },
+    "channelDistribution": {
+      "email": 250,
+      "facebook": 250,
+      "web_chat": 500
+    },
+    "failures": []
+  },
+  "golden": {
+    "totalCases": 150,
+    "passedCases": 150,
+    "failedCases": 0,
+    "durationMs": 135,
+    "passRate": 100,
+    "channelDistribution": {
+      "email": 50,
+      "facebook": 50,
+      "web_chat": 50
+    },
+    "reasonDistribution": {
+      "internal_process_leak": 25,
+      "invalid_generated_reply": 21,
+      "low_knowledge_overlap": 4,
+      "ok": 75,
+      "unsupported_fact_signal": 25
+    },
+    "failures": []
+  }
+}

@@ -1,0 +1,391 @@
+{
+  "generatedAt": "2026-04-20T18:04:19.289Z",
+  "knowledge": {
+    "totalCases": 1000,
+    "passedCases": 1000,
+    "failedCases": 0,
+    "durationMs": 21922,
+    "passRate": 100,
+    "groupDistribution": {
+      "aircash-unavailable": 40,
+      "buyback-basic-school": 40,
+      "buyback-faculty-books": 40,
+      "buyback-methods": 40,
+      "buyback-romanesque": 40,
+      "contact-channels": 40,
+      "courier-no-show": 40,
+      "delivery-times": 40,
+      "home-delivery-price": 40,
+      "installments": 40,
+      "locker-delivery-price": 40,
+      "loyalty-program": 40,
+      "no-self-dropoff": 40,
+      "online-buyback-free-shipping": 40,
+      "online-buyback-payout-timing": 40,
+      "online-buyback-small-shipping": 40,
+      "package-label": 40,
+      "physical-buyback-address": 40,
+      "physical-buyback-payment": 40,
+      "physical-buyback-what-to-bring": 40,
+      "r1-invoice": 40,
+      "return-and-exchange": 40,
+      "same-title-limit": 40,
+      "tracking-info": 40,
+      "working-hours": 40
+    },
+    "channelDistribution": {
+      "email": 250,
+      "facebook": 250,
+      "web_chat": 500
+    },
+    "failures": []
+  },
+  "golden": {
+    "totalCases": 150,
+    "passedCases": 108,
+    "failedCases": 42,
+    "durationMs": 113,
+    "passRate": 72,
+    "channelDistribution": {
+      "email": 50,
+      "facebook": 50,
+      "web_chat": 50
+    },
+    "reasonDistribution": {
+      "internal_process_leak": 25,
+      "invalid_generated_reply": 21,
+      "low_knowledge_overlap": 8,
+      "ok": 88,
+      "unsupported_fact_signal": 8
+    },
+    "failures": [
+      {
+        "id": "working-hours-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "contact-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "r1-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "r1-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "installments-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "return-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "delivery-home-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "delivery-locker-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "delivery-times-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "delivery-times-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "tracking-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "tracking-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "basic-school-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "basic-school-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "faculty-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "faculty-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "romanesque-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "romanesque-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "buyback-methods-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "buyback-methods-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "physical-address-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "physical-address-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "physical-bring-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "physical-bring-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "physical-payment-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "same-title-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "same-title-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "online-small-shipping-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "online-small-shipping-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "online-free-shipping-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "online-free-shipping-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "online-payout-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "aircash-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "aircash-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "package-label-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "low_knowledge_overlap",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "package-label-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "self-dropoff-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "self-dropoff-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "courier-no-show-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "courier-no-show-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      },
+      {
+        "id": "loyalty-invalid-fact",
+        "type": "unexpected_pass_or_reason",
+        "reason": "ok",
+        "expectedReason": "unsupported_fact_signal"
+      },
+      {
+        "id": "loyalty-invalid-dump",
+        "type": "unexpected_pass_or_reason",
+        "reason": "invalid_generated_reply",
+        "expectedReason": [
+          "invalid_generated_reply",
+          "low_knowledge_overlap"
+        ]
+      }
+    ]
+  }
+}

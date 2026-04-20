@@ -1118,6 +1118,154 @@ function looksLikeKnowledgeTitleDump(value = "") {
   return markerCount >= 3 && !/[.!?]/.test(String(value || ""));
 }
 
+const ANSWER_QUALITY_STOP_WORDS = new Set([
+  "ako",
+  "ali",
+  "bio",
+  "bih",
+  "bila",
+  "bile",
+  "bili",
+  "bilo",
+  "ce",
+  "cim",
+  "da",
+  "do",
+  "ga",
+  "gdje",
+  "hvala",
+  "i",
+  "ih",
+  "ili",
+  "im",
+  "iz",
+  "ja",
+  "je",
+  "joj",
+  "kada",
+  "kad",
+  "kao",
+  "koji",
+  "koja",
+  "koje",
+  "kroz",
+  "li",
+  "me",
+  "mi",
+  "na",
+  "nam",
+  "ne",
+  "ni",
+  "nije",
+  "od",
+  "oko",
+  "po",
+  "se",
+  "su",
+  "to",
+  "u",
+  "uz",
+  "vam",
+  "vas",
+  "već",
+  "za"
+]);
+
+function extractMeaningfulTokens(value = "") {
+  return normalizeForComparison(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !ANSWER_QUALITY_STOP_WORDS.has(token));
+}
+
+function findUnsupportedFactSignals(answer = "", knowledge = null) {
+  const knowledgeText = normalizeForComparison(
+    [
+      knowledge?.context || "",
+      ...(Array.isArray(knowledge?.articles)
+        ? knowledge.articles.flatMap((article) => [article?.title || "", article?.body || ""])
+        : [])
+    ].join(" ")
+  );
+
+  if (!knowledgeText) {
+    return [];
+  }
+
+  const factSignals = String(answer || "").match(
+    /\b\d{1,2}:\d{2}\b|\b\d+[.,]\d{2}\b|\b\d+\s*(?:eur|eura|rata|dana|tjedna)\b|\b\d{2,3}[-/\s]?\d{3}[-/\s]?\d{3,4}\b|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b(?:PBZ|ZABA|GLS|MBE|BOXNOW|Aircash|R1)\b/gi
+  ) || [];
+
+  return [...new Set(factSignals.filter((signal) => !knowledgeText.includes(normalizeForComparison(signal))))];
+}
+
+function validateAnswerQuality({ answer = "", outcomeType = "", knowledge = null } = {}) {
+  const normalizedAnswer = String(answer || "").trim();
+
+  if (!normalizedAnswer) {
+    return {
+      isValid: false,
+      reason: "empty_answer"
+    };
+  }
+
+  if (!["safe_answer", "ask_clarifying_question"].includes(String(outcomeType || "").trim())) {
+    return {
+      isValid: true,
+      reason: "not_applicable"
+    };
+  }
+
+  if (!knowledge?.context || !Array.isArray(knowledge?.articles) || knowledge.articles.length === 0) {
+    return {
+      isValid: false,
+      reason: "missing_knowledge_context"
+    };
+  }
+
+  const normalizedForComparison = normalizeForComparison(normalizedAnswer);
+
+  if (/\b(ai|umjetna inteligencija|baza znanja|bazi znanja|knowledge base|kontekst|kontekstu|interni proces|internom kontekstu|interne procese)\b/i.test(normalizedAnswer)) {
+    return {
+      isValid: false,
+      reason: "internal_process_leak"
+    };
+  }
+
+  if (/\b(ne znam|nisam siguran|mozda|možda|pretpostavljam|vjerojatno)\b/i.test(normalizedAnswer)) {
+    return {
+      isValid: false,
+      reason: "uncertain_answer"
+    };
+  }
+
+  const unsupportedFactSignals = findUnsupportedFactSignals(normalizedAnswer, knowledge);
+
+  if (unsupportedFactSignals.length > 0) {
+    return {
+      isValid: false,
+      reason: "unsupported_fact_signal",
+      details: unsupportedFactSignals
+    };
+  }
+
+  const answerTokens = extractMeaningfulTokens(normalizedForComparison);
+  const knowledgeTokens = new Set(extractMeaningfulTokens(knowledge.context));
+  const overlappingTokens = answerTokens.filter((token) => knowledgeTokens.has(token));
+  const overlapRatio = answerTokens.length > 0 ? overlappingTokens.length / answerTokens.length : 0;
+
+  if (answerTokens.length >= 3 && overlapRatio < 0.2) {
+    return {
+      isValid: false,
+      reason: "low_knowledge_overlap"
+    };
+  }
+
+  return {
+    isValid: true,
+    reason: "ok"
+  };
+}
+
 function finalizeOutcomeForCustomer(
   outcome = null,
   {
@@ -1250,12 +1398,15 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   }
 
   if (customerMessage) {
-    const outcome = {
+    const outcome = finalizeOutcomeForCustomer({
       type: "safe_answer",
       stateTag: "ai_active",
       reason: "grounded_answer",
       customerMessage
-    };
+    }, {
+      channelType,
+      knowledge
+    });
     return { outcome, knowledge };
   } else {
     const outcome = {
@@ -2527,15 +2678,18 @@ module.exports = {
   startServer,
   resetRuntimeState,
   __internal: {
+    appendDirectWebsiteLink,
     buildAutopilotNote,
     buildConversationState,
     detectTicketChannelType,
+    finalizeOutcomeForCustomer,
     formatChannelLabel,
     getAutomationBlockReason,
     getChannelMessages,
     mapZendeskAuditsToMessages,
     normalizeChannelType,
     normalizeZendeskCommentContent,
-    resolveAutomatedOutcome
+    resolveAutomatedOutcome,
+    validateAnswerQuality
   }
 };
