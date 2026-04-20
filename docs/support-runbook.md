@@ -27,6 +27,24 @@
 - `knowledge_gap_false_negative`
 - `webhook_duplicate`
 - `spam_false_positive`
+- `knowledge_source_conflict`
+
+## Runtime metrike
+
+Provjeriti na `/health`:
+
+- `duplicate_chat_start_prevented_total`
+- `webhook_duplicate_ignored_total`
+- `clarification_asked_total`
+- `knowledge_conflict_handoff_total`
+- `outcome_*`
+
+Ako raste `knowledge_conflict_handoff_total`, prvo provjeriti jesu li Zendesk i OneDrive izvori usklađeni za:
+
+- radno vrijeme
+- email
+- telefon
+- adresu
 
 ## Kad prijaviti KB gap
 

@@ -62,13 +62,23 @@ test("order status and order problem split into different intents", () => {
   assert.equal(problem.supportPlan.toneMode, "warm_reassuring");
 });
 
-test("complaint de-escalation routes to hard handoff", () => {
+test("complaint stays warm but asks for missing operational detail before escalation", () => {
   const conversation = analyze("Stigla mi je kriva knjiga i jako sam ljut");
 
   assert.equal(conversation.reasoningResult.primaryIntent, "reklamacija_povrat");
   assert.equal(conversation.reasoningResult.emotionalTone, "frustrated");
-  assert.equal(conversation.supportPlan.route, "handoff_hard");
+  assert.equal(conversation.supportPlan.route, "clarify");
   assert.equal(conversation.supportPlan.toneMode, "deescalation");
+  assert.ok(conversation.reasoningResult.missingSlots.includes("order_reference"));
+  assert.match(conversation.clarifyingQuestion.toLowerCase(), /broj narudžbe|broj narudzbe/);
+});
+
+test("refund request remains high-risk and routes to hard handoff", () => {
+  const conversation = analyze("Želim povrat novca za narudžbu #12345");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "reklamacija_povrat");
+  assert.equal(conversation.reasoningResult.riskLevel, "high");
+  assert.equal(conversation.supportPlan.route, "handoff_hard");
 });
 
 test("clarification is short and concrete for vague problem", () => {

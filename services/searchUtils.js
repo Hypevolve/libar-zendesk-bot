@@ -11,10 +11,98 @@ function normalizeText(text = "") {
   return normalizeForSearch(text);
 }
 
+const STOP_WORDS = new Set([
+  "a",
+  "ali",
+  "bi",
+  "da",
+  "do",
+  "ga",
+  "i",
+  "ih",
+  "ili",
+  "iz",
+  "je",
+  "li",
+  "me",
+  "mi",
+  "na",
+  "ne",
+  "od",
+  "po",
+  "sam",
+  "se",
+  "sto",
+  "su",
+  "te",
+  "to",
+  "u",
+  "uz",
+  "vam",
+  "vas",
+  "za"
+]);
+
+const QUERY_ALIASES = [
+  {
+    pattern: /\b(radno vrijeme|kad radite|otvoreni|radite li|working hours)\b/,
+    terms: ["radno vrijeme", "otvoreni", "ponedjeljak", "subota"]
+  },
+  {
+    pattern: /\b(adresa|gdje ste|lokacija|kontakt|telefon|email)\b/,
+    terms: ["adresa", "lokacija", "kontakt", "telefon", "email"]
+  },
+  {
+    pattern: /\b(dostava|isporuka|pošiljka|posiljka|kurir|rok dostave)\b/,
+    terms: ["dostava", "isporuka", "pošiljka", "rok dostave", "kurir"]
+  },
+  {
+    pattern: /\b(narudžba|narudzba|status narudžbe|broj narudžbe|order)\b/,
+    terms: ["narudžba", "status", "broj narudžbe"]
+  },
+  {
+    pattern: /\b(reklamacija|povrat|refund|oštećen|ostecen|kriva knjiga)\b/,
+    terms: ["reklamacija", "povrat", "refund", "oštećen", "kriva knjiga"]
+  },
+  {
+    pattern: /\b(otkup|procjena|procjenu|vrednovanje|prodati knjige|buyback)\b/,
+    terms: ["otkup", "procjena", "vrednovanje", "prodati knjige", "bonus"]
+  },
+  {
+    pattern: /\b(plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)\b/,
+    terms: ["plaćanje", "kartica", "gotovina", "pouzeće"]
+  }
+];
+
+function uniqueNormalizedTerms(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => normalizeText(value))
+    .filter(Boolean))];
+}
+
 function tokenize(text = "") {
   return normalizeText(text)
     .split(" ")
-    .filter((token) => token.length >= 2);
+    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+}
+
+function expandQueryTerms(text = "") {
+  const normalized = normalizeText(text);
+  const expansions = [];
+
+  for (const alias of QUERY_ALIASES) {
+    if (alias.pattern.test(normalized)) {
+      expansions.push(...alias.terms);
+    }
+  }
+
+  return uniqueNormalizedTerms(expansions);
+}
+
+function buildSearchLexicon(query = "") {
+  const baseTerms = tokenize(query);
+  const expandedTerms = expandQueryTerms(query);
+  return uniqueNormalizedTerms([...baseTerms, ...expandedTerms]);
 }
 
 function truncateText(text, maxLength = 1800) {
@@ -29,6 +117,9 @@ function preprocessSearchQuery(query = "", options = {}) {
   const conversationFacts = Array.isArray(options.conversationFacts)
     ? options.conversationFacts.map((fact) => String(fact || "").trim()).filter(Boolean)
     : [];
+  const retrievalHints = Array.isArray(options.retrievalHints)
+    ? options.retrievalHints.map((hint) => String(hint || "").trim()).filter(Boolean)
+    : [];
   const baseQuery = String(query)
     .replace(/\r/g, " ")
     .replace(/^(pozdrav|bok|dobar dan|lijep pozdrav|hello|hi|hey)[,!.:\s-]*/i, "")
@@ -36,16 +127,19 @@ function preprocessSearchQuery(query = "", options = {}) {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (conversationFacts.length === 0) {
+  const expandedHints = expandQueryTerms(baseQuery);
+  const suffixParts = [...conversationFacts, ...retrievalHints, ...expandedHints];
+
+  if (suffixParts.length === 0) {
     return baseQuery;
   }
 
-  return `${baseQuery} ${conversationFacts.join(" ")}`.trim();
+  return `${baseQuery} ${suffixParts.join(" ")}`.trim();
 }
 
 function scoreSearchText(text = "", query = "") {
   const normalizedQuery = normalizeText(query);
-  const queryTokens = tokenize(query);
+  const queryTokens = buildSearchLexicon(query);
   const searchableText = normalizeText(text);
 
   if (!normalizedQuery || queryTokens.length === 0 || !searchableText) {
@@ -72,6 +166,9 @@ function scoreSearchText(text = "", query = "") {
 
   const tokenCoverage = queryTokens.filter((token) => searchableText.includes(token)).length / queryTokens.length;
   score += Math.round(tokenCoverage * 6);
+
+  const exactPhraseBonuses = expandQueryTerms(query).filter((term) => searchableText.includes(term));
+  score += exactPhraseBonuses.length * 4;
 
   return score;
 }
@@ -140,6 +237,8 @@ function findBestExcerpt(text = "", query = "", maxLength = 900) {
 }
 
 module.exports = {
+  buildSearchLexicon,
+  expandQueryTerms,
   findBestExcerpt,
   normalizeText,
   preprocessSearchQuery,

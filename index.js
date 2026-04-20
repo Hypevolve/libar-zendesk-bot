@@ -13,11 +13,19 @@ const productService = require("./services/productService");
 const reasoningService = require("./services/reasoningService");
 const memoryService = require("./services/memoryService");
 const plannerService = require("./services/plannerService");
+const runtimeStore = require("./services/runtimeStore");
+const metricsService = require("./services/metricsService");
+const { composeDeterministicReply } = require("./services/responseComposer");
 
 const app = express();
+const IS_TEST_ENV = process.env.NODE_ENV === "test";
+const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
 const chatSessions = new Map();
 const processedWebhookAudits = new Map();
+const recentChatStarts = new Map();
 const WEBHOOK_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const CHAT_START_DEDUPLICATION_TTL_MS =
+  Number(process.env.CHAT_START_DEDUPLICATION_TTL_MS) || 10 * 60 * 1000;
 const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 8;
@@ -39,8 +47,30 @@ const chatUpload = multer({
   }
 });
 
-console.log("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
-console.log("Loaded OneDrive config:", oneDriveService.getOneDriveConfigSummary());
+function logInfo(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.info(...args);
+  }
+}
+
+function logWarn(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.warn(...args);
+  }
+}
+
+function logError(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.error(...args);
+  }
+}
+
+logInfo("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
+logInfo("Loaded OneDrive config:", oneDriveService.getOneDriveConfigSummary());
+hydrateRuntimeState();
+process.on("SIGINT", persistRuntimeState);
+process.on("SIGTERM", persistRuntimeState);
+process.on("beforeExit", persistRuntimeState);
 
 const EMBED_ALLOWED_ORIGINS = String(process.env.EMBED_ALLOWED_ORIGINS || "")
   .split(",")
@@ -84,6 +114,23 @@ const rateLimitCleanupInterval = setInterval(() => {
   }
 }, RATE_LIMIT_WINDOW_MS * 2);
 rateLimitCleanupInterval.unref?.();
+
+const recentChatStartCleanupInterval = setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [key, entry] of recentChatStarts) {
+    if (now - Number(entry?.createdAt || 0) > CHAT_START_DEDUPLICATION_TTL_MS) {
+      recentChatStarts.delete(key);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    scheduleRuntimePersist();
+  }
+}, CHAT_START_DEDUPLICATION_TTL_MS);
+recentChatStartCleanupInterval.unref?.();
 
 // --- CORS ---
 const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -213,6 +260,50 @@ function getSession(sessionId) {
   return chatSessions.get(sessionId) || null;
 }
 
+function persistRuntimeState() {
+  runtimeStore.saveRuntimeState({
+    sessions: [...chatSessions.values()],
+    processedWebhookAudits: [...processedWebhookAudits.entries()].map(([key, createdAt]) => ({
+      key,
+      createdAt
+    })),
+    recentChatStarts: [...recentChatStarts.entries()].map(([key, value]) => ({
+      key,
+      ...value
+    }))
+  });
+}
+
+function scheduleRuntimePersist() {
+  persistRuntimeState();
+}
+
+function hydrateRuntimeState() {
+  const persistedState = runtimeStore.loadRuntimeState();
+
+  for (const session of persistedState.sessions) {
+    if (session?.sessionId) {
+      chatSessions.set(session.sessionId, session);
+    }
+  }
+
+  for (const entry of persistedState.processedWebhookAudits) {
+    if (entry?.key) {
+      processedWebhookAudits.set(entry.key, Number(entry.createdAt) || Date.now());
+    }
+  }
+
+  for (const entry of persistedState.recentChatStarts) {
+    if (entry?.key && entry?.sessionId) {
+      recentChatStarts.set(entry.key, {
+        sessionId: entry.sessionId,
+        ticketId: entry.ticketId || null,
+        createdAt: Number(entry.createdAt) || Date.now()
+      });
+    }
+  }
+}
+
 function createSession(payload) {
   const sessionId = randomUUID();
   const session = {
@@ -231,6 +322,7 @@ function createSession(payload) {
   };
 
   chatSessions.set(sessionId, session);
+  scheduleRuntimePersist();
   return session;
 }
 
@@ -238,12 +330,97 @@ function resetRuntimeState() {
   chatSessions.clear();
   chatStreams.clear();
   processedWebhookAudits.clear();
+  recentChatStarts.clear();
   rateLimitStore.clear();
+  persistRuntimeState();
+  metricsService.reset();
 }
 
 function findSessionByTicketId(ticketId) {
   for (const session of chatSessions.values()) {
     if (Number(session.ticketId) === Number(ticketId)) {
+      return session;
+    }
+  }
+
+  return null;
+}
+
+function removeSession(sessionId) {
+  if (!sessionId) {
+    return;
+  }
+
+  chatSessions.delete(sessionId);
+  chatStreams.delete(sessionId);
+  scheduleRuntimePersist();
+}
+
+function normalizeRequesterFingerprint(name = "", email = "") {
+  return `${String(name || "").trim().toLowerCase()}::${String(email || "").trim().toLowerCase()}`;
+}
+
+function buildChatStartDeduplicationKey({ name = "", email = "", message = "" } = {}) {
+  return [
+    normalizeRequesterFingerprint(name, email),
+    normalizeMessage(message).toLowerCase()
+  ].join("::");
+}
+
+function registerRecentChatStart({ name = "", email = "", message = "", sessionId = "", ticketId = null } = {}) {
+  const key = buildChatStartDeduplicationKey({ name, email, message });
+
+  if (!key || !sessionId) {
+    return;
+  }
+
+  recentChatStarts.set(key, {
+    sessionId,
+    ticketId,
+    createdAt: Date.now()
+  });
+  scheduleRuntimePersist();
+}
+
+function isSessionClosed(session = null) {
+  const tone = String(session?.conversationState?.tone || "").trim();
+  return tone === "resolved";
+}
+
+function findReusableChatStart({ name = "", email = "", message = "" } = {}) {
+  const dedupeKey = buildChatStartDeduplicationKey({ name, email, message });
+  const recentMatch = recentChatStarts.get(dedupeKey);
+
+  if (recentMatch && Date.now() - recentMatch.createdAt <= CHAT_START_DEDUPLICATION_TTL_MS) {
+    const session = getSession(recentMatch.sessionId);
+
+    if (session && !isSessionClosed(session)) {
+      return session;
+    }
+  }
+
+  const requesterFingerprint = normalizeRequesterFingerprint(name, email);
+
+  for (const session of chatSessions.values()) {
+    if (isSessionClosed(session)) {
+      continue;
+    }
+
+    const sessionFingerprint = normalizeRequesterFingerprint(
+      session.requesterName,
+      session.requesterEmail
+    );
+
+    if (sessionFingerprint !== requesterFingerprint) {
+      continue;
+    }
+
+    const latestUserMessage = [...(Array.isArray(session.messages) ? session.messages : [])]
+      .reverse()
+      .find((entry) => entry.role === "user");
+    const latestUserContent = normalizeMessage(latestUserMessage?.content).toLowerCase();
+
+    if (latestUserContent && latestUserContent === normalizeMessage(message).toLowerCase()) {
       return session;
     }
   }
@@ -265,6 +442,7 @@ function appendMessageToSession(sessionId, role, content) {
     createdAt: new Date().toISOString()
   });
   session.updatedAt = new Date().toISOString();
+  scheduleRuntimePersist();
 
   return session;
 }
@@ -640,6 +818,13 @@ async function syncSessionMessages(session) {
     zendeskService.getTicketSummary(session.ticketId)
   ]);
 
+  return applyZendeskStateToSession(session, {
+    audits,
+    ticketSummary
+  });
+}
+
+function applyZendeskStateToSession(session, { audits = [], ticketSummary = null } = {}) {
   session.messages = mapZendeskAuditsToMessages(audits, session.requesterId, ticketSummary);
   session.requesterName = ticketSummary.requesterName || session.requesterName || "";
   session.requesterEmail = ticketSummary.requesterEmail || session.requesterEmail || "";
@@ -652,6 +837,43 @@ async function syncSessionMessages(session) {
   session.updatedAt = new Date().toISOString();
 
   return session;
+}
+
+async function syncSessionMessagesWithFallback(session, contextLabel = "session_sync") {
+  try {
+    const syncedSession = await syncSessionMessages(session);
+    return {
+      session: syncedSession,
+      degraded: false,
+      error: null
+    };
+  } catch (error) {
+    logError(`${contextLabel} failed:`, {
+      sessionId: session?.sessionId,
+      ticketId: session?.ticketId,
+      message: error.message,
+      stack: error.stack
+    });
+
+    return {
+      session,
+      degraded: true,
+      error
+    };
+  }
+}
+
+function buildDependencyErrorResponse(error, fallbackMessage) {
+  const statusCode = error?.response?.status;
+  const message =
+    statusCode && statusCode >= 400 && statusCode < 500
+      ? fallbackMessage
+      : fallbackMessage;
+
+  return {
+    success: false,
+    error: message
+  };
 }
 
 function buildClosedSessionPayload({ ticketSummary, requesterName, requesterEmail, messages }) {
@@ -933,7 +1155,13 @@ function buildAutopilotNote({
       : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
     knowledge?.quality
-      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, domainMatch=${knowledge.quality.domainMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, directAnswerability=${knowledge.quality.directAnswerability ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
+      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, domainMatch=${knowledge.quality.domainMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, directAnswerability=${knowledge.quality.directAnswerability ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}, conflict=${knowledge.quality.hasConflict ? "yes" : "no"}`
+      : null,
+    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
+      ? `Knowledge conflict fields: ${knowledge.quality.conflictFields.join(", ")}`
+      : null,
+    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
+      ? `Knowledge conflict fields: ${knowledge.quality.conflictFields.join(", ")}`
       : null,
     outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
     productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
@@ -1028,19 +1256,51 @@ function shouldAttemptGroundedAnswerFallback(knowledge) {
   return knowledge.topScore >= Math.max(KNOWLEDGE_MIN_TOP_SCORE + 2, 10);
 }
 
+function recordOutcomeMetrics(outcome = null, conversation = null, knowledge = null) {
+  if (!outcome) {
+    return;
+  }
+
+  metricsService.increment(`outcome_${outcome.type}_total`);
+
+  const activeDomain = String(conversation?.reasoningResult?.activeDomain || "unknown").trim() || "unknown";
+  metricsService.increment(`domain_${activeDomain}_${outcome.type}_total`);
+
+  if (outcome.type === "ask_clarifying_question") {
+    metricsService.increment("clarification_asked_total");
+  }
+
+  if (knowledge?.primarySource) {
+    metricsService.increment(`knowledge_source_${knowledge.primarySource}_used_total`);
+  }
+}
+
 function hasCriticalRiskFlags(conversation = null) {
   const flags = Array.isArray(conversation?.riskFlags) ? conversation.riskFlags : [];
 
   return (
     flags.includes("refund") ||
     flags.includes("payment") ||
-    flags.includes("legal_or_abuse") ||
-    flags.includes("complaint")
+    flags.includes("legal_or_abuse")
   );
 }
 
 function buildSearchOptions(session, conversation) {
   const entryTopicSourcePolicy = session?.entryTopicSourcePolicy || null;
+  const entities = conversation?.reasoningResult?.entities || {};
+  const retrievalHints = [
+    conversation?.reasoningResult?.primaryIntent ? `Intent ${conversation.reasoningResult.primaryIntent}` : "",
+    conversation?.reasoningResult?.taskIntent ? `Task ${conversation.reasoningResult.taskIntent}` : "",
+    conversation?.reasoningResult?.actionIntent ? `Action ${conversation.reasoningResult.actionIntent}` : "",
+    entities.city ? `Grad ${entities.city}` : "",
+    entities.order_reference ? `Broj narudžbe ${entities.order_reference}` : "",
+    entities.book_title ? `Naslov ${entities.book_title}` : "",
+    entities.author ? `Autor ${entities.author}` : "",
+    entities.policy_topic ? `Tema ${entities.policy_topic}` : "",
+    session?.workingMemory?.activeReferenceValue
+      ? `Prethodna referenca ${session.workingMemory.activeReferenceValue}`
+      : ""
+  ].filter(Boolean);
   const preferredSource =
     (Array.isArray(conversation?.supportPlan?.sourcePriority) && conversation.supportPlan.sourcePriority[0]
       ? conversation.supportPlan.sourcePriority[0].replace("_knowledge", "")
@@ -1052,6 +1312,7 @@ function buildSearchOptions(session, conversation) {
   return {
     conversationFacts: conversation?.conversationFacts || [],
     conversationTerms: conversation?.conversationFacts || [],
+    retrievalHints,
     retrievalFrame: conversation?.retrievalFrame || null,
     preferredSource,
     allowedSources:
@@ -1166,6 +1427,8 @@ function clearSessionClarification(session) {
   }
 
   session.pendingClarification = null;
+  session.updatedAt = new Date().toISOString();
+  scheduleRuntimePersist();
 }
 
 function storeSessionClarification(session, conversation, question) {
@@ -1186,6 +1449,8 @@ function storeSessionClarification(session, conversation, question) {
     attemptCount: Number(session.pendingClarification?.attemptCount || 0) + 1,
     askedAt: new Date().toISOString()
   };
+  session.updatedAt = new Date().toISOString();
+  scheduleRuntimePersist();
 }
 
 function updateSessionMemory(session, conversation, outcome, knowledge = null) {
@@ -1226,6 +1491,8 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
     conversation?.reasoningResult?.entities?.city ||
     session.lastResolvedEntity ||
     "";
+  session.updatedAt = new Date().toISOString();
+  scheduleRuntimePersist();
 
   if (outcome?.type === "ask_clarifying_question") {
     storeSessionClarification(session, conversation, outcome.customerMessage);
@@ -1341,6 +1608,16 @@ async function determineChatOutcome(
     };
   }
 
+  if (knowledge?.quality?.hasConflict) {
+    metricsService.increment("knowledge_conflict_handoff_total");
+    return {
+      type: "soft_handoff",
+      stateTag: "awaiting_human",
+      reason: "knowledge_source_conflict",
+      customerMessage: channelMessages.softHandoff
+    };
+  }
+
   if (knowledge?.quality?.isWeak) {
     if (clarifyAfterKnowledge && hasClarifyingNeed) {
       return {
@@ -1380,6 +1657,19 @@ async function determineChatOutcome(
       stateTag: "awaiting_customer_detail",
       reason: "knowledge_ambiguous",
       customerMessage: conversation.clarifyingQuestion
+    };
+  }
+
+  const deterministicReply = composeDeterministicReply({ conversation, knowledge });
+
+  if (deterministicReply) {
+    metricsService.increment("deterministic_kb_answer_total");
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "deterministic_kb_answer",
+      customerMessage: deterministicReply,
+      source: knowledge?.primarySource || ""
     };
   }
 
@@ -1717,7 +2007,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       try {
         productMatch = await productService.searchProducts(searchQuery);
       } catch (error) {
-        console.error("Product search failed:", {
+        logError("Product search failed:", {
           message: error.message,
           searchQuery
         });
@@ -1733,7 +2023,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
           buildSearchOptions(session, conversation)
         );
       } catch (error) {
-        console.error("Knowledge search failed:", {
+        logError("Knowledge search failed:", {
           message: error.message,
           searchQuery
         });
@@ -1754,6 +2044,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   }
 
   updateSessionMemory(session, conversation, outcome, knowledge);
+  recordOutcomeMetrics(outcome, conversation, knowledge);
 
   return {
     conversation,
@@ -1898,6 +2189,39 @@ function buildEntryFlowNote({ entryIntent, entryPromptAnswer, entryFlowVersion }
   ].join("\n");
 }
 
+async function buildExistingSessionStartResponse(session, res, { duplicateStartPrevented = false } = {}) {
+  const syncResult = await syncSessionMessagesWithFallback(session, "chat_start_duplicate_sync");
+  if (duplicateStartPrevented) {
+    metricsService.increment("duplicate_chat_start_prevented_total");
+  }
+
+  return res.status(200).json({
+    success: true,
+    restored: true,
+    duplicateStartPrevented,
+    degraded: syncResult.degraded,
+    sessionId: session.sessionId,
+    session: {
+      sessionId: session.sessionId,
+      ticketId: session.ticketId,
+      requesterId: session.requesterId,
+      requesterName: session.requesterName,
+      requesterEmail: session.requesterEmail,
+      entryIntent: session.entryIntent,
+      entryPromptAnswer: session.entryPromptAnswer,
+      entryFlowVersion: session.entryFlowVersion,
+      entryFlowSkipped: session.entryFlowSkipped,
+      entryTopicLock: session.entryTopicLock,
+      conversationState: session.conversationState,
+      resolutionPrompt: session.resolutionPrompt || null
+    },
+    ticketId: session.ticketId,
+    messages: getSession(session.sessionId)?.messages || session.messages || [],
+    conversationState: session.conversationState,
+    resolutionPrompt: session.resolutionPrompt || null
+  });
+}
+
 /**
  * Central webhook entry point for Zendesk.
  *
@@ -1922,6 +2246,7 @@ app.post("/webhook/zendesk", async (req, res) => {
   if (auditId) {
     const idempotencyKey = `${ticketId}:${auditId}`;
     if (processedWebhookAudits.has(idempotencyKey)) {
+      metricsService.increment("webhook_duplicate_ignored_total");
       return res.status(200).json({
         success: true,
         action: "ignored",
@@ -1929,6 +2254,7 @@ app.post("/webhook/zendesk", async (req, res) => {
       });
     }
     processedWebhookAudits.set(idempotencyKey, Date.now());
+    scheduleRuntimePersist();
   }
 
   // Validate the minimum contract early so upstream systems receive a clear error.
@@ -2170,7 +2496,7 @@ app.post("/webhook/zendesk", async (req, res) => {
     });
   } catch (error) {
     // Keep the response clean for webhook consumers while logging the full detail locally.
-    console.error("Webhook processing failed:", {
+    logError("Webhook processing failed:", {
       message: error.message,
       stack: error.stack,
       ticketId
@@ -2206,6 +2532,14 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
   }
 
   try {
+    const reusableSession = findReusableChatStart({ name, email, message });
+
+    if (reusableSession) {
+      return buildExistingSessionStartResponse(reusableSession, res, {
+        duplicateStartPrevented: true
+      });
+    }
+
     const initialSessionKey = randomUUID();
     const entryContextMessage = buildEntryContextMessage({
       message,
@@ -2225,7 +2559,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     try {
       uploadedAttachments = await zendeskService.uploadAttachments(files);
     } catch (error) {
-      console.error("Attachment upload failed while starting chat session:", {
+      logError("Attachment upload failed while starting chat session:", {
         message: error.message,
         stack: error.stack
       });
@@ -2331,12 +2665,20 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
         `Product feed sažetak:\n${outcome.zendeskSummary}`
       );
     }
-    await syncSessionMessages(session);
+    const startSync = await syncSessionMessagesWithFallback(session, "chat_start_final_sync");
     attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
+    registerRecentChatStart({
+      name,
+      email,
+      message,
+      sessionId: session.sessionId,
+      ticketId: session.ticketId
+    });
     broadcastSessionUpdate(session);
 
     return res.status(200).json({
       success: true,
+      degraded: startSync.degraded,
       sessionId: session.sessionId,
       session: {
         sessionId: session.sessionId,
@@ -2358,7 +2700,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
-    console.error("Failed to start webshop chat session:", {
+    logError("Failed to start webshop chat session:", {
       message: error.message,
       stack: error.stack
     });
@@ -2382,16 +2724,35 @@ app.post("/api/chat/restore", async (req, res) => {
 
   try {
     const existingSession = findSessionByTicketId(ticketId);
-    const [audits, ticketSummary] = await Promise.all([
-      zendeskService.getTicketAudits(ticketId),
-      zendeskService.getTicketSummary(ticketId)
-    ]);
+    let audits;
+    let ticketSummary;
+
+    try {
+      [audits, ticketSummary] = await Promise.all([
+        zendeskService.getTicketAudits(ticketId),
+        zendeskService.getTicketSummary(ticketId)
+      ]);
+    } catch (error) {
+      if (existingSession) {
+        return res.status(200).json({
+          success: true,
+          restored: true,
+          degraded: true,
+          mode: "active_session",
+          session: existingSession
+        });
+      }
+
+      return res.status(503).json(
+        buildDependencyErrorResponse(error, "Zendesk privremeno nije dostupan za obnovu razgovora.")
+      );
+    }
     const restoredMessages = mapZendeskAuditsToMessages(audits, requesterId, ticketSummary);
     const latestMemory = memoryService.extractLatestWorkingMemory(audits);
 
     if (isClosedTicketStatus(ticketSummary.status)) {
       if (existingSession) {
-        chatSessions.delete(existingSession.sessionId);
+        removeSession(existingSession.sessionId);
       }
 
       return res.status(200).json({
@@ -2414,6 +2775,7 @@ app.post("/api/chat/restore", async (req, res) => {
       memoryService.applyWorkingMemoryToSession(existingSession, latestMemory);
       existingSession.conversationState = buildConversationState(ticketSummary, existingSession.messages);
       existingSession.updatedAt = new Date().toISOString();
+      scheduleRuntimePersist();
 
       return res.status(200).json({
         success: true,
@@ -2435,6 +2797,7 @@ app.post("/api/chat/restore", async (req, res) => {
     memoryService.applyWorkingMemoryToSession(session, latestMemory);
     session.conversationState = buildConversationState(ticketSummary, session.messages);
     session.updatedAt = new Date().toISOString();
+    scheduleRuntimePersist();
 
     return res.status(200).json({
       success: true,
@@ -2443,7 +2806,7 @@ app.post("/api/chat/restore", async (req, res) => {
       session
     });
   } catch (error) {
-    console.error("Failed to restore webshop chat session:", {
+    logError("Failed to restore webshop chat session:", {
       ticketId,
       requesterId,
       message: error.message,
@@ -2481,10 +2844,17 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
   }
 
   try {
-    const ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    let ticketSummary;
+    try {
+      ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    } catch (error) {
+      return res.status(503).json(
+        buildDependencyErrorResponse(error, "Zendesk privremeno nije dostupan. Pokušajte ponovno za trenutak.")
+      );
+    }
 
     if (isClosedTicketStatus(ticketSummary.status)) {
-      console.info("resolved_block", {
+      logInfo("resolved_block", {
         sessionId,
         ticketId: session.ticketId,
         status: ticketSummary.status
@@ -2504,7 +2874,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
     try {
       uploadedAttachments = await zendeskService.uploadAttachments(files);
     } catch (error) {
-      console.error("Attachment upload failed while continuing chat session:", {
+      logError("Attachment upload failed while continuing chat session:", {
         sessionId,
         ticketId: session.ticketId,
         message: error.message,
@@ -2532,7 +2902,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       session.messages?.[session.messages.length - 1]?.role !== "user"
     ) {
       session.resolutionPrompt = null;
-      console.info("human_pass_through", {
+      logInfo("human_pass_through", {
         sessionId,
         ticketId: session.ticketId,
         tone: session.conversationState.tone
@@ -2569,7 +2939,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       }
     );
 
-    console.info("ai_autopilot", {
+    logInfo("ai_autopilot", {
       sessionId,
       ticketId: session.ticketId,
       outcome: outcome.type,
@@ -2622,19 +2992,20 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
         `Product feed sažetak:\n${outcome.zendeskSummary}`
       );
     }
-    await syncSessionMessages(session);
+    const messageSync = await syncSessionMessagesWithFallback(session, "chat_message_final_sync");
     attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
     broadcastSessionUpdate(session);
 
     return res.status(200).json({
       success: true,
+      degraded: messageSync.degraded,
       ticketId: session.ticketId,
       messages: session.messages,
       conversationState: session.conversationState,
       resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
-    console.error("Failed to continue webshop chat session:", {
+    logError("Failed to continue webshop chat session:", {
       sessionId,
       ticketId: session.ticketId,
       message: error.message,
@@ -2660,10 +3031,17 @@ app.post("/api/chat/resolve", async (req, res) => {
   }
 
   try {
-    const ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    let ticketSummary;
+    try {
+      ticketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    } catch (error) {
+      return res.status(503).json(
+        buildDependencyErrorResponse(error, "Zendesk privremeno nije dostupan. Pokušajte ponovno za trenutak.")
+      );
+    }
 
     if (isClosedTicketStatus(ticketSummary.status)) {
-      await syncSessionMessages(session);
+      await syncSessionMessagesWithFallback(session, "chat_resolve_closed_sync");
 
       return res.status(200).json({
         success: true,
@@ -2674,7 +3052,7 @@ app.post("/api/chat/resolve", async (req, res) => {
       });
     }
 
-    await syncSessionMessages(session);
+    await syncSessionMessagesWithFallback(session, "chat_resolve_sync");
 
     if (!confirmed) {
       session.resolutionPrompt = null;
@@ -2688,7 +3066,14 @@ app.post("/api/chat/resolve", async (req, res) => {
       });
     }
 
-    const freshTicketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    let freshTicketSummary;
+    try {
+      freshTicketSummary = await zendeskService.getTicketSummary(session.ticketId);
+    } catch (error) {
+      return res.status(503).json(
+        buildDependencyErrorResponse(error, "Zendesk privremeno nije dostupan. Pokušajte ponovno za trenutak.")
+      );
+    }
     const resolutionPrompt = getResolutionPrompt(session, freshTicketSummary);
 
     if (!resolutionPrompt) {
@@ -2708,9 +3093,25 @@ app.post("/api/chat/resolve", async (req, res) => {
       additionalTags: ["resolved", "resolved_by_customer_confirmation"]
     });
 
-    await syncSessionMessages(session);
-    const resolvedTicketSummary = await zendeskService.getTicketSummary(session.ticketId);
-    const resolvedAudits = await zendeskService.getTicketAudits(session.ticketId);
+    const resolvedSync = await syncSessionMessagesWithFallback(session, "chat_resolve_final_sync");
+    let resolvedTicketSummary = freshTicketSummary;
+    let resolvedAudits = [];
+
+    if (!resolvedSync.degraded) {
+      try {
+        [resolvedTicketSummary, resolvedAudits] = await Promise.all([
+          zendeskService.getTicketSummary(session.ticketId),
+          zendeskService.getTicketAudits(session.ticketId)
+        ]);
+      } catch (error) {
+        logError("chat_resolve_persist_fetch failed:", {
+          sessionId,
+          ticketId: session.ticketId,
+          message: error.message,
+          stack: error.stack
+        });
+      }
+    }
     await persistWorkingMemory(
       session,
       null,
@@ -2730,7 +3131,7 @@ app.post("/api/chat/resolve", async (req, res) => {
       resolutionPrompt: null
     });
   } catch (error) {
-    console.error("Failed to resolve webshop chat session:", {
+    logError("Failed to resolve webshop chat session:", {
       sessionId,
       ticketId: session.ticketId,
       message: error.message,
@@ -2754,11 +3155,12 @@ app.get("/api/chat/session/:sessionId", (req, res) => {
     });
   }
 
-  return syncSessionMessages(session)
-    .then((syncedSession) =>
+  return syncSessionMessagesWithFallback(session, "chat_session_fetch")
+    .then(({ session: syncedSession, degraded }) =>
       res.status(200).json({
         success: true,
-        session: syncedSession
+        session: syncedSession,
+        degraded
       })
     )
     .catch((error) =>
@@ -2787,8 +3189,14 @@ app.get("/api/chat/stream/:sessionId", async (req, res) => {
 
   registerChatStream(session.sessionId, res);
 
-  await syncSessionMessages(session);
-  writeSseEvent(res, "session_update", { session });
+  const { session: syncedSession, degraded } = await syncSessionMessagesWithFallback(
+    session,
+    "chat_stream_initial_sync"
+  );
+  writeSseEvent(res, "session_update", {
+    session: syncedSession,
+    degraded
+  });
 
   const keepAlive = setInterval(() => {
     res.write(": keep-alive\n\n");
@@ -2821,15 +3229,20 @@ app.post("/webhook/zendesk/events", async (req, res) => {
 
   try {
     const sessions = getSessionsByTicketId(ticketId);
-    const ticketSummary = await zendeskService.getTicketSummary(ticketId);
+    const [ticketSummary, audits] = await Promise.all([
+      zendeskService.getTicketSummary(ticketId),
+      zendeskService.getTicketAudits(ticketId)
+    ]);
 
     if (ticketSummary.status === "solved" || ticketSummary.status === "closed") {
       await zendeskService.updateConversationState(ticketId, "resolved");
     }
 
     for (const session of sessions) {
-      await syncSessionMessages(session);
-      const audits = await zendeskService.getTicketAudits(ticketId);
+      applyZendeskStateToSession(session, {
+        audits,
+        ticketSummary
+      });
 
       if (session.conversationState?.tone === "human-active") {
         await zendeskService.updateConversationState(ticketId, "human_active");
@@ -2872,16 +3285,15 @@ app.post("/webhook/zendesk/events", async (req, res) => {
       updatedSessions: sessions.length
     });
   } catch (error) {
-    console.error("Zendesk event webhook failed:", {
+    logError("Zendesk event webhook failed:", {
       ticketId,
       message: error.message,
       stack: error.stack
     });
 
-    return res.status(500).json({
-      success: false,
-      error: "Unable to process Zendesk event webhook."
-    });
+    return res.status(503).json(
+      buildDependencyErrorResponse(error, "Zendesk event webhook trenutno nije dostupan.")
+    );
   }
 });
 
@@ -2914,7 +3326,8 @@ app.get("/health", async (req, res) => {
     status: allHealthy ? "ok" : "degraded",
     checks,
     activeSessions: chatSessions.size,
-    uptime: Math.floor(process.uptime())
+    uptime: Math.floor(process.uptime()),
+    metrics: metricsService.getSnapshot()
   });
 });
 
@@ -2955,10 +3368,16 @@ app.get("/debug/zendesk/:ticketId", async (req, res) => {
 // Periodically clean up expired webhook idempotency entries.
 const webhookIdempotencyCleanupInterval = setInterval(() => {
   const now = Date.now();
+  let changed = false;
   for (const [key, timestamp] of processedWebhookAudits) {
     if (now - timestamp > WEBHOOK_IDEMPOTENCY_TTL_MS) {
       processedWebhookAudits.delete(key);
+      changed = true;
     }
+  }
+
+  if (changed) {
+    scheduleRuntimePersist();
   }
 }, WEBHOOK_IDEMPOTENCY_TTL_MS);
 webhookIdempotencyCleanupInterval.unref?.();
@@ -2967,7 +3386,7 @@ const port = Number(process.env.PORT) || 3000;
 
 function startServer(listenPort = port) {
   return app.listen(listenPort, () => {
-    console.log(`Server listening on port ${listenPort}`);
+    logInfo(`Server listening on port ${listenPort}`);
   });
 }
 

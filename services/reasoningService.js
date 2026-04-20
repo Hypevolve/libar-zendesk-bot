@@ -725,6 +725,7 @@ function buildMissingSlots(
   const hasSpecificQuestion = /\?/.test(message) || /(koliko|kada|rok|traj|cijena|moze li|može li|kako)/i.test(message);
   const actionIntent = String(options.actionIntent || "").trim();
   const isTopicLockedToBuyback = options.entryTopicLock === "buyback";
+  const isPolicyLikeQuestion = ["ask_how_to", "ask_policy", "ask_timeline"].includes(actionIntent);
 
   if (intent === "narudzba_status" && !entities.order_reference) {
     missingSlots.push("order_reference");
@@ -758,8 +759,14 @@ function buildMissingSlots(
     // Buyback should default to a procedural answer when knowledge supports it.
   }
 
-  if (intent === "reklamacija_povrat" && !entities.issue_type && normalized.split(" ").length <= 5) {
-    missingSlots.push("issue_description");
+  if (intent === "reklamacija_povrat") {
+    if (!isPolicyLikeQuestion && !entities.order_reference) {
+      missingSlots.push("order_reference");
+    }
+
+    if (!entities.issue_type && normalized.split(" ").length <= 5) {
+      missingSlots.push("issue_description");
+    }
   }
 
   // Fix #7: Detect topic shift — if the intent changed, reset canAskAgain regardless of slot match.
@@ -1107,10 +1114,11 @@ function analyzeConversation({
   const riskLevel =
     riskFlags.includes("legal_or_abuse") ||
     riskFlags.includes("payment") ||
-    riskFlags.includes("refund") ||
-    primaryIntent === "reklamacija_povrat"
+    riskFlags.includes("refund")
       ? "high"
-      : riskFlags.includes("complaint") || emotionalTone === "frustrated"
+      : riskFlags.includes("complaint") ||
+          primaryIntent === "reklamacija_povrat" ||
+          emotionalTone === "frustrated"
         ? "medium"
         : "low";
   const answerabilityClass = deriveAnswerabilityClass({

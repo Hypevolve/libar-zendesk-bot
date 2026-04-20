@@ -41,6 +41,7 @@ function rerankEntry(entry, options = {}) {
   const subjectType = String(options.subjectType || "").trim();
   const questionType = String(options.questionType || "").trim();
   const activeDomain = String(options.activeDomain || "").trim();
+  const activeReferenceValue = String(options?.retrievalFrame?.activeReferenceValue || "").trim().toLowerCase();
   const sourcePriority = normalizeSourceList(options.sourcePriority);
   const sourceName = normalizeSourceName(entry.source);
   const normalizedText = `${entry.title || ""} ${entry.body || ""}`.toLowerCase();
@@ -94,7 +95,85 @@ function rerankEntry(entry, options = {}) {
     score += 4;
   }
 
+  if (activeReferenceValue && normalizedText.includes(activeReferenceValue)) {
+    score += 7;
+  }
+
   return score;
+}
+
+function extractStructuredFacts(text = "") {
+  const normalizedText = String(text || "").toLowerCase();
+  const facts = {};
+  const emailMatch = normalizedText.match(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/);
+  const phoneMatch = normalizedText.match(/(?:\+?\d[\d\s/-]{6,}\d)/);
+  const addressMatch = normalizedText.match(/\b(?:adresa|nalazimo se|lokacija)\s*[:\-]?\s*([^\n.]{5,120})/i);
+  const hoursMatch = normalizedText.match(
+    /\b(?:radno vrijeme|radimo|otvoreni)\b[^\n]{0,80}?(\d{1,2}[:.]\d{2}\s*(?:-|do)\s*\d{1,2}[:.]\d{2})/i
+  );
+
+  if (emailMatch) {
+    facts.email = emailMatch[0];
+  }
+
+  if (phoneMatch) {
+    facts.phone = phoneMatch[0].replace(/\s+/g, " ").trim();
+  }
+
+  if (addressMatch) {
+    facts.address = addressMatch[1].replace(/\s+/g, " ").trim();
+  }
+
+  if (hoursMatch) {
+    facts.hours = hoursMatch[1].replace(/\s+/g, " ").trim();
+  }
+
+  return facts;
+}
+
+function detectSourceConflict(candidates = [], options = {}) {
+  const taskIntent = String(options.taskIntent || "").trim();
+  const activeDomain = String(options.activeDomain || "").trim();
+
+  if (!["support_info", "delivery"].includes(taskIntent) && activeDomain !== "support_info") {
+    return {
+      hasConflict: false,
+      conflictFields: []
+    };
+  }
+
+  const bestPerSource = new Map();
+
+  for (const candidate of candidates) {
+    if (!bestPerSource.has(candidate.source)) {
+      bestPerSource.set(candidate.source, candidate);
+    }
+  }
+
+  const zendesk = bestPerSource.get("zendesk");
+  const onedrive = bestPerSource.get("onedrive");
+
+  if (!zendesk || !onedrive) {
+    return {
+      hasConflict: false,
+      conflictFields: []
+    };
+  }
+
+  const zendeskFacts = extractStructuredFacts(`${zendesk.title || ""}\n${zendesk.body || ""}`);
+  const onedriveFacts = extractStructuredFacts(`${onedrive.title || ""}\n${onedrive.body || ""}`);
+  const conflictFields = [];
+
+  for (const field of ["hours", "email", "phone", "address"]) {
+    if (zendeskFacts[field] && onedriveFacts[field] && zendeskFacts[field] !== onedriveFacts[field]) {
+      conflictFields.push(field);
+    }
+  }
+
+  return {
+    hasConflict: conflictFields.length > 0,
+    conflictFields
+  };
 }
 
 function buildKnowledgeQuality(candidates = [], options = {}) {
@@ -106,6 +185,7 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
   const actionIntent = String(options.actionIntent || "").trim();
   const questionType = String(options.questionType || "").trim();
   const activeDomain = String(options.activeDomain || "").trim();
+  const activeReferenceValue = String(options?.retrievalFrame?.activeReferenceValue || "").trim().toLowerCase();
   const normalizedText = `${top?.title || ""} ${top?.body || ""}`.toLowerCase();
 
   let relevanceMatch = false;
@@ -159,6 +239,8 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
     contextConsistency &&
     (scoreMargin >= KNOWLEDGE_MIN_SCORE_MARGIN || topScore >= 16);
   const isWeak = topScore <= 0 || !relevanceMatch || !jobMatch || !contextConsistency;
+  const referenceMatched = activeReferenceValue ? normalizedText.includes(activeReferenceValue) : false;
+  const conflict = detectSourceConflict(candidates, options);
 
   return {
     topScore,
@@ -167,6 +249,9 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
     relevanceMatch,
     jobMatch,
     domainMatch,
+    referenceMatched,
+    hasConflict: conflict.hasConflict,
+    conflictFields: conflict.conflictFields,
     contextConsistency,
     directAnswerability,
     acceptanceReason: isStrong ? "context_and_job_match" : isWeak ? "insufficient_job_match" : "ambiguous_match",

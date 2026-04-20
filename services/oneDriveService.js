@@ -24,6 +24,14 @@ const {
 const ONEDRIVE_CACHE_TTL_MS = Number(process.env.ONEDRIVE_CACHE_TTL_MS) || 5 * 60 * 1000;
 const ONEDRIVE_CONTEXT_DOCUMENTS = Number(process.env.ONEDRIVE_CONTEXT_DOCUMENTS) || 3;
 const ONEDRIVE_MAX_FILE_SIZE_BYTES = Number(process.env.ONEDRIVE_MAX_FILE_SIZE_BYTES) || 2 * 1024 * 1024;
+const IS_TEST_ENV = process.env.NODE_ENV === "test";
+const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
+
+function logWarn(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.warn(...args);
+  }
+}
 
 const graphClient = axios.create({
   baseURL: "https://graph.microsoft.com/v1.0",
@@ -100,7 +108,7 @@ function getOneDriveConfigSummary() {
 }
 
 if (hasPartialConfig()) {
-  console.warn(
+  logWarn(
     "OneDrive environment variables are partially configured. OneDrive knowledge retrieval stays disabled until all required values are present."
   );
 }
@@ -110,6 +118,7 @@ function scoreDocument(document, query, options = {}) {
   const queryTokens = tokenize(query);
   const title = normalizeText(document.title || "");
   const searchText = normalizeText(`${document.title || ""} ${document.body || ""}`);
+  const activeReferenceValue = normalizeText(options?.retrievalFrame?.activeReferenceValue || "");
   const conversationTerms = Array.isArray(options.conversationTerms)
     ? options.conversationTerms.map((term) => normalizeText(term)).filter(Boolean)
     : [];
@@ -134,6 +143,10 @@ function scoreDocument(document, query, options = {}) {
     if (searchText.includes(term) || title.includes(term)) {
       score += 2;
     }
+  }
+
+  if (activeReferenceValue && searchText.includes(activeReferenceValue)) {
+    score += 7;
   }
 
   return score;

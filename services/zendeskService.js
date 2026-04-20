@@ -18,9 +18,17 @@ const {
 
 const HELP_CENTER_CACHE_TTL_MS = Number(process.env.HELP_CENTER_CACHE_TTL_MS) || 5 * 60 * 1000;
 const HELP_CENTER_CONTEXT_ARTICLES = Number(process.env.HELP_CENTER_CONTEXT_ARTICLES) || 5;
+const IS_TEST_ENV = process.env.NODE_ENV === "test";
+const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
+
+function logWarn(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.warn(...args);
+  }
+}
 
 if (!ZENDESK_SUBDOMAIN || !ZENDESK_EMAIL || !ZENDESK_API_TOKEN) {
-  console.warn(
+  logWarn(
     "Zendesk environment variables are missing. API calls will fail until they are configured."
   );
 }
@@ -182,6 +190,7 @@ function scoreArticle(article, query, options = {}) {
   const queryTokens = tokenize(query);
   const title = normalizeText(article.title || "");
   const searchText = normalizeText(createArticleSearchText(article));
+  const activeReferenceValue = normalizeText(options?.retrievalFrame?.activeReferenceValue || "");
   const conversationTerms = Array.isArray(options.conversationTerms)
     ? options.conversationTerms.map((term) => normalizeText(term)).filter(Boolean)
     : [];
@@ -206,6 +215,10 @@ function scoreArticle(article, query, options = {}) {
     if (searchText.includes(term) || title.includes(term)) {
       score += 2;
     }
+  }
+
+  if (activeReferenceValue && searchText.includes(activeReferenceValue)) {
+    score += 7;
   }
 
   return score;

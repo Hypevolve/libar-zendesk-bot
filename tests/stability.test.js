@@ -387,6 +387,46 @@ test("knowledge merge prefers direct support info article for operating hours", 
   assert.equal(knowledge.quality.contextConsistency, true);
 });
 
+test("knowledge merge flags conflicting support info between zendesk and onedrive", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      zendeskKnowledge: {
+        articles: [
+          {
+            title: "Radno vrijeme i kontakt",
+            score: 18,
+            body: "Radno vrijeme: 08:00-20:00. Email: info@libar.hr",
+            source: "zendesk"
+          }
+        ]
+      },
+      oneDriveKnowledge: {
+        articles: [
+          {
+            title: "Poslovnica informacije",
+            score: 18,
+            body: "Radno vrijeme: 09:00-18:00. Email: podrska@libar.hr",
+            source: "onedrive"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+      sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+      activeDomain: "support_info",
+      taskIntent: "support_info",
+      actionIntent: "ask_general_info",
+      subjectType: "support_info",
+      questionType: "info"
+    }
+  );
+
+  assert.equal(knowledge.quality.hasConflict, true);
+  assert.ok(knowledge.quality.conflictFields.includes("hours"));
+  assert.ok(knowledge.quality.conflictFields.includes("email"));
+});
+
 test("knowledge source allowlist can fully disable zendesk retrieval candidates", () => {
   const knowledge = knowledgeService.mergeKnowledgeResults(
     {

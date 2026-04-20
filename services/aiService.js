@@ -6,9 +6,17 @@ const {
   OPENROUTER_SITE_URL,
   OPENROUTER_SITE_NAME
 } = process.env;
+const IS_TEST_ENV = process.env.NODE_ENV === "test";
+const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
+
+function logWarn(...args) {
+  if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
+    console.warn(...args);
+  }
+}
 
 if (!OPENROUTER_API_KEY) {
-  console.warn(
+  logWarn(
     "OPENROUTER_API_KEY is missing. AI generation will fail until it is configured."
   );
 }
@@ -134,7 +142,9 @@ function buildSystemPrompt(
       : null,
     "",
     "ESKALACIJSKA PRAVILA:",
-    "- Ako je korisnik ljut, žali se, spominje plaćanje, povrat novca, reklamaciju, problem s narudžbom ili drugu osjetljivu situaciju, odluka mora biti hard_handoff.",
+    "- Ako je tema osjetljiva i nedostaje jedan operativan podatak bez kojeg se ne može sigurno postupiti, prvo postavi jedno kratko potpitanje.",
+    "- Ako korisnik spominje plaćanje, povrat novca, pravnu prijetnju ili drugi visoki rizik, odluka mora biti hard_handoff.",
+    "- Kod reklamacije ili problema s narudžbom smiješ tražiti jedan ključan podatak prije eskalacije, ali ne smiješ izmišljati rješenje bez jasne podrške u kontekstu.",
     "- Ako nedostaje samo jedan ključan podatak i vrlo je vjerojatno da možeš pomoći nakon kratkog potpitanja, odluka treba biti ask_clarifying_question.",
     "- Ako odgovor nije jasno i dovoljno podržan kontekstom, odluka mora biti soft_handoff.",
     "- Ako korisnik pita više stvari, a samo dio je pokriven kontekstom, odgovori samo ako možeš dati i dalje točan i koristan odgovor bez nagađanja. Inače odluka mora biti soft_handoff.",
