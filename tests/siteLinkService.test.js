@@ -63,3 +63,28 @@ test("buildDirectWebsiteLinks returns privacy page for data-protection questions
 
   assert.equal(result[0].url, "https://antikvarijat-libar.com/zastita-osobnih-podataka/");
 });
+
+test("buildDirectWebsiteLinks prefers website retrieval result before heuristic fallback", () => {
+  const result = buildDirectWebsiteLinks({
+    conversation: {
+      standaloneQuery: "Koje vam je radno vrijeme?",
+      reasoningResult: {
+        taskIntent: "support_info",
+        actionIntent: "ask_general_info",
+        primaryIntent: "opci_upit"
+      }
+    },
+    knowledge: {
+      primarySource: "website",
+      articles: [
+        {
+          source: "website",
+          title: "Kontakt",
+          url: "https://antikvarijat-libar.com/kontakt/"
+        }
+      ]
+    }
+  });
+
+  assert.equal(result[0].url, "https://antikvarijat-libar.com/kontakt/");
+});

@@ -178,9 +178,28 @@ function chooseLinkKeys({ conversation = null, knowledge = null, outcome = null 
 }
 
 function buildDirectWebsiteLinks({ conversation = null, knowledge = null, outcome = null } = {}) {
-  return chooseLinkKeys({ conversation, knowledge, outcome })
-    .map((key) => DIRECT_LINKS[key])
-    .filter(Boolean);
+  const links = [];
+  const websiteArticles = Array.isArray(knowledge?.articles)
+    ? knowledge.articles.filter((entry) => entry?.source === "website" && entry?.url)
+    : [];
+
+  for (const article of websiteArticles) {
+    if (!links.some((entry) => entry.url === article.url)) {
+      links.push({
+        url: article.url,
+        label: article.title || "Web stranica"
+      });
+    }
+  }
+
+  for (const key of chooseLinkKeys({ conversation, knowledge, outcome })) {
+    const candidate = DIRECT_LINKS[key];
+    if (candidate && !links.some((entry) => entry.url === candidate.url)) {
+      links.push(candidate);
+    }
+  }
+
+  return links.slice(0, 2);
 }
 
 module.exports = {

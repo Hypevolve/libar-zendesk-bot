@@ -1,5 +1,6 @@
 const zendeskService = require("./zendeskService");
 const oneDriveService = require("./oneDriveService");
+const websiteKnowledgeService = require("./websiteKnowledgeService");
 
 const KNOWLEDGE_CONTEXT_ITEMS = Number(process.env.KNOWLEDGE_CONTEXT_ITEMS) || 5;
 const KNOWLEDGE_MIN_SCORE_MARGIN = Number(process.env.KNOWLEDGE_MIN_SCORE_MARGIN) || 3;
@@ -261,14 +262,15 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
 }
 
 function mergeKnowledgeResults(
-  { zendeskKnowledge = null, oneDriveKnowledge = null } = {},
+  { zendeskKnowledge = null, oneDriveKnowledge = null, websiteKnowledge = null } = {},
   options = {}
 ) {
   const oneDriveArticles = normalizeKnowledgeArticles(oneDriveKnowledge);
   const zendeskArticles = normalizeKnowledgeArticles(zendeskKnowledge);
+  const websiteArticles = normalizeKnowledgeArticles(websiteKnowledge);
   const preferredSource = String(options.preferredSource || "").trim().toLowerCase();
 
-  const candidates = [...oneDriveArticles, ...zendeskArticles]
+  const candidates = [...oneDriveArticles, ...zendeskArticles, ...websiteArticles]
     .filter((entry) => isSourceAllowed(entry.source, options))
     .map((entry, index) => ({
       ...entry,
@@ -277,6 +279,7 @@ function mergeKnowledgeResults(
         sourcePriority: options.sourcePriority || (preferredSource ? [preferredSource] : [])
       }) +
         (entry.source === "onedrive" ? 0.25 : 0) +
+        (entry.source === "website" ? 0.15 : 0) +
         (preferredSource && entry.source === preferredSource ? 0.75 : 0),
       _sortIndex: index
     }))
@@ -297,11 +300,18 @@ function mergeKnowledgeResults(
   const context = candidates
     .map((entry, index) => [
       `Izvor ${index + 1}:`,
-      `Tip: ${entry.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak"}`,
+      `Tip: ${
+        entry.source === "onedrive"
+          ? "OneDrive dokument"
+          : entry.source === "website"
+            ? "Web stranica"
+            : "Zendesk članak"
+      }`,
       `Naslov: ${entry.title}`,
       `Relevantnost: ${entry.rankingScore || entry.score}`,
+      entry.url ? `URL: ${entry.url}` : null,
       `Sadržaj: ${entry.body}`
-    ].join("\n"))
+    ].filter(Boolean).join("\n"))
     .join("\n\n");
 
   return {
@@ -310,21 +320,30 @@ function mergeKnowledgeResults(
     topScore: candidates[0]?.rankingScore || candidates[0]?.score || 0,
     quality: buildKnowledgeQuality(candidates, options),
     totalMatches: candidates.length,
-    primarySource: candidates[0]?.source || (oneDriveArticles.length > 0 ? "onedrive" : "zendesk")
+    primarySource:
+      candidates[0]?.source ||
+      (oneDriveArticles.length > 0
+        ? "onedrive"
+        : zendeskArticles.length > 0
+          ? "zendesk"
+          : "website")
   };
 }
 
 async function searchKnowledgeDetailed(query, options = {}) {
   const shouldUseZendesk = isSourceAllowed("zendesk", options);
   const shouldUseOneDrive = isSourceAllowed("onedrive", options);
-  const [zendeskKnowledge, oneDriveKnowledge] = await Promise.all([
+  const shouldUseWebsite = isSourceAllowed("website", options);
+  const [zendeskKnowledge, oneDriveKnowledge, websiteKnowledge] = await Promise.all([
     shouldUseZendesk ? zendeskService.searchHelpCenterDetailed(query, options) : Promise.resolve(null),
-    shouldUseOneDrive ? oneDriveService.searchOneDriveDetailed(query, options) : Promise.resolve(null)
+    shouldUseOneDrive ? oneDriveService.searchOneDriveDetailed(query, options) : Promise.resolve(null),
+    shouldUseWebsite ? websiteKnowledgeService.searchWebsiteKnowledgeDetailed(query, options) : Promise.resolve(null)
   ]);
 
   return mergeKnowledgeResults({
     zendeskKnowledge,
-    oneDriveKnowledge
+    oneDriveKnowledge,
+    websiteKnowledge
   }, options);
 }
 

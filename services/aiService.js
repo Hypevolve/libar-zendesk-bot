@@ -6,6 +6,7 @@ const {
   OPENROUTER_SITE_URL,
   OPENROUTER_SITE_NAME
 } = process.env;
+const DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-flash";
 const IS_TEST_ENV = process.env.NODE_ENV === "test";
 const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
 
@@ -13,6 +14,10 @@ function logWarn(...args) {
   if (!IS_TEST_ENV || SHOULD_LOG_IN_TEST) {
     console.warn(...args);
   }
+}
+
+function getConfiguredModel() {
+  return OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
 }
 
 if (!OPENROUTER_API_KEY) {
@@ -148,6 +153,7 @@ function buildSystemPrompt(
     "- Ako nedostaje samo jedan ključan podatak i vrlo je vjerojatno da možeš pomoći nakon kratkog potpitanja, odluka treba biti ask_clarifying_question.",
     "- Ako odgovor nije jasno i dovoljno podržan kontekstom, odluka mora biti soft_handoff.",
     "- Ako korisnik pita više stvari, a samo dio je pokriven kontekstom, odgovori samo ako možeš dati i dalje točan i koristan odgovor bez nagađanja. Inače odluka mora biti soft_handoff.",
+    "- Ako korisnik pita samo potvrdu, kratku činjenicu ili da/ne pitanje, nemoj širiti odgovor u nepotreban postupak ili duže objašnjenje.",
     "",
     "POSEBNO PRAVILO ZA OTKUP:",
     "- Ako korisnik pita za procjenu, vrednovanje, cijenu otkupa ili prodaju knjiga Antikvarijatu Libar, u normalnom odgovoru obavezno spomeni bonus od 10% na otkup.",
@@ -161,6 +167,7 @@ function buildSystemPrompt(
     "- Ako je pitanje parafraza naslova ili sadržaja najrelevantnijeg izvora, tretiraj to kao podržan odgovor.",
     "- Nemoj koristiti generičke fraze bez informacijske vrijednosti.",
     "- Ako korisnik pita kako nešto napraviti, odgovor treba biti proceduralan i konkretan.",
+    "- Ako korisnik pita dvije povezane stvari, odgovori kratko redom kojim ih je pitao.",
     "- Kad je prikladno, koristi blage prirodne formulacije poput 'Možete', 'Ako želite', 'Pošaljite' ili 'Javite'.",
     "- Nemoj zvučati kao da čitaš pravila ili internu proceduru.",
     "",
@@ -334,6 +341,8 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
     "- Koristi samo informacije koje su izravno podržane kontekstom.",
     "- Ne izmišljaj dodatne informacije.",
     "- Ako kontekst sadrži konkretne korake ili preporuke, sažmi ih u jasan odgovor.",
+    "- Ako korisnik pita dvije ili tri povezane stvari, odgovori kratko po istom redoslijedu.",
+    "- Ako korisnik traži samo potvrdu ili kratku činjenicu, nemoj širiti odgovor u nepotreban postupak.",
     "- Ako kontekst ne pokriva stvarni korisnikov posao ili pitanje, radije ne odgovaraj.",
     "- Nemoj spominjati AI, kontekst, bazu znanja ni interne procese.",
     "- Nemoj dodavati subject ni potpis.",
@@ -395,7 +404,7 @@ async function generateReply(message, context, options = {}) {
 
       try {
         completion = await client.chat.completions.create({
-          model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+          model: getConfiguredModel(),
           temperature: 0.35,
           response_format: {
             type: "json_object"
@@ -421,7 +430,7 @@ async function generateReply(message, context, options = {}) {
         }
 
         completion = await client.chat.completions.create({
-          model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+          model: getConfiguredModel(),
           temperature: 0.35,
           messages: [
             {
@@ -482,7 +491,7 @@ async function generateReply(message, context, options = {}) {
 async function classifySpamCandidate(message, options = {}) {
   try {
     const completion = await client.chat.completions.create({
-      model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+      model: getConfiguredModel(),
       temperature: 0,
       messages: [
         {
@@ -527,7 +536,7 @@ async function classifySpamCandidate(message, options = {}) {
 async function generateGroundedAnswer(message, context, options = {}) {
   try {
     const completion = await client.chat.completions.create({
-      model: OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
+      model: getConfiguredModel(),
       temperature: 0.1,
       messages: [
         {

@@ -66,33 +66,42 @@ function isHeadingLike(sentence = "", articleTitle = "") {
 
 function collectSupportInfoKeywords(query = "") {
   const normalized = normalizeForComparison(query);
+  const keywords = new Set();
 
   if (/\bsubotom\b/.test(normalized)) {
-    return ["subotom", "subota", "radno vrijeme", "otvoreni"];
+    ["subotom", "subota", "radno vrijeme", "otvoreni"].forEach((value) => keywords.add(value));
   }
 
   if (/\bnedjeljom\b/.test(normalized)) {
-    return ["nedjeljom", "nedjelja", "radno vrijeme", "otvoreni"];
+    ["nedjeljom", "nedjelja", "radno vrijeme", "otvoreni"].forEach((value) => keywords.add(value));
   }
 
   if (/(radno vrijeme|kad radite|otvoreni)/.test(normalized)) {
-    return ["radno vrijeme", "ponedjeljak", "petak", "subota", "subotom", "nedjelja", "nedjeljom", "otvoreni"];
+    ["radno vrijeme", "ponedjeljak", "petak", "subota", "subotom", "nedjelja", "nedjeljom", "otvoreni"].forEach((value) => keywords.add(value));
   }
 
   if (/(adresa|gdje ste|gdje se nalazite|lokacija)/.test(normalized)) {
-    return ["adresa", "lokacija", "nalazimo", "osijek", "županijska", "zupanijska"];
+    ["adresa", "lokacija", "nalazimo", "osijek", "županijska", "zupanijska"].forEach((value) => keywords.add(value));
   }
 
   if (/(kontakt|telefon|email|mail)/.test(normalized)) {
-    return ["kontakt", "telefon", "email", "mail", "@"];
+    ["kontakt", "telefon", "email", "mail", "@"].forEach((value) => keywords.add(value));
   }
 
   if (/(plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)/.test(normalized)) {
-    return ["plaćanje", "placanje", "kartica", "gotovina", "pouzeće", "pouzece"];
+    ["plaćanje", "placanje", "kartica", "gotovina", "pouzeće", "pouzece"].forEach((value) => keywords.add(value));
   }
 
   if (/(preuzimanje|poslovnici)/.test(normalized)) {
-    return ["preuzimanje", "poslovnici", "osobno preuzimanje"];
+    ["preuzimanje", "poslovnici", "osobno preuzimanje"].forEach((value) => keywords.add(value));
+  }
+
+  if (/(otkup|otkupljujete|otkupljujete li|prodati knjige|prodaja knjiga)/.test(normalized)) {
+    ["otkup", "otkupljujemo", "prodati", "udžbenike", "udzbenike"].forEach((value) => keywords.add(value));
+  }
+
+  if (keywords.size > 0) {
+    return [...keywords];
   }
 
   return ["radno vrijeme", "adresa", "kontakt", "telefon", "email"];
@@ -130,7 +139,7 @@ function collectBuybackKeywords(query = "", actionIntent = "") {
   return ["otkup", "pošaljite", "posaljite", "popis", "fotografije", "procjena", "bonus", "donesite"];
 }
 
-function buildParagraphCandidates(article = {}, keywords = []) {
+function buildParagraphCandidates(article = {}, keywords = [], options = {}) {
   const paragraphs = splitParagraphs(article.body || "");
   const candidates = [];
 
@@ -145,8 +154,11 @@ function buildParagraphCandidates(article = {}, keywords = []) {
     const normalizedParagraph = normalizeForComparison(paragraph);
 
     if (
-      /[:\-]\s*$/.test(paragraph) ||
-      /\b(nacin|način|korak|koraci|mogucnost|mogućnost|postupak)\b/.test(normalizedParagraph)
+      options.allowProceduralContinuation !== false &&
+      (
+        /[:\-]\s*$/.test(paragraph) ||
+        /\b(nacin|način|korak|koraci|mogucnost|mogućnost|postupak)\b/.test(normalizedParagraph)
+      )
     ) {
       const nextParagraph = paragraphs[index + 1] || "";
 
@@ -169,7 +181,9 @@ function selectSentencesFromArticles(articles = [], keywords = [], maxSentences 
   const fallback = [];
 
   for (const article of Array.isArray(articles) ? articles : []) {
-    const paragraphCandidates = buildParagraphCandidates(article, keywords);
+    const paragraphCandidates = buildParagraphCandidates(article, keywords, {
+      allowProceduralContinuation: article.taskIntentHint !== "support_info"
+    });
 
     if (paragraphCandidates.length > 0) {
       for (const candidate of paragraphCandidates) {
@@ -202,8 +216,36 @@ function selectSentencesFromArticles(articles = [], keywords = [], maxSentences 
     .sort((left, right) => right.keywordScore - left.keywordScore)
     .map((entry) => entry.sentence);
 
-  const picked = uniqueSentences([...rankedMatched, ...fallback]).slice(0, maxSentences);
+  const sourcePool = rankedMatched.length > 0 ? rankedMatched : fallback;
+  const picked = uniqueSentences(sourcePool).slice(0, maxSentences);
   return picked;
+}
+
+function detectSupportInfoTopics(query = "") {
+  const normalized = normalizeForComparison(query);
+  const topics = new Set();
+
+  if (/(radno vrijeme|kad radite|otvoreni|subotom|nedjeljom)/.test(normalized)) {
+    topics.add("hours");
+  }
+
+  if (/(adresa|gdje ste|gdje se nalazite|lokacija)/.test(normalized)) {
+    topics.add("location");
+  }
+
+  if (/(kontakt|telefon|email|mail)/.test(normalized)) {
+    topics.add("contact");
+  }
+
+  if (/(plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)/.test(normalized)) {
+    topics.add("payment");
+  }
+
+  if (/(otkup|otkupljujete|prodati knjige|prodaja knjiga)/.test(normalized)) {
+    topics.add("buyback");
+  }
+
+  return topics;
 }
 
 function ensureBuybackBonus(sentences = [], articles = []) {
@@ -239,6 +281,12 @@ function composeDeterministicReply({ conversation = null, knowledge = null } = {
   let keywords = [];
 
   if (taskIntent === "support_info") {
+    const supportTopics = detectSupportInfoTopics(standaloneQuery);
+
+    if (supportTopics.has("buyback") && supportTopics.size > 1) {
+      return null;
+    }
+
     keywords = collectSupportInfoKeywords(standaloneQuery);
   } else if (taskIntent === "delivery") {
     keywords = collectDeliveryKeywords(standaloneQuery);
@@ -248,7 +296,12 @@ function composeDeterministicReply({ conversation = null, knowledge = null } = {
     return null;
   }
 
-  let sentences = selectSentencesFromArticles(articles, keywords, 2);
+  const articleCandidates = articles.map((article) => ({
+    ...article,
+    taskIntentHint: taskIntent
+  }));
+
+  let sentences = selectSentencesFromArticles(articleCandidates, keywords, 2);
 
   if (taskIntent === "buyback") {
     sentences = ensureBuybackBonus(sentences, articles);

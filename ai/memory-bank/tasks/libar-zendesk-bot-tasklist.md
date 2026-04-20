@@ -63,6 +63,13 @@
 - `safe_answer` se blokira ako izgleda kao source dump, interni leak ili slabo podržan odgovor.
 - Kada quality guard presretne loš odgovor, bot ide na sigurni fallback umjesto da šalje neuredan ili netočan sadržaj korisniku.
 
+### [x] Task 9: Website Knowledge And Direct Page Retrieval
+**Description**: Dodati službeni website sloj kao treći knowledge source uz Zendesk i OneDrive, te vratiti relevantne Libar stranice kao konkretne poveznice.
+**Acceptance Criteria**:
+- Retrieval može koristiti kurirani corpus relevantnih stranica s domene `antikvarijat-libar.com`.
+- `support_info`, `delivery` i `buyback` upiti mogu dobiti grounding i iz website sadržaja.
+- Link layer preferira konkretan website rezultat kad je on već top knowledge hit, umjesto generičkog fallback linka.
+
 ## Quality Requirements
 - [x] Nema background procesa u komandama.
 - [x] Mobilni i postojeći widget flow ostaje kompatibilan.

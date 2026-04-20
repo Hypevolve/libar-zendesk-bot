@@ -114,3 +114,40 @@ test("composeDeterministicReply returns null for weak knowledge", () => {
 
   assert.equal(reply, null);
 });
+
+test("composeDeterministicReply skips mixed support-info and buyback question to avoid stitched answer", () => {
+  const reply = composeDeterministicReply({
+    conversation: {
+      standaloneQuery: "Koje vam je radno vrijeme i gdje se nalazite, te da li otkupljujete knjige?",
+      reasoningResult: {
+        taskIntent: "support_info",
+        actionIntent: "ask_general_info"
+      }
+    },
+    knowledge: {
+      articles: [
+        {
+          source: "zendesk",
+          title: "Radno vrijeme i kontakt",
+          body: "Nalazimo se u Osijeku. Radimo ponedjeljak do petak od 08:00 do 20:00.",
+          score: 18,
+          rankingScore: 18
+        },
+        {
+          source: "onedrive",
+          title: "Otkup knjiga",
+          body: "Otkup je proces u kojem prodajete udžbenike. Nakon potvrde naloga knjige treba zapakirati i predati dostavljaču.",
+          score: 16,
+          rankingScore: 16
+        }
+      ],
+      quality: {
+        isStrong: true,
+        isWeak: false
+      },
+      primarySource: "zendesk"
+    }
+  });
+
+  assert.equal(reply, null);
+});

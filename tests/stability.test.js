@@ -303,6 +303,7 @@ test("support info intent is treated as support-only source policy", () => {
   assert.equal(conversation.reasoningResult.sourceContract, "support_only");
   assert.equal(supportPlan.route, "zendesk_knowledge");
   assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
+  assert.ok(supportPlan.selectedSources.includes("website_knowledge"));
 });
 
 test("knowledge merge respects source blocking and reranks buyback article first", () => {
@@ -387,6 +388,47 @@ test("knowledge merge prefers direct support info article for operating hours", 
   assert.equal(knowledge.articles[0].title, "Radno vrijeme i kontakt");
   assert.equal(knowledge.quality.domainMatch, true);
   assert.equal(knowledge.quality.directAnswerability, true);
+  assert.equal(knowledge.quality.contextConsistency, true);
+});
+
+test("knowledge merge can surface website page as relevant support source", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      zendeskKnowledge: {
+        articles: [
+          {
+            title: "Opće informacije",
+            score: 8,
+            body: "Pogledajte informacije o poslovnici.",
+            source: "zendesk"
+          }
+        ]
+      },
+      websiteKnowledge: {
+        articles: [
+          {
+            title: "Kontakt",
+            score: 14,
+            body: "Kontakt stranica s adresom, radnim vremenom i osnovnim podacima.",
+            source: "website",
+            url: "https://antikvarijat-libar.com/kontakt/"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["zendesk_knowledge", "website_knowledge", "onedrive_knowledge"],
+      blockedSources: ["product_feed"],
+      sourcePriority: ["zendesk_knowledge", "website_knowledge", "onedrive_knowledge"],
+      taskIntent: "support_info",
+      activeDomain: "support_info",
+      actionIntent: "ask_general_info"
+    }
+  );
+
+  assert.equal(knowledge.primarySource, "website");
+  assert.equal(knowledge.articles[0].url, "https://antikvarijat-libar.com/kontakt/");
+  assert.equal(knowledge.quality.relevanceMatch, true);
   assert.equal(knowledge.quality.contextConsistency, true);
 });
 
