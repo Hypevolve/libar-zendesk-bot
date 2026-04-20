@@ -1,3 +1,5 @@
+const zlib = require("node:zlib");
+
 const { normalizeWhitespace } = require("./textUtils");
 
 const MEMORY_START = "[LIBAR_MEMORY_V1]";
@@ -254,11 +256,26 @@ function buildWorkingMemory({
 }
 
 function serializeWorkingMemory(memory = {}) {
+  const serializedJson = JSON.stringify(memory);
+  const compressedPayload = zlib
+    .deflateRawSync(Buffer.from(serializedJson, "utf8"))
+    .toString("base64url");
+
   return [
+    "AI memory snapshot",
+    `Intent: ${memory.activeIntent || "unknown"}`,
+    memory.activeDomain ? `Domena: ${memory.activeDomain}` : null,
+    memory.lastRoute ? `Ruta: ${memory.lastRoute}` : null,
+    memory.lastKnowledgeSource ? `Izvor: ${memory.lastKnowledgeSource}` : null,
+    Array.isArray(memory.openSlots) && memory.openSlots.length > 0
+      ? `Otvoreni slotovi: ${memory.openSlots.join(", ")}`
+      : null,
     MEMORY_START,
-    JSON.stringify(memory),
+    `deflate64:${compressedPayload}`,
     MEMORY_END
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parseWorkingMemoryNote(noteText = "") {
@@ -277,6 +294,17 @@ function parseWorkingMemoryNote(noteText = "") {
   }
 
   try {
+    if (payload.startsWith("deflate64:")) {
+      const encoded = payload.slice("deflate64:".length).trim();
+
+      if (!encoded) {
+        return null;
+      }
+
+      const inflated = zlib.inflateRawSync(Buffer.from(encoded, "base64url")).toString("utf8");
+      return JSON.parse(inflated);
+    }
+
     return JSON.parse(payload);
   } catch (error) {
     return null;

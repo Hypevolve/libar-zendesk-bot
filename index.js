@@ -16,6 +16,7 @@ const plannerService = require("./services/plannerService");
 const runtimeStore = require("./services/runtimeStore");
 const metricsService = require("./services/metricsService");
 const { composeDeterministicReply } = require("./services/responseComposer");
+const { normalizeForComparison } = require("./services/textUtils");
 
 const app = express();
 const IS_TEST_ENV = process.env.NODE_ENV === "test";
@@ -1177,6 +1178,62 @@ function buildAutopilotNote({
     .join("\n");
 }
 
+function sanitizeCustomerFacingText(value = "") {
+  return String(value || "")
+    .replace(/\[LIBAR_MEMORY_V1][\s\S]*?\[\/LIBAR_MEMORY_V1]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/:\s*$/, "")
+    .trim();
+}
+
+function looksLikeKnowledgeTitleDump(value = "") {
+  const normalized = normalizeForComparison(value);
+
+  if (!normalized) {
+    return false;
+  }
+
+  const markerCount =
+    (normalized.match(/\bclanak\b/g) || []).length +
+    (normalized.match(/\bradno vrijeme\b/g) || []).length +
+    (normalized.match(/\badresa\b/g) || []).length +
+    (normalized.match(/\bdostava\b/g) || []).length;
+
+  return markerCount >= 3 && !/[.!?]/.test(String(value || ""));
+}
+
+function finalizeOutcomeForCustomer(outcome = null, channelType = "web_chat") {
+  if (!outcome?.customerMessage) {
+    return outcome;
+  }
+
+  const channelMessages = getChannelMessages(channelType);
+  const sanitizedCustomerMessage = sanitizeCustomerFacingText(outcome.customerMessage);
+  const sanitizedZendeskMessage = sanitizeCustomerFacingText(
+    outcome.zendeskMessage || outcome.customerMessage
+  );
+
+  if (
+    !sanitizedCustomerMessage ||
+    (outcome.type === "safe_answer" && looksLikeKnowledgeTitleDump(sanitizedCustomerMessage))
+  ) {
+    return {
+      ...outcome,
+      type: "soft_handoff",
+      stateTag: "awaiting_human",
+      reason: "invalid_generated_reply",
+      customerMessage: channelMessages.softHandoff,
+      zendeskMessage: channelMessages.softHandoff
+    };
+  }
+
+  return {
+    ...outcome,
+    customerMessage: sanitizedCustomerMessage,
+    zendeskMessage: sanitizedZendeskMessage
+  };
+}
+
 function buildMemoryNote(session, conversation, outcome, knowledge, ticketSummary, previousMemory = null) {
   const memory = memoryService.buildWorkingMemory({
     session,
@@ -2043,6 +2100,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     }
   }
 
+  outcome = finalizeOutcomeForCustomer(outcome, channelType);
   updateSessionMemory(session, conversation, outcome, knowledge);
   recordOutcomeMetrics(outcome, conversation, knowledge);
 

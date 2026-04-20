@@ -49,6 +49,31 @@ test("composeDeterministicReply extracts support info sentences for strong KB hi
   assert.doesNotMatch(reply, /bonus/i);
 });
 
+test("composeDeterministicReply does not leak article title and keeps procedural continuation", () => {
+  const reply = composeDeterministicReply({
+    conversation: {
+      standaloneQuery: "Želim prodati knjige, koji je postupak?",
+      reasoningResult: {
+        taskIntent: "buyback",
+        actionIntent: "ask_how_to"
+      }
+    },
+    knowledge: buildKnowledge({
+      source: "onedrive",
+      title: "ČLANAK 1 — ZA PRODAVAČE",
+      body:
+        "Otkup je proces u kojem nam prodajete udžbenike koji Vam više nisu potrebni. " +
+        "Nudimo dva načina otkupa: " +
+        "Najbrži način je skeniranje barkod brojeva ili njihovo ručno upisivanje. " +
+        "Sporiji način je fotografiranje udžbenika i slanje putem maila ili Messengera."
+    })
+  });
+
+  assert.doesNotMatch(reply, /ČLANAK 1/i);
+  assert.match(reply, /dva načina otkupa/i);
+  assert.match(reply, /Najbrži način/i);
+});
+
 test("composeDeterministicReply keeps buyback bonus guidance when present", () => {
   const reply = composeDeterministicReply({
     conversation: {

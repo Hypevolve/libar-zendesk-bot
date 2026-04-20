@@ -165,11 +165,14 @@ test("working memory survives serialize/parse roundtrip", () => {
     }
   });
 
-  const parsed = memoryService.parseWorkingMemoryNote(memoryService.serializeWorkingMemory(memory));
+  const serialized = memoryService.serializeWorkingMemory(memory);
+  const parsed = memoryService.parseWorkingMemoryNote(serialized);
 
   assert.equal(parsed.activeIntent, "narudzba_problem");
   assert.equal(parsed.customerProfile.name, "Ana Horvat");
   assert.deepEqual(parsed.openSlots, ["order_reference"]);
+  assert.match(serialized, /AI memory snapshot/);
+  assert.match(serialized, /deflate64:/);
 });
 
 test("equivalent memories ignore updatedAt timestamp", () => {

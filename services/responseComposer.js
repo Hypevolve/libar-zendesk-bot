@@ -7,6 +7,13 @@ function splitSentences(text = "") {
     .filter((sentence) => sentence.length >= 12);
 }
 
+function splitParagraphs(text = "") {
+  return stripHtml(text)
+    .split(/\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length >= 8);
+}
+
 function uniqueSentences(sentences = []) {
   const seen = new Set();
 
@@ -40,6 +47,21 @@ function scoreSentenceKeywords(sentence = "", keywords = []) {
   }
 
   return score;
+}
+
+function isHeadingLike(sentence = "", articleTitle = "") {
+  const normalizedSentence = normalizeForComparison(sentence);
+  const normalizedTitle = normalizeForComparison(articleTitle);
+
+  if (!normalizedSentence) {
+    return true;
+  }
+
+  if (normalizedTitle && normalizedSentence === normalizedTitle) {
+    return true;
+  }
+
+  return /^clanak\b/.test(normalizedSentence) || /^naslov\b/.test(normalizedSentence);
 }
 
 function collectSupportInfoKeywords(query = "") {
@@ -93,6 +115,10 @@ function collectDeliveryKeywords(query = "") {
 function collectBuybackKeywords(query = "", actionIntent = "") {
   const normalized = normalizeForComparison(query);
 
+  if (/(postupak|kako ide|kako funkcionira|kako funkcionise)/.test(normalized)) {
+    return ["postupak", "način", "nacin", "otkup", "pošaljite", "posaljite", "skeniranje", "fotografirati"];
+  }
+
   if (actionIntent === "ask_timeline" || /(koliko traje|kada|kad)/.test(normalized)) {
     return ["procjena", "otkup", "rok", "kada", "odgovor"];
   }
@@ -104,14 +130,64 @@ function collectBuybackKeywords(query = "", actionIntent = "") {
   return ["otkup", "pošaljite", "posaljite", "popis", "fotografije", "procjena", "bonus", "donesite"];
 }
 
+function buildParagraphCandidates(article = {}, keywords = []) {
+  const paragraphs = splitParagraphs(article.body || "");
+  const candidates = [];
+
+  for (let index = 0; index < paragraphs.length; index += 1) {
+    const paragraph = paragraphs[index];
+
+    if (isHeadingLike(paragraph, article.title || "")) {
+      continue;
+    }
+
+    let segment = paragraph;
+    const normalizedParagraph = normalizeForComparison(paragraph);
+
+    if (
+      /[:\-]\s*$/.test(paragraph) ||
+      /\b(nacin|način|korak|koraci|mogucnost|mogućnost|postupak)\b/.test(normalizedParagraph)
+    ) {
+      const nextParagraph = paragraphs[index + 1] || "";
+
+      if (nextParagraph && !isHeadingLike(nextParagraph, article.title || "")) {
+        segment = [paragraph.replace(/[:\-]\s*$/, "").trim(), nextParagraph].filter(Boolean).join(" ");
+      }
+    }
+
+    candidates.push({
+      segment,
+      keywordScore: scoreSentenceKeywords(segment, keywords)
+    });
+  }
+
+  return candidates;
+}
+
 function selectSentencesFromArticles(articles = [], keywords = [], maxSentences = 2) {
   const matched = [];
   const fallback = [];
 
   for (const article of Array.isArray(articles) ? articles : []) {
-    const sentences = splitSentences(`${article.title || ""}. ${article.body || ""}`);
+    const paragraphCandidates = buildParagraphCandidates(article, keywords);
 
-    for (const sentence of sentences) {
+    if (paragraphCandidates.length > 0) {
+      for (const candidate of paragraphCandidates) {
+        if (candidate.keywordScore > 0 || sentenceMatchesKeywords(candidate.segment, keywords)) {
+          matched.push({ sentence: candidate.segment, keywordScore: candidate.keywordScore });
+        } else {
+          fallback.push(candidate.segment);
+        }
+      }
+
+      continue;
+    }
+
+    for (const sentence of splitSentences(article.body || "")) {
+      if (isHeadingLike(sentence, article.title || "")) {
+        continue;
+      }
+
       const keywordScore = scoreSentenceKeywords(sentence, keywords);
 
       if (keywordScore > 0 || sentenceMatchesKeywords(sentence, keywords)) {
@@ -182,7 +258,11 @@ function composeDeterministicReply({ conversation = null, knowledge = null } = {
     return null;
   }
 
-  return sentences.join(" ").replace(/\s+/g, " ").trim();
+  return sentences
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/:\s*$/, "")
+    .trim();
 }
 
 module.exports = {
