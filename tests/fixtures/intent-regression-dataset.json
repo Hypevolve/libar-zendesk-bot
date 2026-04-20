@@ -1,0 +1,37 @@
+[
+  {
+    "message": "Želim prodati knjige",
+    "intent": "otkup_upit",
+    "desiredSource": "onedrive",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "clarify_or_answer"
+  },
+  {
+    "message": "Kako mogu prodati knjige?",
+    "intent": "otkup_upit",
+    "desiredSource": "onedrive",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  },
+  {
+    "message": "Koliko vrijede ove knjige?",
+    "intent": "otkup_upit",
+    "desiredSource": "onedrive",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer_or_clarify"
+  },
+  {
+    "message": "Imate li knjigu Algebra 1?",
+    "intent": "product_availability",
+    "desiredSource": "product_feed",
+    "shouldUseProductFeed": true,
+    "expectedOutcome": "answer"
+  },
+  {
+    "message": "Kolika je dostava za Dubrovnik?",
+    "intent": "dostava_info",
+    "desiredSource": "zendesk",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  }
+]

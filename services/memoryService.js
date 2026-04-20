@@ -64,6 +64,14 @@ function buildWorkingMemory({
       conversation?.reasoningResult?.secondaryIntent ||
       previousMemory?.secondaryIntent ||
       "",
+    activeTaskIntent:
+      conversation?.reasoningResult?.taskIntent ||
+      previousMemory?.activeTaskIntent ||
+      "",
+    activeSubjectType:
+      conversation?.reasoningResult?.subjectType ||
+      previousMemory?.activeSubjectType ||
+      "",
     openSlots:
       outcome?.type === "ask_clarifying_question"
         ? conversation?.missingSlots || []
@@ -105,6 +113,18 @@ function buildWorkingMemory({
       outcome?.type === "ask_clarifying_question"
         ? Number(session?.pendingClarification?.attemptCount || 0) + 1
         : 0,
+    lastResolvedEntity:
+      conversation?.reasoningResult?.entities?.book_title ||
+      conversation?.reasoningResult?.entities?.order_reference ||
+      conversation?.reasoningResult?.entities?.city ||
+      previousMemory?.lastResolvedEntity ||
+      "",
+    lastIntentEvidence:
+      Array.isArray(conversation?.intentEvidence) && conversation.intentEvidence.length > 0
+        ? conversation.intentEvidence.slice(0, 6)
+        : Array.isArray(previousMemory?.lastIntentEvidence)
+          ? previousMemory.lastIntentEvidence.slice(0, 6)
+          : [],
     customerProfile,
     supportHistory: {
       lastIssueCategory:
@@ -122,7 +142,12 @@ function buildWorkingMemory({
       lastSuccessfulSource:
         outcome?.type === "safe_answer"
           ? outcome?.source || knowledge?.primarySource || previousMemory?.supportHistory?.lastSuccessfulSource || ""
-          : previousMemory?.supportHistory?.lastSuccessfulSource || ""
+          : previousMemory?.supportHistory?.lastSuccessfulSource || "",
+      lastBlockedSource:
+        Array.isArray(conversation?.supportPlan?.mustNotUseSources) &&
+        conversation.supportPlan.mustNotUseSources.length > 0
+          ? conversation.supportPlan.mustNotUseSources[0]
+          : previousMemory?.supportHistory?.lastBlockedSource || ""
     },
     updatedAt: new Date().toISOString()
   };
@@ -195,6 +220,7 @@ function applyWorkingMemoryToSession(session, memory = null) {
   session.lastProductTitles = Array.isArray(memory.lastProductContext)
     ? memory.lastProductContext.slice(0, 3)
     : session.lastProductTitles || [];
+  session.lastResolvedEntity = memory.lastResolvedEntity || session.lastResolvedEntity || "";
   session.requesterName =
     normalizeText(memory.customerProfile?.name) || session.requesterName || "";
   session.requesterEmail =
@@ -228,6 +254,10 @@ function normalizeComparableMemory(memory = {}) {
     lastKnowledgeSource: memory.lastKnowledgeSource || "",
     lastProductContext: Array.isArray(memory.lastProductContext) ? memory.lastProductContext : [],
     clarificationTurnCount: Number(memory.clarificationTurnCount || 0),
+    activeTaskIntent: memory.activeTaskIntent || "",
+    activeSubjectType: memory.activeSubjectType || "",
+    lastResolvedEntity: memory.lastResolvedEntity || "",
+    lastIntentEvidence: Array.isArray(memory.lastIntentEvidence) ? memory.lastIntentEvidence : [],
     customerProfile: {
       name: normalizeText(memory.customerProfile?.name),
       firstName: normalizeText(memory.customerProfile?.firstName),
@@ -238,7 +268,8 @@ function normalizeComparableMemory(memory = {}) {
       lastIssueCategory: normalizeText(memory.supportHistory?.lastIssueCategory),
       lastEmotionalTone: normalizeText(memory.supportHistory?.lastEmotionalTone),
       lastHandoffReason: normalizeText(memory.supportHistory?.lastHandoffReason),
-      lastSuccessfulSource: normalizeText(memory.supportHistory?.lastSuccessfulSource)
+      lastSuccessfulSource: normalizeText(memory.supportHistory?.lastSuccessfulSource),
+      lastBlockedSource: normalizeText(memory.supportHistory?.lastBlockedSource)
     }
   };
 }

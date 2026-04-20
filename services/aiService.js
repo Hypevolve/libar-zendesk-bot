@@ -96,9 +96,14 @@ function buildSystemPrompt(
     standaloneQuery = "",
     missingSlots = [],
     riskFlags = [],
-    customerName = ""
+    customerName = "",
+    knowledgeQuality = null
   } = {}
 ) {
+  const blockedSources = Array.isArray(supportPlan?.mustNotUseSources)
+    ? supportPlan.mustNotUseSources.join(", ")
+    : "";
+
   return [
     "Ti si Libar Agent, agent korisničke podrške za Antikvarijat Libar.",
     "",
@@ -122,6 +127,10 @@ function buildSystemPrompt(
     "- Ako odgovor nije dovoljno sigurno podržan kontekstom, ne pokušavaj popuniti praznine.",
     "- Ako jedan visoko relevantan izvor izravno odgovara na korisničko pitanje, smatraj da je kontekst dovoljan i nemoj tražiti dodatnu potvrdu iz drugih izvora.",
     "- Manje relevantne ili općenitije izvore tretiraj kao sporedne; nemoj zbog njih odbiti odgovor koji je jasno podržan najboljim izvorom.",
+    "- Ako je relevance signal slab, konfliktan ili djelomičan, nemoj nagađati nego vrati soft_handoff ili kratko potpitanje.",
+    blockedSources.includes("product_feed")
+      ? "- Product feed i webshop proizvodi su blokirani za ovaj upit. Ne smiješ spominjati webshop, kupovne linkove ni proizvode."
+      : null,
     "",
     "ESKALACIJSKA PRAVILA:",
     "- Ako je korisnik ljut, žali se, spominje plaćanje, povrat novca, reklamaciju, problem s narudžbom ili drugu osjetljivu situaciju, odluka mora biti hard_handoff.",
@@ -157,9 +166,17 @@ function buildSystemPrompt(
     "SUPPORT UNDERSTANDING:",
     reasoningResult?.primaryIntent ? `Primary intent: ${reasoningResult.primaryIntent}` : "Primary intent: nije dostavljen",
     reasoningResult?.secondaryIntent ? `Secondary intent: ${reasoningResult.secondaryIntent}` : null,
+    reasoningResult?.taskIntent ? `Task intent: ${reasoningResult.taskIntent}` : null,
+    reasoningResult?.actionIntent ? `Action intent: ${reasoningResult.actionIntent}` : null,
+    reasoningResult?.subjectType ? `Subject type: ${reasoningResult.subjectType}` : null,
+    reasoningResult?.journeyStage ? `Journey stage: ${reasoningResult.journeyStage}` : null,
+    reasoningResult?.questionType ? `Question type: ${reasoningResult.questionType}` : null,
     reasoningResult?.customerGoal ? `Goal: ${reasoningResult.customerGoal}` : null,
     reasoningResult?.emotionalTone ? `Tone: ${reasoningResult.emotionalTone}` : null,
     reasoningResult?.riskLevel ? `Risk level: ${reasoningResult.riskLevel}` : null,
+    Number.isFinite(Number(reasoningResult?.intentConfidence))
+      ? `Intent confidence: ${Number(reasoningResult.intentConfidence).toFixed(2)}`
+      : null,
     "",
     "STANDALONE UPIT:",
     standaloneQuery || "Nije dostavljeno.",
@@ -181,6 +198,13 @@ function buildSystemPrompt(
       ? `Use customer name sparingly: ${supportPlan.shouldUseCustomerName ? "yes" : "no"}`
       : null,
     supportPlan?.nextBestAction ? `Next best action: ${supportPlan.nextBestAction}` : null,
+    blockedSources ? `Blocked sources: ${blockedSources}` : null,
+    Array.isArray(supportPlan?.selectedSources) && supportPlan.selectedSources.length > 0
+      ? `Allowed sources: ${supportPlan.selectedSources.join(", ")}`
+      : null,
+    knowledgeQuality
+      ? `Knowledge quality: top=${knowledgeQuality.topScore || 0}, margin=${knowledgeQuality.scoreMargin || 0}, relevance=${knowledgeQuality.relevanceMatch ? "yes" : "no"}`
+      : null,
     "",
     "FORMAT IZLAZA:",
     "Vrati isključivo valjani JSON objekt, bez markdowna, bez code blocka i bez dodatnog teksta.",
@@ -201,7 +225,7 @@ function buildSystemPrompt(
     "",
     "KONTEKST:",
     context || "Nema pronađenog konteksta."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function extractJsonObject(rawText = "") {
@@ -293,6 +317,7 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
     "- Koristi samo informacije koje su izravno podržane kontekstom.",
     "- Ne izmišljaj dodatne informacije.",
     "- Ako kontekst sadrži konkretne korake ili preporuke, sažmi ih u jasan odgovor.",
+    "- Ako kontekst ne pokriva stvarni korisnikov posao ili pitanje, radije ne odgovaraj.",
     "- Nemoj spominjati AI, kontekst, bazu znanja ni interne procese.",
     "- Nemoj dodavati subject ni potpis.",
     customerName

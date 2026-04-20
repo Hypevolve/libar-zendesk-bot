@@ -113,6 +113,44 @@
           <button id="entry-flow-change" class="entry-flow-summary__button" type="button">Promijeni</button>
         </div>
 
+        <form id="entry-start-form" class="entry-start-form hidden">
+          <label class="entry-start-form__field">
+            <span class="entry-start-form__label">Poruka</span>
+            <textarea
+              id="entry-start-message"
+              class="entry-start-form__textarea"
+              rows="4"
+              maxlength="1200"
+              placeholder="Napišite upit..."></textarea>
+          </label>
+          <div class="entry-start-form__grid">
+            <label class="entry-start-form__field">
+              <span class="entry-start-form__label">Ime i prezime</span>
+              <input
+                id="entry-start-name"
+                class="entry-start-form__input"
+                type="text"
+                autocomplete="name"
+                maxlength="120"
+                placeholder="Primjer: Ana Horvat" />
+            </label>
+            <label class="entry-start-form__field">
+              <span class="entry-start-form__label">E-mail</span>
+              <input
+                id="entry-start-email"
+                class="entry-start-form__input"
+                type="email"
+                autocomplete="email"
+                maxlength="160"
+                placeholder="ime@domena.com" />
+            </label>
+          </div>
+          <p class="entry-start-form__hint">Podatke tražimo radi identifikacije i nastavka razgovora.</p>
+          <div class="entry-start-form__actions">
+            <button class="entry-flow-prompt__button is-primary" type="submit">Pošalji</button>
+          </div>
+        </form>
+
         <div class="entry-flow-panel__actions">
           <button id="entry-flow-skip" class="entry-flow-panel__skip" type="button">Napišite upit ručno</button>
         </div>

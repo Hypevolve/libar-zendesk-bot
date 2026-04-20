@@ -772,7 +772,7 @@ function buildAutopilotNote({
   const sourceSummary = (knowledge?.articles || [])
     .map((article) => {
       const sourceType = article.source === "onedrive" ? "OneDrive dokument" : "Zendesk članak";
-      return `${sourceType}: ${article.title} (${article.score})`;
+      return `${sourceType}: ${article.title} (${article.rankingScore || article.score})`;
     })
     .join(", ");
 
@@ -798,7 +798,24 @@ function buildAutopilotNote({
       ? `Response mode: ${conversation.supportPlan.responseMode}`
       : null,
     conversation?.supportPlan?.toneMode ? `Tone mode: ${conversation.supportPlan.toneMode}` : null,
+    Array.isArray(conversation?.supportPlan?.selectedSources) && conversation.supportPlan.selectedSources.length > 0
+      ? `Allowed sources: ${conversation.supportPlan.selectedSources.join(", ")}`
+      : null,
+    Array.isArray(conversation?.supportPlan?.mustNotUseSources) && conversation.supportPlan.mustNotUseSources.length > 0
+      ? `Blocked sources: ${conversation.supportPlan.mustNotUseSources.join(", ")}`
+      : null,
     conversation?.resolvedUserIntent ? `Detektirana namjera: ${conversation.resolvedUserIntent}` : null,
+    conversation?.reasoningResult?.taskIntent ? `Task intent: ${conversation.reasoningResult.taskIntent}` : null,
+    conversation?.reasoningResult?.actionIntent ? `Action intent: ${conversation.reasoningResult.actionIntent}` : null,
+    conversation?.reasoningResult?.subjectType ? `Subject type: ${conversation.reasoningResult.subjectType}` : null,
+    conversation?.reasoningResult?.questionType ? `Question type: ${conversation.reasoningResult.questionType}` : null,
+    conversation?.reasoningResult?.journeyStage ? `Journey stage: ${conversation.reasoningResult.journeyStage}` : null,
+    Number.isFinite(Number(conversation?.reasoningResult?.intentConfidence))
+      ? `Intent confidence: ${Number(conversation.reasoningResult.intentConfidence).toFixed(2)}`
+      : null,
+    Array.isArray(conversation?.intentEvidence) && conversation.intentEvidence.length > 0
+      ? `Intent evidence: ${conversation.intentEvidence.join(", ")}`
+      : null,
     conversation?.isFollowUp ? "Follow-up resolved using memory: da" : null,
     conversation?.missingSlots?.length
       ? `Missing slotovi: ${conversation.missingSlots.join(", ")}`
@@ -809,6 +826,9 @@ function buildAutopilotNote({
       ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
       : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
+    knowledge?.quality
+      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
+      : null,
     outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
     productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
     sourceSummary
@@ -894,6 +914,10 @@ function shouldAttemptGroundedAnswerFallback(knowledge) {
     return false;
   }
 
+  if (knowledge?.quality?.isWeak) {
+    return false;
+  }
+
   return knowledge.topScore >= Math.max(KNOWLEDGE_MIN_TOP_SCORE + 2, 10);
 }
 
@@ -920,7 +944,14 @@ function buildSearchOptions(session, conversation) {
   return {
     conversationFacts: conversation?.conversationFacts || [],
     conversationTerms: conversation?.conversationFacts || [],
-    preferredSource
+    preferredSource,
+    allowedSources: conversation?.supportPlan?.selectedSources || [],
+    blockedSources: conversation?.supportPlan?.mustNotUseSources || [],
+    sourcePriority: conversation?.supportPlan?.sourcePriority || [],
+    taskIntent: conversation?.reasoningResult?.taskIntent || "",
+    actionIntent: conversation?.reasoningResult?.actionIntent || "",
+    subjectType: conversation?.reasoningResult?.subjectType || "",
+    questionType: conversation?.reasoningResult?.questionType || ""
   };
 }
 
@@ -964,11 +995,21 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
     session.lastKnowledgeSource = "product_feed";
   } else if (knowledge?.primarySource) {
     session.lastKnowledgeSource = knowledge.primarySource;
+    if (conversation?.reasoningResult?.taskIntent !== "product_lookup") {
+      session.lastProductTitles = [];
+    }
   }
 
   if (conversation?.supportPlan) {
     session.lastRoute = conversation.supportPlan.route;
   }
+
+  session.lastResolvedEntity =
+    conversation?.reasoningResult?.entities?.book_title ||
+    conversation?.reasoningResult?.entities?.order_reference ||
+    conversation?.reasoningResult?.entities?.city ||
+    session.lastResolvedEntity ||
+    "";
 
   if (outcome?.type === "ask_clarifying_question") {
     storeSessionClarification(session, conversation, outcome.customerMessage);
@@ -1070,6 +1111,29 @@ async function determineChatOutcome(
     };
   }
 
+  if (knowledge?.quality?.isWeak) {
+    return {
+      type: "soft_handoff",
+      stateTag: "awaiting_human",
+      reason: "knowledge_intent_mismatch",
+      customerMessage: channelMessages.softHandoff
+    };
+  }
+
+  if (
+    allowClarifyingQuestion &&
+    knowledge?.quality &&
+    !knowledge.quality.isStrong &&
+    conversation?.clarifyingQuestion
+  ) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "awaiting_customer_detail",
+      reason: "knowledge_ambiguous",
+      customerMessage: conversation.clarifyingQuestion
+    };
+  }
+
   const aiDecision = await aiService.generateReply(userMessage, knowledge.context, {
     channelType,
     conversationSummary: conversation?.summary || "",
@@ -1079,7 +1143,8 @@ async function determineChatOutcome(
     standaloneQuery: conversation?.standaloneQuery || userMessage,
     missingSlots: conversation?.missingSlots || [],
     riskFlags: conversation?.riskFlags || [],
-    customerName
+    customerName,
+    knowledgeQuality: knowledge?.quality || null
   });
 
   if (aiDecision.decision === "hard_handoff") {
@@ -1200,6 +1265,8 @@ function buildConversationAnalysis(session, userMessage) {
   });
   const responsePlan = {
     intent: conversation.reasoningResult?.primaryIntent || "general_support",
+    taskIntent: conversation.reasoningResult?.taskIntent || "",
+    actionIntent: conversation.reasoningResult?.actionIntent || "",
     nextStep:
       supportPlan.nextBestAction === "ask_missing_detail" || supportPlan.nextBestAction === "disambiguate"
         ? conversation.missingSlots?.[0] || "clarify"
@@ -1208,6 +1275,12 @@ function buildConversationAnalysis(session, userMessage) {
       `Planner route: ${supportPlan.route}`,
       `Response mode: ${supportPlan.responseMode}`,
       `Tone mode: ${supportPlan.toneMode}`,
+      conversation.reasoningResult?.taskIntent
+        ? `Task intent: ${conversation.reasoningResult.taskIntent}`
+        : "",
+      conversation.reasoningResult?.actionIntent
+        ? `Action intent: ${conversation.reasoningResult.actionIntent}`
+        : "",
       conversation.standaloneQuery ? `Standalone upit za retrieval: ${conversation.standaloneQuery.slice(0, 180)}` : ""
     ].filter(Boolean)
   };
@@ -1225,16 +1298,14 @@ function shouldUseProductSearch(conversation = null) {
   }
 
   const route = String(conversation.supportPlan?.route || "").trim();
+  const primaryIntent = String(conversation.reasoningResult?.primaryIntent || "").trim();
 
   if (conversation.supportPlan?.mustNotUseSources?.includes("product_feed")) {
     return false;
   }
 
-  if (route === "product_feed") {
-    return true;
-  }
-
-  return conversation.topicAnchor?.type === "product";
+  return route === "product_feed" &&
+    (primaryIntent === "product_availability" || primaryIntent === "product_pricing");
 }
 
 function buildClosureAcknowledgment(conversation, channelType) {

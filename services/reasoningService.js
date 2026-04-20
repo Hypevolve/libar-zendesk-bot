@@ -227,6 +227,142 @@ function inferTopicAnchor(messages = [], session = {}) {
   return null;
 }
 
+function inferJourneyStage({ normalizedMessage = "", isFollowUp = false, pendingClarification = null } = {}) {
+  if (pendingClarification?.slotKey) {
+    return "clarification_answer";
+  }
+
+  if (!normalizedMessage) {
+    return "new_request";
+  }
+
+  if (/^(hvala|ok|riješeno|rijeseno|super|odlicno|odlično|lp|pozdrav)\b/i.test(normalizedMessage)) {
+    return "closure";
+  }
+
+  return isFollowUp ? "follow_up" : "new_request";
+}
+
+function deriveTaskIntent(intent = "") {
+  switch (intent) {
+    case "otkup_upit":
+      return "buyback";
+    case "dostava_info":
+      return "delivery";
+    case "narudzba_status":
+      return "order_status";
+    case "narudzba_problem":
+      return "order_issue";
+    case "reklamacija_povrat":
+      return "complaint";
+    case "product_availability":
+    case "product_pricing":
+      return "product_lookup";
+    case "small_talk_or_closure":
+      return "closure";
+    default:
+      return "general_support";
+  }
+}
+
+function deriveSubjectType(intent = "", entities = {}, policyTopic = "") {
+  if (intent === "otkup_upit") {
+    return entities.book_title || entities.quantity ? "book" : "buyback_process";
+  }
+
+  if (intent === "dostava_info") {
+    return "shipment";
+  }
+
+  if (intent === "narudzba_status" || intent === "narudzba_problem") {
+    return "order";
+  }
+
+  if (intent === "reklamacija_povrat") {
+    return "policy";
+  }
+
+  if (intent === "product_availability" || intent === "product_pricing") {
+    return "book";
+  }
+
+  if (policyTopic === "buyback") {
+    return "buyback_process";
+  }
+
+  return "policy";
+}
+
+function deriveActionIntent(intent = "", message = "", entities = {}) {
+  const normalized = normalizeComparableText(message);
+
+  if (intent === "small_talk_or_closure") {
+    return "close";
+  }
+
+  if (intent === "narudzba_status") {
+    return "check_status";
+  }
+
+  if (intent === "product_availability") {
+    return "check_availability";
+  }
+
+  if (intent === "product_pricing") {
+    return "check_price";
+  }
+
+  if (/(kako|na koji nacin|na koji način|što trebam|sto trebam|kako ide|kako funkcionira)/.test(normalized)) {
+    return "ask_how_to";
+  }
+
+  if (/(uvjeti|pravila|postupak|procedura|proces)/.test(normalized)) {
+    return "ask_policy";
+  }
+
+  if (/(koliko vrijedi|koliko vrijede|procjen|vrednovanj|ponud[au]|otkupit[e]?)/.test(normalized)) {
+    return "request_estimate";
+  }
+
+  if (/(koliko traje|rok|kada|kad)/.test(normalized)) {
+    return "ask_timeline";
+  }
+
+  if (intent === "otkup_upit" && (entities.book_title || entities.quantity)) {
+    return "start_process";
+  }
+
+  return "ask_info";
+}
+
+function classifyQuestionType(actionIntent = "", message = "") {
+  if (actionIntent === "ask_how_to") {
+    return "procedural";
+  }
+
+  if (actionIntent === "ask_policy") {
+    return "policy";
+  }
+
+  if (actionIntent === "check_status") {
+    return "status";
+  }
+
+  if (actionIntent === "check_availability" || actionIntent === "check_price") {
+    return "lookup";
+  }
+
+  if (actionIntent === "request_estimate") {
+    return "estimate";
+  }
+
+  if (/\?/.test(message)) {
+    return "info";
+  }
+
+  return "info";
+}
+
 function buildIntentScores(text = "", contextText = "") {
   const normalized = normalizeComparableText(`${text} ${contextText}`);
   const scores = {
@@ -280,6 +416,11 @@ function buildIntentScores(text = "", contextText = "") {
     scores.otkup_upit += 10;
   }
 
+  if (/(koliko vrijedi|koliko vrijede|vrijedi li|vrijede li)/.test(normalized)) {
+    scores.otkup_upit += 9;
+    scores.product_pricing -= 2;
+  }
+
   if (/(imate li|ima li|na stanju|dostupn|trazim|tražim|isbn|autor|naslov|rabljene?)/.test(normalized)) {
     scores.product_availability += 7;
   }
@@ -291,6 +432,22 @@ function buildIntentScores(text = "", contextText = "") {
 
   if (/(knjig|udžben|udzben|isbn|autor|naslov)/.test(normalized)) {
     scores.product_availability += 3;
+  }
+
+  if (/(otkup|prodati|prodajem|procjen|procjenu|vrednovanj|nudim knjig|želim prodati|zelim prodati)/.test(normalized)) {
+    scores.product_availability -= 8;
+    scores.product_pricing -= 6;
+  }
+
+  if (/(imate li|ima li|na stanju|isbn|autor|cijena knjige|cijena udzbenika|cijena udžbenika)/.test(normalized)) {
+    scores.otkup_upit -= 6;
+  }
+
+  if (/(status|gdje je|broj narudzbe|broj narudžbe|narudzba #|narudžba #)/.test(normalized)) {
+    scores.general_support -= 3;
+    scores.product_availability -= 4;
+    scores.product_pricing -= 3;
+    scores.narudzba_status += 5;
   }
 
   if (Object.values(scores).every((value) => value === 0)) {
@@ -579,6 +736,41 @@ function buildStandaloneQuery({
   return parts.filter(Boolean).join("\n");
 }
 
+function buildIntentEvidence(message = "", reasoningResult = {}) {
+  const normalized = normalizeComparableText(message);
+  const evidence = [];
+
+  if (/(otkup|prodati|prodajem|procjen|vrednovanj|nudim knjig)/.test(normalized)) {
+    evidence.push("buyback_keywords");
+  }
+
+  if (/(imate li|na stanju|isbn|autor|naslov)/.test(normalized)) {
+    evidence.push("product_lookup_keywords");
+  }
+
+  if (/(kako|uvjeti|postupak|procedura|što trebam|sto trebam)/.test(normalized)) {
+    evidence.push("procedural_or_policy_question");
+  }
+
+  if (/(koliko traje|rok|kada|kad)/.test(normalized)) {
+    evidence.push("timeline_question");
+  }
+
+  if (/(status|gdje je|broj narudzbe|broj narudžbe)/.test(normalized)) {
+    evidence.push("order_status_keywords");
+  }
+
+  if (reasoningResult.topicShiftDetected) {
+    evidence.push("topic_shift_detected");
+  }
+
+  if (reasoningResult.secondaryIntent) {
+    evidence.push("mixed_intent_detected");
+  }
+
+  return evidence;
+}
+
 function analyzeConversation({
   message,
   messages = [],
@@ -628,8 +820,7 @@ function analyzeConversation({
   const topicShiftDetected = Boolean(
     session?.workingMemory?.activeIntent &&
       primaryIntent &&
-      session.workingMemory.activeIntent !== primaryIntent &&
-      !isFollowUp
+      session.workingMemory.activeIntent !== primaryIntent
   );
   const riskFlags = detectRiskFlags(normalizedMessage);
   const emotionalTone = detectEmotionalTone(normalizedMessage);
@@ -653,6 +844,15 @@ function analyzeConversation({
     pendingClarification
   );
   const customerGoal = deriveCustomerGoal(primaryIntent, entities, normalizedMessage);
+  const taskIntent = deriveTaskIntent(primaryIntent);
+  const subjectType = deriveSubjectType(primaryIntent, entities, entities.policy_topic);
+  const actionIntent = deriveActionIntent(primaryIntent, normalizedMessage, entities);
+  const questionType = classifyQuestionType(actionIntent, normalizedMessage);
+  const journeyStage = inferJourneyStage({
+    normalizedMessage,
+    isFollowUp,
+    pendingClarification
+  });
   const riskLevel =
     riskFlags.includes("legal_or_abuse") ||
     riskFlags.includes("payment") ||
@@ -666,6 +866,11 @@ function analyzeConversation({
     primaryIntent,
     secondaryIntent,
     intentConfidence,
+    taskIntent,
+    actionIntent,
+    subjectType,
+    journeyStage,
+    questionType,
     entities,
     customerGoal,
     emotionalTone,
@@ -673,6 +878,7 @@ function analyzeConversation({
     missingSlots,
     topicShiftDetected
   };
+  const intentEvidence = buildIntentEvidence(normalizedMessage, reasoningResult);
   const standaloneQuery = buildStandaloneQuery({
     message: normalizedMessage,
     reasoningResult,
@@ -705,9 +911,14 @@ function analyzeConversation({
     shouldPreferHuman: riskLevel === "high",
     topicAnchor,
     usedMemory: Boolean(isFollowUp && topicAnchor?.value),
+    intentEvidence,
     summary: [
       `Intent: ${primaryIntent}`,
       secondaryIntent ? `Secondary intent: ${secondaryIntent}` : "",
+      taskIntent ? `Task intent: ${taskIntent}` : "",
+      actionIntent ? `Action intent: ${actionIntent}` : "",
+      subjectType ? `Subject type: ${subjectType}` : "",
+      questionType ? `Question type: ${questionType}` : "",
       conversationFacts.length > 0 ? `Facts: ${conversationFacts.join("; ")}` : "",
       topicShiftDetected ? "Detected topic shift." : "",
       riskFlags.length > 0 ? `Risk: ${riskFlags.join(", ")}` : "",

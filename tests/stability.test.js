@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const reasoningService = require("../services/reasoningService");
 const plannerService = require("../services/plannerService");
 const memoryService = require("../services/memoryService");
+const knowledgeService = require("../services/knowledgeService");
 
 function analyze(message, options = {}) {
   const conversation = reasoningService.analyzeConversation({
@@ -66,6 +67,40 @@ test("topic shift after clarification drops stale secondary intent", () => {
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
   assert.equal(conversation.reasoningResult.secondaryIntent, null);
   assert.equal(supportPlan.route, "zendesk_knowledge");
+});
+
+test("working memory persists structured intent fields", () => {
+  const memory = memoryService.buildWorkingMemory({
+    session: {},
+    conversation: {
+      reasoningResult: {
+        primaryIntent: "otkup_upit",
+        secondaryIntent: "",
+        taskIntent: "buyback",
+        actionIntent: "ask_how_to",
+        subjectType: "buyback_process",
+        emotionalTone: "neutral",
+        entities: {
+          book_title: ""
+        }
+      },
+      intentEvidence: ["buyback_keywords", "procedural_or_policy_question"],
+      missingSlots: [],
+      standaloneQuery: "Kako mogu prodati knjige?",
+      supportPlan: {
+        route: "onedrive_knowledge",
+        mustNotUseSources: ["product_feed"]
+      }
+    },
+    outcome: {
+      type: "safe_answer"
+    }
+  });
+
+  assert.equal(memory.activeTaskIntent, "buyback");
+  assert.equal(memory.activeSubjectType, "buyback_process");
+  assert.deepEqual(memory.lastIntentEvidence, ["buyback_keywords", "procedural_or_policy_question"]);
+  assert.equal(memory.supportHistory.lastBlockedSource, "product_feed");
 });
 
 test("product follow-up keeps product routing from previous assistant products", () => {
@@ -234,4 +269,77 @@ test("buyback opening without details asks exactly one slot question", () => {
   assert.deepEqual(conversation.missingSlots, ["book_details"]);
   assert.equal(supportPlan.route, "clarify");
   assert.match(conversation.clarifyingQuestion.toLowerCase(), /koje knjige|koliko ih/);
+});
+
+test("knowledge merge respects source blocking and reranks buyback article first", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      zendeskKnowledge: {
+        articles: [
+          {
+            title: "Opće informacije o knjigama",
+            score: 12,
+            body: "Knjige i naslovi iz ponude.",
+            source: "zendesk"
+          }
+        ]
+      },
+      oneDriveKnowledge: {
+        articles: [
+          {
+            title: "Otkup knjiga - postupak",
+            score: 11,
+            body: "Za otkup pošaljite popis naslova i procjenu.",
+            source: "onedrive"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+      blockedSources: ["product_feed"],
+      sourcePriority: ["onedrive_knowledge", "zendesk_knowledge"],
+      taskIntent: "buyback",
+      actionIntent: "ask_how_to",
+      subjectType: "buyback_process",
+      questionType: "procedural"
+    }
+  );
+
+  assert.equal(knowledge.primarySource, "onedrive");
+  assert.equal(knowledge.articles[0].title, "Otkup knjiga - postupak");
+  assert.equal(knowledge.quality.relevanceMatch, true);
+});
+
+test("knowledge source allowlist can fully disable zendesk retrieval candidates", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      zendeskKnowledge: {
+        articles: [
+          {
+            title: "Zendesk članak",
+            score: 30,
+            body: "Opći članak",
+            source: "zendesk"
+          }
+        ]
+      },
+      oneDriveKnowledge: {
+        articles: [
+          {
+            title: "OneDrive dokument",
+            score: 8,
+            body: "Specifičan dokument",
+            source: "onedrive"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["onedrive_knowledge"]
+    }
+  );
+
+  assert.equal(knowledge.articles.length, 1);
+  assert.equal(knowledge.primarySource, "onedrive");
 });

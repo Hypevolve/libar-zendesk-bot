@@ -27,6 +27,7 @@ test("support vs product disambiguation stays on knowledge route", () => {
   const conversation = analyze("Kolika je dostava za Dubrovnik?");
 
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
+  assert.equal(conversation.reasoningResult.taskIntent, "delivery");
   assert.equal(conversation.reasoningResult.entities.city, "Dubrovnik");
   assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
   assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
@@ -64,6 +65,7 @@ test("mixed intent handling prefers clarification over single-source answer", ()
 
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
   assert.equal(conversation.reasoningResult.secondaryIntent, "product_availability");
+  assert.ok(conversation.intentEvidence.includes("mixed_intent_detected"));
   assert.equal(conversation.supportPlan.route, "clarify");
 });
 
@@ -210,6 +212,8 @@ test("specific buyback follow-up does not keep asking for book list", () => {
   });
 
   assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.actionIntent, "request_estimate");
+  assert.equal(conversation.reasoningResult.journeyStage, "clarification_answer");
   assert.deepEqual(conversation.missingSlots, []);
   assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
@@ -238,6 +242,46 @@ test("product follow-up inherits previous product title from topic anchor", () =
   });
 
   assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
+  assert.equal(conversation.reasoningResult.taskIntent, "product_lookup");
   assert.equal(conversation.reasoningResult.entities.book_title, "Algebra 1");
   assert.equal(conversation.supportPlan.route, "product_feed");
+});
+
+test("how to sell books resolves to procedural buyback intent", () => {
+  const conversation = analyze("Kako mogu prodati knjige?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.taskIntent, "buyback");
+  assert.equal(conversation.reasoningResult.actionIntent, "ask_how_to");
+  assert.equal(conversation.reasoningResult.questionType, "procedural");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
+});
+
+test("book valuation stays on buyback intent and not product lookup", () => {
+  const conversation = analyze("Koliko vrijede ove knjige?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.actionIntent, "request_estimate");
+  assert.notEqual(conversation.supportPlan.route, "product_feed");
+});
+
+test("delivery to product topic shift switches to product lookup", () => {
+  const conversation = analyze("A imate li i Algebra 1?", {
+    messages: [
+      { role: "user", content: "Kolika je dostava za Zagreb?" },
+      { role: "assistant", content: "Dostava za Zagreb ..." }
+    ],
+    session: {
+      lastStandaloneQuery: "Kolika je dostava za Zagreb?",
+      workingMemory: {
+        activeIntent: "dostava_info",
+        activeTaskIntent: "delivery",
+        activeSubjectType: "shipment"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
+  assert.equal(conversation.reasoningResult.taskIntent, "product_lookup");
+  assert.equal(conversation.reasoningResult.topicShiftDetected, true);
 });

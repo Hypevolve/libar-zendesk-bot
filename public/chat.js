@@ -29,6 +29,10 @@ const entryFlowSummary = document.getElementById("entry-flow-summary");
 const entryFlowSummaryText = document.getElementById("entry-flow-summary-text");
 const entryFlowChangeButton = document.getElementById("entry-flow-change");
 const entryFlowSkipButton = document.getElementById("entry-flow-skip");
+const entryStartForm = document.getElementById("entry-start-form");
+const entryStartMessage = document.getElementById("entry-start-message");
+const entryStartName = document.getElementById("entry-start-name");
+const entryStartEmail = document.getElementById("entry-start-email");
 const messageForm = document.getElementById("message-form");
 const messagesEl = document.getElementById("messages");
 const errorBox = document.getElementById("error-box");
@@ -337,9 +341,7 @@ function normalizeEntryFlow(savedEntryFlow = {}) {
 }
 
 function shouldGateComposerForEntryFlow() {
-  const sessionId = localStorage.getItem(storageKey);
-
-  return !sessionId && onboarding.stage === "initial" && onboarding.entryFlow.stage !== "ready";
+  return !localStorage.getItem(storageKey);
 }
 
 function shouldHideMessagesForEntryFlow() {
@@ -468,22 +470,28 @@ function renderEntryFlow() {
     selectedIntent &&
     selectedIntent.promptLabel;
   const showSummary = onboarding.entryFlow.stage === "ready";
+  const showStartForm = onboarding.entryFlow.stage === "ready";
 
   if (entryFlowTitle) {
     entryFlowTitle.textContent = selectedIntent && showPrompt
       ? selectedIntent.label
-      : "Odaberite vrstu upita";
+      : showStartForm
+        ? "Pošaljite upit"
+        : "Odaberite vrstu upita";
   }
 
   if (entryFlowSubtitle) {
     entryFlowSubtitle.textContent = selectedIntent && showPrompt
       ? "Jedan kratak podatak pomoći će nam da brže usmjerimo razgovor."
-      : "Možete odabrati temu ili odmah napisati upit ručno.";
+      : showStartForm
+        ? "Poruku i kontakt podatke šaljete odjednom kako bismo odmah otvorili razgovor."
+        : "Možete odabrati temu ili odmah napisati upit ručno.";
   }
 
   entryFlowChoices?.classList.toggle("hidden", onboarding.entryFlow.stage !== "choices");
   entryFlowPromptForm?.classList.toggle("hidden", !showPrompt);
   entryFlowSummary?.classList.toggle("hidden", !showSummary);
+  entryStartForm?.classList.toggle("hidden", !showStartForm);
   entryFlowSkipButton?.classList.toggle("hidden", onboarding.entryFlow.stage !== "choices");
 
   if (showPrompt) {
@@ -494,6 +502,18 @@ function renderEntryFlow() {
 
   if (showSummary && entryFlowSummaryText) {
     entryFlowSummaryText.textContent = getEntryFlowSummary();
+  }
+
+  if (showStartForm) {
+    if (entryStartMessage) {
+      entryStartMessage.value = onboarding.draft.firstMessage || onboarding.entryFlow.entryPromptAnswer || "";
+    }
+    if (entryStartName) {
+      entryStartName.value = onboarding.draft.name || "";
+    }
+    if (entryStartEmail) {
+      entryStartEmail.value = onboarding.draft.email || "";
+    }
   }
 }
 
@@ -1042,15 +1062,6 @@ function pushOptimisticMessage(role, content, attachments = []) {
   updateMessages([...canonicalMessages, ...optimisticMessages]);
 }
 
-async function submitInitialUserMessage(message, attachments = []) {
-  if (!message) {
-    return;
-  }
-
-  pushMessage("user", message, attachments);
-  await handleOnboardingMessage(message);
-}
-
 function seedWelcomeState() {
   if (onboarding.messages.length > 0) {
     return;
@@ -1149,39 +1160,42 @@ async function startZendeskChat() {
   startPolling();
 }
 
-async function handleOnboardingMessage(message) {
-  if (onboarding.stage === "initial") {
-    onboarding.draft.firstMessage = message;
-    onboarding.stage = "awaiting_name";
+async function submitEntryStartForm() {
+  const message = entryStartMessage?.value.trim() || "";
+  const name = entryStartName?.value.trim() || "";
+  const email = entryStartEmail?.value.trim() || "";
+
+  if (!message) {
+    showError("Upišite poruku prije slanja.");
+    entryStartMessage?.focus();
+    return;
+  }
+
+  if (!name) {
+    showError("Upišite ime i prezime.");
+    entryStartName?.focus();
+    return;
+  }
+
+  if (!isValidEmail(email)) {
+    showError("Molim upišite ispravnu email adresu, npr. ime@domena.com.");
+    entryStartEmail?.focus();
+    return;
+  }
+
+  onboarding.draft.firstMessage = message;
+  onboarding.draft.name = name;
+  onboarding.draft.email = email;
+  onboarding.stage = "starting";
+  saveOnboardingState();
+
+  try {
+    await startZendeskChat();
+  } catch (error) {
+    onboarding.stage = "initial";
+    saveOnboardingState();
     renderEntryFlow();
-    syncComposerVisibility();
-    pushMessage("assistant", "Hvala. Kako se zovete?");
-    return;
-  }
-
-  if (onboarding.stage === "awaiting_name") {
-    onboarding.draft.name = message;
-    onboarding.stage = "awaiting_email";
-    pushMessage("assistant", "Na koji vas email možemo kontaktirati ako zatreba nastavak razgovora?");
-    return;
-  }
-
-  if (onboarding.stage === "awaiting_email") {
-    if (!isValidEmail(message)) {
-      pushMessage("assistant", "Molim upišite ispravnu email adresu, npr. ime@domena.com.");
-      return;
-    }
-
-    onboarding.draft.email = message;
-    onboarding.stage = "starting";
-    pushMessage("assistant", "Hvala. Upit je zaprimljen i odgovor stiže ovdje u istom razgovoru.");
-
-    try {
-      await startZendeskChat();
-    } catch (error) {
-      onboarding.stage = "awaiting_email";
-      showError(error.message);
-    }
+    showError(error.message);
   }
 }
 
@@ -1408,7 +1422,7 @@ entryFlowChoices?.addEventListener("click", (event) => {
       entryPromptAnswer: "",
       entryFlowSkipped: false
     });
-    messageInput?.focus();
+    entryStartMessage?.focus();
     return;
   }
 
@@ -1429,7 +1443,7 @@ entryFlowSkipButton?.addEventListener("click", () => {
     entryPromptAnswer: "",
     entryFlowSkipped: true
   });
-  messageInput?.focus();
+  entryStartMessage?.focus();
 });
 
 entryFlowBackButton?.addEventListener("click", () => {
@@ -1455,12 +1469,29 @@ entryFlowPromptForm?.addEventListener("submit", (event) => {
   });
 
   if (!promptValue) {
-    messageInput?.focus();
+    entryStartMessage?.focus();
     return;
   }
+  onboarding.draft.firstMessage = promptValue;
+  saveOnboardingState();
+  renderEntryFlow();
+  entryStartMessage?.focus();
+});
 
-  submitInitialUserMessage(promptValue).catch((error) => {
+entryStartForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  clearError();
+  submitEntryStartForm().catch((error) => {
     showError(error.message);
+  });
+});
+
+[entryStartMessage, entryStartName, entryStartEmail].forEach((field) => {
+  field?.addEventListener("input", () => {
+    onboarding.draft.firstMessage = entryStartMessage?.value || "";
+    onboarding.draft.name = entryStartName?.value || "";
+    onboarding.draft.email = entryStartEmail?.value || "";
+    saveOnboardingState();
   });
 });
 
@@ -1692,10 +1723,7 @@ messageForm.addEventListener("submit", async (event) => {
   messageInput.style.height = "auto";
 
   if (!sessionId) {
-    if (message) {
-      await submitInitialUserMessage(message, pendingAttachmentPayload);
-    }
-    // Do NOT clear pendingFiles here anymore! They need to persist until startZendeskChat
+    showError("Prije slanja upita ispunite početni obrazac iznad.");
     return;
   }
 
