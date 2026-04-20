@@ -309,9 +309,6 @@ function createSession(payload) {
     lastStandaloneQuery: "",
     lastKnowledgeSource: "",
     lastProductTitles: [],
-    entryTopicLock: "",
-    entryTopicSourcePolicy: null,
-    entryTopicSetAt: null,
     sessionId,
     ...payload,
     createdAt: new Date().toISOString(),
@@ -1629,13 +1626,6 @@ app.post("/webhook/zendesk", async (req, res) => {
         outcome.customerMessage
           ? zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, { channelType })
           : Promise.resolve(),
-        persistWorkingMemory(
-          temporarySession,
-          outcome,
-          knowledge,
-          ticketSummary,
-          audits
-        ),
         zendeskService.addInternalNote(ticketId, buildAutopilotNote({
           outcome,
           userMessage: normalizedMessage,
@@ -1668,13 +1658,6 @@ app.post("/webhook/zendesk", async (req, res) => {
           libar_task_intent: ""
         }
       }),
-      persistWorkingMemory(
-        temporarySession,
-        outcome,
-        knowledge,
-        ticketSummary,
-        audits
-      ),
       zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
         userMessage: normalizedMessage,
@@ -1799,13 +1782,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       entryFlowSkipped: entryFlowVersion === ENTRY_FLOW_VERSION && !entryIntent,
       externalId: initialSessionKey
     });
-    const entryTopicPolicy = buildEntryTopicPolicy(entryIntent);
-    session.entryTopicLock = entryTopicPolicy.entryTopicLock;
-    session.entryTopicSourcePolicy = entryTopicPolicy.entryTopicSourcePolicy;
-    session.entryTopicSetAt = session.entryTopicLock ? new Date().toISOString() : null;
     session.workingMemory = {
-      entryTopicLock: session.entryTopicLock,
-      entryTopicSourcePolicy: session.entryTopicSourcePolicy,
       customerProfile: {
         name,
         firstName: name,
