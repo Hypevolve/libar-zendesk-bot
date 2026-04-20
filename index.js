@@ -1438,7 +1438,7 @@ function looksLikeProductLookupMessage(message = "") {
   }
 
   if (
-    /(refund|reklamacij|povrat|dostav|isporuk|otkup|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc)/.test(
+    /(refund|reklamacij|povrat|dostav|isporuk|otkup|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
       normalizedMessage
     )
   ) {
@@ -1468,6 +1468,8 @@ function looksLikeProductLookupMessage(message = "") {
 }
 
 function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat" } = {}) {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+
   if (isResolutionCandidateMessage(userMessage)) {
     return {
       type: "safe_answer",
@@ -1488,6 +1490,85 @@ function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat"
         channelType === "email"
           ? "Pozdrav! Pošaljite naslov knjige, ISBN ili pitanje oko dostave, otkupa i narudžbe pa ću pokušati pomoći."
           : "Pozdrav! Pošaljite naslov knjige, ISBN ili pitanje oko dostave, otkupa i narudžbe pa ću pokušati pomoći."
+    };
+  }
+
+  if (/^(postovani|poštovani)[,!.\s]*$/i.test(String(userMessage || "").trim())) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "formal_greeting_clarification",
+      source: "conversation_fallback",
+      customerMessage:
+        "Pozdrav! Napišite naslov knjige, ISBN ili pitanje oko dostave, otkupa i narudžbe pa ću pokušati pomoći."
+    };
+  }
+
+  if (/^(takoder|također|takodjer)[.!?\s]*$/i.test(String(userMessage || "").trim())) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "continuation_clarification",
+      source: "conversation_fallback",
+      customerMessage:
+        "Slobodno napišite još malo detalja, na primjer puni naslov knjige, ISBN ili što točno trebate provjeriti."
+    };
+  }
+
+  if (
+    /(narudzb|otkazat|otkaziv|nisam .*dobi|niste odgovorili|reklamacij|povrat)/.test(normalizedMessage)
+  ) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "order_issue_clarification",
+      source: "conversation_fallback",
+      customerMessage:
+        "Mogu pokušati pomoći oko toga. Pošaljite broj narudžbe ili email na koji je narudžba napravljena pa ćemo lakše provjeriti što se dogodilo."
+    };
+  }
+
+  if (
+    /(troskovi dostave|cijena dostave|dostava|isporuka|paketomat|gls|boxnow)/.test(normalizedMessage)
+  ) {
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "delivery_link_fallback",
+      source: "website_links",
+      customerMessage:
+        "Najbrže ćete provjeriti troškove i opcije dostave na ovoj stranici. Ako želite, mogu zatim pomoći protumačiti što vam odgovara."
+    };
+  }
+
+  if (
+    /^(prodaja|otkup|otkupljujete li knjige|da li otkupljujete knjige|koje knjige otkupljujete|koje su cujene otkupa|koje su cijene otkupa|otkupljujete li udzbenike cijelu godinu|pa kada ih mogu otkupiti|otkupljujete li knjige koje nisu udzbenici)/.test(
+      normalizedMessage
+    )
+  ) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "buyback_clarification",
+      source: "website_links",
+      customerMessage:
+        "Ako želite prodati knjige, pošaljite naslov, barkod ili fotografije hrpta pa ću vas usmjeriti na najbrži način otkupa."
+    };
+  }
+
+  const shortAmbiguousTokens = normalizedMessage.split(/\s+/).filter(Boolean);
+  if (
+    shortAmbiguousTokens.length > 0 &&
+    shortAmbiguousTokens.length <= 3 &&
+    !/(hvala|pozdrav|bok|dobar dan|problem|narudzb|dostava|otkup|kontakt)/.test(normalizedMessage)
+  ) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "short_query_clarification",
+      source: "conversation_fallback",
+      customerMessage:
+        "Pošaljite puni naslov knjige, autora ili ISBN pa ću pokušati preciznije pomoći."
     };
   }
 

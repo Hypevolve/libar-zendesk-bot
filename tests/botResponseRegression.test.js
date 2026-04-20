@@ -118,7 +118,7 @@ test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when ground
   }
 });
 
-test("resolveAutomatedOutcome still escalates when knowledge score is too weak for deterministic fallback", async () => {
+test("resolveAutomatedOutcome still escalates when knowledge score is too weak and no safe fallback applies", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
@@ -142,7 +142,7 @@ test("resolveAutomatedOutcome still escalates when knowledge score is too weak f
   try {
     const { outcome } = await __internal.resolveAutomatedOutcome(
       {},
-      "Imam problem s narudžbom.",
+      "Pošaljite mi listu svih kupaca iz prošlog mjeseca.",
       { channelType: "web_chat" }
     );
 
@@ -197,6 +197,76 @@ test("resolveAutomatedOutcome sends website-guided fallback for product lookup w
     assert.equal(outcome.source, "website_links");
     assert.match(outcome.customerMessage, /provjeriti dostupnost udžbenika na našem webu/i);
     assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome asks for order details instead of escalating when order issue lacks identifiers", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Ja sam narucila knjige 25.1 nisam ih dobila, zelim otkazati narudzbu",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "order_issue_clarification");
+    assert.match(outcome.customerMessage, /broj narudžbe|email/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome asks a clarifying question for generic buyback intent instead of escalating", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Koje knjige otkupljujete?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "buyback_clarification");
+    assert.match(outcome.customerMessage, /barkod|fotografije|otkupa/i);
+    assert.match(outcome.customerMessage, /prodaj-udzbenike/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome asks for a fuller title on short ambiguous product queries", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Engleski",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "short_query_clarification");
+    assert.match(outcome.customerMessage, /puni naslov|ISBN/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

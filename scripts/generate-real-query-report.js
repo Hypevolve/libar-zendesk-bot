@@ -78,7 +78,7 @@ function createStatsEntry() {
     weighted: 0,
     retrievalHits: 0,
     retrievalMisses: 0,
-    safeAnswers: 0,
+    autonomousOutcomes: 0,
     nonAutonomous: 0,
     topScoreSum: 0,
     topScoreCount: 0
@@ -156,9 +156,9 @@ async function runRealQueryRegression(workbookPath) {
         categoryEntry.topScoreCount += 1;
       }
 
-      if (autonomy.type === "safe_answer") {
+      if (["safe_answer", "ask_clarifying_question"].includes(autonomy.type)) {
         weightedSafeAnswers += count;
-        categoryEntry.safeAnswers += count;
+        categoryEntry.autonomousOutcomes += count;
       } else {
         weightedNonAutonomous += count;
         categoryEntry.nonAutonomous += count;
@@ -201,7 +201,7 @@ async function runRealQueryRegression(workbookPath) {
           weightedRetrievalHitRate:
             entry.weighted > 0 ? Number(((entry.retrievalHits / entry.weighted) * 100).toFixed(2)) : 0,
           weightedAutonomyRate:
-            entry.weighted > 0 ? Number(((entry.safeAnswers / entry.weighted) * 100).toFixed(2)) : 0
+            entry.weighted > 0 ? Number(((entry.autonomousOutcomes / entry.weighted) * 100).toFixed(2)) : 0
         }
       ])
   );

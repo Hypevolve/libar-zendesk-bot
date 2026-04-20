@@ -97,7 +97,7 @@ test("resolveAutomatedOutcome uses deterministic fallback copy across channels w
   }
 });
 
-test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit is too weak and model answer is missing", async () => {
+test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit is too weak and no safe fallback applies", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
@@ -110,15 +110,15 @@ test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit 
   aiService.generateGroundedAnswer = async () => null;
 
   try {
-    const webResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "web_chat" });
+    const webResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "web_chat" });
     assert.equal(webResult.outcome.type, "hard_handoff");
     assert.match(webResult.outcome.customerMessage, /javit ćemo vam se ovdje/i);
 
-    const facebookResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "facebook" });
+    const facebookResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "facebook" });
     assert.equal(facebookResult.outcome.type, "hard_handoff");
     assert.match(facebookResult.outcome.customerMessage, /javiti.*ovdje/i);
 
-    const emailResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "email" });
+    const emailResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "email" });
     assert.equal(emailResult.outcome.type, "hard_handoff");
     assert.doesNotMatch(emailResult.outcome.customerMessage, /ovdje/i);
     assert.match(emailResult.outcome.customerMessage, /pregledamo detalje/i);
