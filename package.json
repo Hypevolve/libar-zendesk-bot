@@ -9,7 +9,8 @@
     "dev": "node --watch index.js",
     "test": "NODE_ENV=test node --no-deprecation --test",
     "test:coverage": "NODE_ENV=test node --no-deprecation --test --experimental-test-coverage",
-    "report:regression": "NODE_ENV=test node scripts/generate-regression-report.js"
+    "report:regression": "NODE_ENV=test node scripts/generate-regression-report.js",
+    "report:real-queries": "NODE_ENV=test node scripts/generate-real-query-report.js"
   },
   "keywords": [
     "zendesk",

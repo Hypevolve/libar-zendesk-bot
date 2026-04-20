@@ -1,0 +1,375 @@
+{
+  "workbookPath": "/Users/zrinko/Downloads/Libar_Chatbot_Upiti_2025-2026.xlsx",
+  "analyzedRows": 1000,
+  "weightedTotalQueries": 1094,
+  "durationMs": 11659,
+  "weightedRetrievalHitRate": 27.51,
+  "weightedAutonomyRate": 22.76,
+  "weightedRetrievalHits": 301,
+  "weightedRetrievalMisses": 793,
+  "weightedSafeAnswers": 249,
+  "weightedNonAutonomous": 845,
+  "weightedKnowledgeCategoryQueries": 136,
+  "weightedKnowledgeCategoryAutonomyRate": 56.62,
+  "knowledgeOrientedCategories": [
+    "Otkup / prodaja knjiga",
+    "Lokacija i radno vrijeme",
+    "Dostava i troškovi",
+    "Cijena / cjenik",
+    "Proces / uputa",
+    "Status narudžbe / reklamacija",
+    "Popusti i bonusi"
+  ],
+  "autonomyReasonDistribution": {
+    "no_context:missing_context": 793,
+    "safe_answer": 249,
+    "soft_handoff:internal_process_leak": 52
+  },
+  "categoryBreakdown": {
+    "Ostalo / specifičan naslov": {
+      "rows": 516,
+      "weighted": 553,
+      "retrievalHits": 66,
+      "retrievalMisses": 487,
+      "safeAnswers": 52,
+      "nonAutonomous": 501,
+      "topScoreSum": 767,
+      "topScoreCount": 65,
+      "avgTopScore": 11.8,
+      "weightedRetrievalHitRate": 11.93,
+      "weightedAutonomyRate": 9.4
+    },
+    "Upit za specifičan udžbenik": {
+      "rows": 191,
+      "weighted": 213,
+      "retrievalHits": 66,
+      "retrievalMisses": 147,
+      "safeAnswers": 62,
+      "nonAutonomous": 151,
+      "topScoreSum": 242,
+      "topScoreCount": 54,
+      "avgTopScore": 4.48,
+      "weightedRetrievalHitRate": 30.99,
+      "weightedAutonomyRate": 29.11
+    },
+    "Upit za nabavu / dostupnost": {
+      "rows": 182,
+      "weighted": 187,
+      "retrievalHits": 65,
+      "retrievalMisses": 122,
+      "safeAnswers": 56,
+      "nonAutonomous": 131,
+      "topScoreSum": 278,
+      "topScoreCount": 64,
+      "avgTopScore": 4.34,
+      "weightedRetrievalHitRate": 34.76,
+      "weightedAutonomyRate": 29.95
+    },
+    "Otkup / prodaja knjiga": {
+      "rows": 52,
+      "weighted": 57,
+      "retrievalHits": 50,
+      "retrievalMisses": 7,
+      "safeAnswers": 48,
+      "nonAutonomous": 9,
+      "topScoreSum": 622,
+      "topScoreCount": 45,
+      "avgTopScore": 13.82,
+      "weightedRetrievalHitRate": 87.72,
+      "weightedAutonomyRate": 84.21
+    },
+    "Lokacija i radno vrijeme": {
+      "rows": 16,
+      "weighted": 38,
+      "retrievalHits": 29,
+      "retrievalMisses": 9,
+      "safeAnswers": 6,
+      "nonAutonomous": 32,
+      "topScoreSum": 115,
+      "topScoreCount": 7,
+      "avgTopScore": 16.43,
+      "weightedRetrievalHitRate": 76.32,
+      "weightedAutonomyRate": 15.79
+    },
+    "Dostava i troškovi": {
+      "rows": 14,
+      "weighted": 15,
+      "retrievalHits": 12,
+      "retrievalMisses": 3,
+      "safeAnswers": 12,
+      "nonAutonomous": 3,
+      "topScoreSum": 343,
+      "topScoreCount": 11,
+      "avgTopScore": 31.18,
+      "weightedRetrievalHitRate": 80,
+      "weightedAutonomyRate": 80
+    },
+    "Cijena / cjenik": {
+      "rows": 10,
+      "weighted": 11,
+      "retrievalHits": 5,
+      "retrievalMisses": 6,
+      "safeAnswers": 5,
+      "nonAutonomous": 6,
+      "topScoreSum": 22,
+      "topScoreCount": 5,
+      "avgTopScore": 4.4,
+      "weightedRetrievalHitRate": 45.45,
+      "weightedAutonomyRate": 45.45
+    },
+    "Proces / uputa": {
+      "rows": 8,
+      "weighted": 8,
+      "retrievalHits": 3,
+      "retrievalMisses": 5,
+      "safeAnswers": 3,
+      "nonAutonomous": 5,
+      "topScoreSum": 120,
+      "topScoreCount": 3,
+      "avgTopScore": 40,
+      "weightedRetrievalHitRate": 37.5,
+      "weightedAutonomyRate": 37.5
+    },
+    "Status narudžbe / reklamacija": {
+      "rows": 6,
+      "weighted": 6,
+      "retrievalHits": 3,
+      "retrievalMisses": 3,
+      "safeAnswers": 3,
+      "nonAutonomous": 3,
+      "topScoreSum": 103,
+      "topScoreCount": 3,
+      "avgTopScore": 34.33,
+      "weightedRetrievalHitRate": 50,
+      "weightedAutonomyRate": 50
+    },
+    "Beletristika (ne-udžbenici)": {
+      "rows": 4,
+      "weighted": 5,
+      "retrievalHits": 2,
+      "retrievalMisses": 3,
+      "safeAnswers": 2,
+      "nonAutonomous": 3,
+      "topScoreSum": 130,
+      "topScoreCount": 2,
+      "avgTopScore": 65,
+      "weightedRetrievalHitRate": 40,
+      "weightedAutonomyRate": 40
+    },
+    "Popusti i bonusi": {
+      "rows": 1,
+      "weighted": 1,
+      "retrievalHits": 0,
+      "retrievalMisses": 1,
+      "safeAnswers": 0,
+      "nonAutonomous": 1,
+      "topScoreSum": 0,
+      "topScoreCount": 0,
+      "avgTopScore": 0,
+      "weightedRetrievalHitRate": 0,
+      "weightedAutonomyRate": 0
+    }
+  },
+  "topNonAutonomousQueries": [
+    {
+      "query": "Gdje se nalazi antikvarijat?",
+      "count": 23,
+      "category": "Lokacija i radno vrijeme",
+      "type": "soft_handoff",
+      "reason": "internal_process_leak",
+      "title": "Libar_HelpCenter_Top6.docx"
+    },
+    {
+      "query": "Ne hvala",
+      "count": 4,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Ok hvala",
+      "count": 4,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Putokazi 4",
+      "count": 3,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Hrvatski jezik i književnost 2",
+      "count": 3,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Dođi i vidi 2",
+      "count": 3,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Focus 2",
+      "count": 3,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Putokazi 3",
+      "count": 3,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Hrvatska kroz stoljeća 1",
+      "count": 3,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Imate li LIKOVNA UMJETNOST 2: udžbenik likovne umjetnosti u drugom razredu gimnazije i umjetničke škole",
+      "count": 3,
+      "category": "Upit za nabavu / dostupnost",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "imate li udžbenike : 8043, 1708, 8053, 8025, 8052",
+      "count": 3,
+      "category": "Upit za nabavu / dostupnost",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Focus5 nd edition : with extra online practice. Sue Key,Vaughan Jones, Monica Berlis, ,Heater Jones, Daniel Bradshaw, Dean Russell, Amanda Davies",
+      "count": 3,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Hvala puno",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Pozdrav.",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Gospodarska matematika 3",
+      "count": 2,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Osnove zdravstvene njege",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Osnove matematike, priručnik sa zbirkom zadataka u prvom razredu trogodišnjih srednjih škola Željka Dijanić Marija Mišurac Milena Šujansky",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Hrvatska i svijet 2",
+      "count": 2,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "zanima me povijest za srednju skolu",
+      "count": 2,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Insight upper intermediate",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Tehnika komuniciranja 1",
+      "count": 2,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "I.B.MAŽURANIĆ, Šuma Striborova",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Tehnička mehanika",
+      "count": 2,
+      "category": "Upit za specifičan udžbenik",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Headway 5",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    },
+    {
+      "query": "Dobar dan da li imate udzbenik za 1.srednje Kompjuterska daktilografija 1,autora Dusanka Gačesa?",
+      "count": 2,
+      "category": "Ostalo / specifičan naslov",
+      "type": "no_context",
+      "reason": "missing_context",
+      "title": ""
+    }
+  ]
+}

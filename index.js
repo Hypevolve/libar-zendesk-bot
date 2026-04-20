@@ -1412,6 +1412,99 @@ function buildKnowledgeFallbackAnswer(knowledge = null) {
   return "";
 }
 
+function isGreetingOnlyMessage(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage || normalizedMessage.includes("?")) {
+    return false;
+  }
+
+  return [
+    "pozdrav",
+    "bok",
+    "dobar dan",
+    "dobra vecer",
+    "hej",
+    "hello",
+    "hi"
+  ].includes(normalizedMessage);
+}
+
+function looksLikeProductLookupMessage(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  if (
+    /(refund|reklamacij|povrat|dostav|isporuk|otkup|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc)/.test(
+      normalizedMessage
+    )
+  ) {
+    return false;
+  }
+
+  if (/\b(imate li|treba mi|trazim|knjigu|knjiga|udzbenik|udzbenike|isbn|autor)\b/.test(normalizedMessage)) {
+    return true;
+  }
+
+  const tokens = normalizedMessage.split(/\s+/).filter(Boolean);
+  const genericSupportTokens = new Set([
+    "pitanje",
+    "pomoc",
+    "pomoci",
+    "upit",
+    "problem",
+    "narudzba",
+    "dostava",
+    "kontakt"
+  ]);
+  const hasGenericOnlyVocabulary =
+    tokens.length > 0 && tokens.every((token) => genericSupportTokens.has(token));
+  const hasTitleLikeSignal = tokens.some((token) => /\d/.test(token)) || normalizedMessage.length >= 12;
+
+  return tokens.length >= 1 && tokens.length <= 10 && hasTitleLikeSignal && !hasGenericOnlyVocabulary;
+}
+
+function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat" } = {}) {
+  if (isResolutionCandidateMessage(userMessage)) {
+    return {
+      type: "safe_answer",
+      stateTag: "resolved",
+      reason: "resolution_acknowledgement",
+      source: "conversation_fallback",
+      customerMessage: "Hvala vam! Ako vam zatreba još nešto, slobodno se javite."
+    };
+  }
+
+  if (isGreetingOnlyMessage(userMessage)) {
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "greeting_fallback",
+      source: "conversation_fallback",
+      customerMessage:
+        channelType === "email"
+          ? "Pozdrav! Pošaljite naslov knjige, ISBN ili pitanje oko dostave, otkupa i narudžbe pa ću pokušati pomoći."
+          : "Pozdrav! Pošaljite naslov knjige, ISBN ili pitanje oko dostave, otkupa i narudžbe pa ću pokušati pomoći."
+    };
+  }
+
+  if (looksLikeProductLookupMessage(userMessage)) {
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "product_lookup_fallback",
+      source: "website_links",
+      customerMessage:
+        "Najbrže ćete provjeriti dostupnost udžbenika na našem webu. Ako želite, pošaljite puni naslov ili ISBN pa ću vas dodatno usmjeriti."
+    };
+  }
+
+  return null;
+}
+
 
 
 
@@ -1492,6 +1585,16 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     if (outcome?.type === "safe_answer") {
       return { outcome, knowledge };
     }
+  }
+
+  const noContextAutonomousOutcome = buildNoContextAutonomousOutcome(userMessage, { channelType });
+
+  if (noContextAutonomousOutcome) {
+    const outcome = appendDirectWebsiteLink(noContextAutonomousOutcome, {
+      knowledge,
+      channelType
+    });
+    return { outcome, knowledge };
   }
 
   const outcome = {

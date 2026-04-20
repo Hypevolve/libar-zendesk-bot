@@ -142,13 +142,61 @@ test("resolveAutomatedOutcome still escalates when knowledge score is too weak f
   try {
     const { outcome } = await __internal.resolveAutomatedOutcome(
       {},
-      "Trebam pomoć oko nečeg nejasnog.",
+      "Imam problem s narudžbom.",
       { channelType: "web_chat" }
     );
 
     assert.equal(outcome.type, "hard_handoff");
     assert.equal(outcome.reason, "no_answer_found");
     assert.match(outcome.customerMessage, /provjeriti ručno/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome replies politely to acknowledgement-only messages instead of escalating", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Ok hvala",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "resolution_acknowledgement");
+    assert.match(outcome.customerMessage, /Hvala vam/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome sends website-guided fallback for product lookup when knowledge is missing", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Treba mi matematika 4 2 dio element udzbenik",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "product_lookup_fallback");
+    assert.equal(outcome.source, "website_links");
+    assert.match(outcome.customerMessage, /provjeriti dostupnost udžbenika na našem webu/i);
+    assert.match(outcome.customerMessage, /kupi-udzbenike/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
