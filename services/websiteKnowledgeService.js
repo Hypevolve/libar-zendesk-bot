@@ -1,9 +1,18 @@
 const { DIRECT_LINKS } = require("./siteLinkService");
+const axios = require("axios");
 const {
   findBestExcerpt,
   preprocessSearchQuery,
   scoreSearchText
 } = require("./searchUtils");
+
+const WEBSITE_SITEMAP_URL =
+  process.env.LIBAR_WEBSITE_SITEMAP_URL || "https://antikvarijat-libar.com/page-sitemap.xml";
+const WEBSITE_SITEMAP_CACHE_TTL_MS = Number(process.env.WEBSITE_SITEMAP_CACHE_TTL_MS) || 30 * 60 * 1000;
+const sitemapCache = {
+  pages: null,
+  expiresAt: 0
+};
 
 const WEBSITE_PAGES = [
   {
@@ -191,6 +200,62 @@ function normalizeIntent(value = "") {
   return String(value || "").trim().toLowerCase();
 }
 
+function slugToTitle(url = "") {
+  const normalizedUrl = String(url || "").replace(/\/+$/, "");
+  const slug = normalizedUrl.split("/").filter(Boolean).pop() || "";
+
+  if (!slug) {
+    return "Web stranica";
+  }
+
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+async function getSitemapPages() {
+  if (process.env.NODE_ENV === "test") {
+    return [];
+  }
+
+  const now = Date.now();
+
+  if (sitemapCache.pages && sitemapCache.expiresAt > now) {
+    return sitemapCache.pages;
+  }
+
+  try {
+    const response = await axios.get(WEBSITE_SITEMAP_URL, {
+      timeout: 8000,
+      responseType: "text"
+    });
+    const xml = String(response.data || "");
+    const matches = [...xml.matchAll(/<loc>([^<]+)<\/loc>/gi)];
+    const pages = matches
+      .map((match) => String(match[1] || "").trim())
+      .filter((url) => url.startsWith("https://antikvarijat-libar.com/"))
+      .filter((url) => !/\?(.*)$/.test(url))
+      .map((url) => ({
+        key: `sitemap:${url}`,
+        title: slugToTitle(url),
+        url,
+        body: "",
+        keywords: [],
+        intents: ["support_info"]
+      }));
+
+    sitemapCache.pages = pages;
+    sitemapCache.expiresAt = now + WEBSITE_SITEMAP_CACHE_TTL_MS;
+    return pages;
+  } catch (_error) {
+    sitemapCache.pages = [];
+    sitemapCache.expiresAt = now + 5 * 60 * 1000;
+    return [];
+  }
+}
+
 function buildWebsiteText(entry) {
   return [
     entry.title,
@@ -227,7 +292,12 @@ function scoreWebsitePage(entry, query, options = {}) {
 
 async function searchWebsiteKnowledgeDetailed(query, options = {}) {
   const processedQuery = preprocessSearchQuery(query, options);
-  const articles = WEBSITE_PAGES
+  const sitemapPages = await getSitemapPages();
+  const mergedPages = [
+    ...WEBSITE_PAGES,
+    ...sitemapPages.filter((page) => !WEBSITE_PAGES.some((entry) => entry.url === page.url))
+  ];
+  const articles = mergedPages
     .map((entry) => {
       const score = scoreWebsitePage(entry, processedQuery, options);
       return {

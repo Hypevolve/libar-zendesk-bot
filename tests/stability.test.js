@@ -432,6 +432,45 @@ test("knowledge merge can surface website page as relevant support source", () =
   assert.equal(knowledge.quality.contextConsistency, true);
 });
 
+test("knowledge merge prefers onedrive over website for delivery procedure and pricing details", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      oneDriveKnowledge: {
+        articles: [
+          {
+            title: "Dostava - GLS i BOXNOW",
+            score: 16,
+            body: "GLS dostava košta 4,50 €, a BOXNOW 2,00 €. Rok dostave ovisi o odabranoj usluzi.",
+            source: "onedrive"
+          }
+        ]
+      },
+      websiteKnowledge: {
+        articles: [
+          {
+            title: "Načini dostave i prikupa",
+            score: 17,
+            body: "Stranica sadrži opće informacije o načinima dostave i prikupa.",
+            source: "website",
+            url: "https://antikvarijat-libar.com/troskovi-isporuke/"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+      blockedSources: ["product_feed"],
+      sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+      taskIntent: "delivery",
+      activeDomain: "delivery",
+      questionType: "info"
+    }
+  );
+
+  assert.equal(knowledge.primarySource, "onedrive");
+  assert.equal(knowledge.articles[0].title, "Dostava - GLS i BOXNOW");
+});
+
 test("knowledge merge flags conflicting support info between zendesk and onedrive", () => {
   const knowledge = knowledgeService.mergeKnowledgeResults(
     {

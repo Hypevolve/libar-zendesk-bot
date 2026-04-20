@@ -73,3 +73,25 @@ test("validateAnswerQuality accepts grounded support answer", () => {
 
   assert.equal(result.isValid, true);
 });
+
+test("validateAnswerQuality rejects partial coverage for multi-part support question", () => {
+  const result = validateAnswerQuality({
+    answer: "Radimo ponedjeljak-petak 08:00-20:00 i subotom 08:00-13:00.",
+    outcomeType: "safe_answer",
+    conversation: {
+      standaloneQuery: "Koje vam je radno vrijeme i gdje se nalazite, te da li otkupljujete knjige?",
+      reasoningResult: {
+        taskIntent: "support_info"
+      }
+    },
+    knowledge: {
+      quality: {
+        isStrong: false
+      },
+      articles: []
+    }
+  });
+
+  assert.equal(result.isValid, false);
+  assert.equal(result.reason, "partial_topic_coverage");
+});

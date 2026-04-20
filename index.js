@@ -1151,6 +1151,19 @@ function sanitizeCustomerFacingText(value = "") {
     .trim();
 }
 
+function humanizeSupportTone(value = "") {
+  return String(value || "")
+    .replace(/^\s*poštovani[,!\s-]*/i, "")
+    .replace(/\bUkoliko\b/g, "Ako")
+    .replace(/\bukoliko\b/g, "ako")
+    .replace(/\bLjubazno molimo\b/g, "Molim vas")
+    .replace(/\bMolimo Vas\b/g, "Molim vas")
+    .replace(/\bVaš upit\b/g, "Vaše pitanje")
+    .replace(/\bVas\b/g, "vas")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function looksLikeKnowledgeTitleDump(value = "") {
   const normalized = normalizeForComparison(value);
 
@@ -1180,10 +1193,10 @@ function finalizeOutcomeForCustomer(
   }
 
   const channelMessages = getChannelMessages(channelType);
-  const sanitizedCustomerMessage = sanitizeCustomerFacingText(outcome.customerMessage);
-  const sanitizedZendeskMessage = sanitizeCustomerFacingText(
+  const sanitizedCustomerMessage = humanizeSupportTone(sanitizeCustomerFacingText(outcome.customerMessage));
+  const sanitizedZendeskMessage = humanizeSupportTone(sanitizeCustomerFacingText(
     outcome.zendeskMessage || outcome.customerMessage
-  );
+  ));
 
   const qualityCheck = validateAnswerQuality({
     answer: sanitizedCustomerMessage,

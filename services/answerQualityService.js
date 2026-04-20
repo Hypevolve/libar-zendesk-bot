@@ -68,6 +68,76 @@ function hasStrongLexicalOverlap(answer = "", articles = []) {
   });
 }
 
+function detectRequestedTopics(conversation = null) {
+  const query = normalizeForComparison(conversation?.standaloneQuery || "");
+  const taskIntent = String(conversation?.reasoningResult?.taskIntent || "").trim();
+  const topics = new Set();
+
+  if (taskIntent === "support_info") {
+    if (/(radno vrijeme|kad radite|otvoreni|subotom|nedjeljom)/.test(query)) {
+      topics.add("hours");
+    }
+    if (/(adresa|gdje ste|gdje se nalazite|lokacija)/.test(query)) {
+      topics.add("location");
+    }
+    if (/(kontakt|telefon|email|mail)/.test(query)) {
+      topics.add("contact");
+    }
+    if (/(otkup|otkupljujete|prodati knjige|prodaja knjiga)/.test(query)) {
+      topics.add("buyback");
+    }
+  }
+
+  if (taskIntent === "delivery") {
+    if (/(cijena|koliko|košta|kosta)/.test(query)) {
+      topics.add("price");
+    }
+    if (/(gls)/.test(query)) {
+      topics.add("gls");
+    }
+    if (/(boxnow)/.test(query)) {
+      topics.add("boxnow");
+    }
+    if (/(paketomat)/.test(query)) {
+      topics.add("paketomat");
+    }
+  }
+
+  return topics;
+}
+
+function detectAnsweredTopics(answer = "") {
+  const normalized = normalizeForComparison(answer);
+  const topics = new Set();
+
+  if (/(radimo|radno vrijeme|otvoreni|ponedjeljak|subota|nedjelja)/.test(normalized)) {
+    topics.add("hours");
+  }
+  if (/(adresa|nalazimo|osijek|zupanijska|županijska|lokacija)/.test(normalized)) {
+    topics.add("location");
+  }
+  if (/(kontakt|telefon|email|mail|javite)/.test(normalized)) {
+    topics.add("contact");
+  }
+  if (/(otkup|otkupljujemo|prodati|udžbenike|udzbenike)/.test(normalized)) {
+    topics.add("buyback");
+  }
+  if (/(cijena|košta|kosta|eur|€)/.test(normalized)) {
+    topics.add("price");
+  }
+  if (/\bgls\b/.test(normalized)) {
+    topics.add("gls");
+  }
+  if (/\bboxnow\b/.test(normalized)) {
+    topics.add("boxnow");
+  }
+  if (/(paketomat)/.test(normalized)) {
+    topics.add("paketomat");
+  }
+
+  return topics;
+}
+
 function validateAnswerQuality({
   answer = "",
   outcomeType = "",
@@ -124,6 +194,20 @@ function validateAnswerQuality({
         isValid: false,
         reason: "low_knowledge_overlap"
       };
+    }
+  }
+
+  const requestedTopics = detectRequestedTopics(conversation);
+  const answeredTopics = detectAnsweredTopics(trimmed);
+
+  if (requestedTopics.size >= 2) {
+    for (const topic of requestedTopics) {
+      if (!answeredTopics.has(topic)) {
+        return {
+          isValid: false,
+          reason: "partial_topic_coverage"
+        };
+      }
     }
   }
 

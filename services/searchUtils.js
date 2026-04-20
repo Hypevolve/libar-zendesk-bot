@@ -57,6 +57,10 @@ const QUERY_ALIASES = [
     terms: ["dostava", "isporuka", "pošiljka", "rok dostave", "kurir"]
   },
   {
+    pattern: /\b(gls|boxnow|paketomat|tisak paket|overseas)\b/,
+    terms: ["gls", "boxnow", "paketomat", "dostava", "isporuka", "cijena dostave"]
+  },
+  {
     pattern: /\b(narudžba|narudzba|status narudžbe|broj narudžbe|order)\b/,
     terms: ["narudžba", "status", "broj narudžbe"]
   },

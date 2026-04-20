@@ -119,6 +119,9 @@ function scoreDocument(document, query, options = {}) {
   const title = normalizeText(document.title || "");
   const searchText = normalizeText(`${document.title || ""} ${document.body || ""}`);
   const activeReferenceValue = normalizeText(options?.retrievalFrame?.activeReferenceValue || "");
+  const taskIntent = normalizeText(options?.taskIntent || "");
+  const activeDomain = normalizeText(options?.activeDomain || "");
+  const questionType = normalizeText(options?.questionType || "");
   const conversationTerms = Array.isArray(options.conversationTerms)
     ? options.conversationTerms.map((term) => normalizeText(term)).filter(Boolean)
     : [];
@@ -147,6 +150,30 @@ function scoreDocument(document, query, options = {}) {
 
   if (activeReferenceValue && searchText.includes(activeReferenceValue)) {
     score += 7;
+  }
+
+  if ((taskIntent === "buyback" || activeDomain === "buyback") && /(otkup|procjena|vrednovanje|bonus|pošaljite|posaljite|popis|fotografije)/.test(searchText)) {
+    score += 10;
+  }
+
+  if ((taskIntent === "delivery" || activeDomain === "delivery") && /(dostava|isporuka|gls|boxnow|paketomat|tisak paket|overseas|rok|cijena)/.test(searchText)) {
+    score += 10;
+  }
+
+  if ((taskIntent === "support_info" || activeDomain === "support_info") && /(radno vrijeme|adresa|kontakt|telefon|email|mail|plaćanje|placanje)/.test(searchText)) {
+    score += 7;
+  }
+
+  if (questionType === "info" && /(koliko|cijena|košta|kosta)/.test(normalizedQuery) && /(cijena|eur|€)/.test(searchText)) {
+    score += 5;
+  }
+
+  if (/\bgls\b/.test(normalizedQuery) && /\bgls\b/.test(searchText)) {
+    score += 8;
+  }
+
+  if (/\bboxnow\b/.test(normalizedQuery) && /\bboxnow\b/.test(searchText)) {
+    score += 8;
   }
 
   return score;
@@ -479,6 +506,11 @@ async function searchOneDriveDetailed(query, options = {}) {
       return null;
     }
 
+    const maxDocuments =
+      ["buyback", "delivery", "support_info"].includes(String(options?.taskIntent || "").trim())
+        ? Math.max(ONEDRIVE_CONTEXT_DOCUMENTS, 4)
+        : ONEDRIVE_CONTEXT_DOCUMENTS;
+
     const rankedDocuments = documents
       .map((document) => ({
         document,
@@ -487,7 +519,7 @@ async function searchOneDriveDetailed(query, options = {}) {
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score)
-      .slice(0, ONEDRIVE_CONTEXT_DOCUMENTS);
+      .slice(0, maxDocuments);
 
     if (rankedDocuments.length === 0) {
       return null;

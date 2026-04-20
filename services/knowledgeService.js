@@ -51,7 +51,7 @@ function rerankEntry(entry, options = {}) {
   if (sourcePriority.length > 0) {
     const sourceIndex = sourcePriority.indexOf(sourceName);
     if (sourceIndex !== -1) {
-      score += Math.max(0, 2 - sourceIndex) * 2;
+      score += Math.max(0, 3 - sourceIndex) * 2;
     }
   }
 
@@ -74,6 +74,18 @@ function rerankEntry(entry, options = {}) {
 
   if (taskIntent === "delivery" && /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText)) {
     score += 5;
+  }
+
+  if (taskIntent === "delivery" && sourceName === "onedrive" && /(gls|boxnow|paketomat|tisak paket|overseas|cijena|eur|€)/.test(normalizedText)) {
+    score += 7;
+  }
+
+  if (taskIntent === "buyback" && sourceName === "onedrive") {
+    score += 4;
+  }
+
+  if (["support_info", "delivery", "buyback"].includes(taskIntent) && sourceName === "website") {
+    score -= 2;
   }
 
   if (actionIntent === "ask_how_to" && /(kako|postupak|koraci|pošaljite|pošalji|trebate|potrebno)/.test(normalizedText)) {
@@ -279,7 +291,7 @@ function mergeKnowledgeResults(
         sourcePriority: options.sourcePriority || (preferredSource ? [preferredSource] : [])
       }) +
         (entry.source === "onedrive" ? 0.25 : 0) +
-        (entry.source === "website" ? 0.15 : 0) +
+        (entry.source === "website" ? -0.35 : 0) +
         (preferredSource && entry.source === preferredSource ? 0.75 : 0),
       _sortIndex: index
     }))
