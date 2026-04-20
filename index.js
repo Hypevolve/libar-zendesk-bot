@@ -1666,6 +1666,168 @@ function getSessionActiveDomain(session = {}) {
   return "";
 }
 
+function getSessionActiveTaskIntent(session = {}) {
+  const rawIntent = normalizeForComparison(
+    session?.workingMemory?.activeTaskIntent || session?.lastResolvedIntent || ""
+  );
+
+  if (/(buyback|otkup|prodaja)/.test(rawIntent)) {
+    return "buyback";
+  }
+
+  if (/(delivery|dostava)/.test(rawIntent)) {
+    return "delivery";
+  }
+
+  if (/(support|kontakt|contact|support_info)/.test(rawIntent)) {
+    return "support_info";
+  }
+
+  if (/(order|narudzba|reklamacija)/.test(rawIntent)) {
+    return "order";
+  }
+
+  if (/(product|kupnja|availability|product_lookup)/.test(rawIntent)) {
+    return "product_lookup";
+  }
+
+  return "";
+}
+
+function hydrateSessionRoutingContext(session = {}) {
+  if (!session || typeof session !== "object") {
+    return session;
+  }
+
+  session.messages = Array.isArray(session.messages) ? session.messages : [];
+  session.workingMemory = session.workingMemory && typeof session.workingMemory === "object"
+    ? session.workingMemory
+    : {};
+
+  const latestTaskIntentMessage = [...session.messages]
+    .reverse()
+    .find((message) => message?.role === "assistant" && message?.supportTaskIntent);
+
+  if (latestTaskIntentMessage?.supportTaskIntent && !session.workingMemory.activeTaskIntent) {
+    session.workingMemory.activeTaskIntent = latestTaskIntentMessage.supportTaskIntent;
+  }
+
+  if (!session.workingMemory.activeDomain) {
+    session.workingMemory.activeDomain = getSessionActiveTaskIntent(session);
+  }
+
+  if ((!Array.isArray(session.lastProductTitles) || session.lastProductTitles.length === 0)) {
+    const latestProductMessage = [...session.messages]
+      .reverse()
+      .find((message) => message?.role === "assistant" && Array.isArray(message?.products) && message.products.length > 0);
+
+    if (latestProductMessage) {
+      session.lastProductTitles = latestProductMessage.products
+        .map((product) => product?.title)
+        .filter(Boolean)
+        .slice(0, 5);
+    }
+  }
+
+  if (!session.lastStandaloneQuery) {
+    const latestUserMessage = [...session.messages]
+      .reverse()
+      .find((message) => message?.role === "user" && normalizeWhitespace(message?.content || ""));
+
+    if (latestUserMessage?.content) {
+      session.lastStandaloneQuery = normalizeWhitespace(latestUserMessage.content);
+    }
+  }
+
+  return session;
+}
+
+function inferTaskIntentFromMessage(userMessage = "", session = {}) {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+  const activeDomain = getSessionActiveDomain(session);
+
+  if (!normalizedMessage) {
+    return getSessionActiveTaskIntent(session) || activeDomain || "";
+  }
+
+  if (looksLikeProductLookupMessage(userMessage, session)) {
+    return "product_lookup";
+  }
+
+  if (/(dostav|isporuk|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|dostavne opcije|opcije dostave)/.test(normalizedMessage)) {
+    return "delivery";
+  }
+
+  if (/(radno vrijeme|adresa|lokacija|kontakt|telefon|email|mail|placanj|na[cč]ini placanja|kartic|gotovin|pouzec)/.test(normalizedMessage)) {
+    return "support_info";
+  }
+
+  if (/(otkup|prodati|prodajem|procjen|vrednovanj|knjige za otkup|donijeti knjige|poslati knjige)/.test(normalizedMessage)) {
+    return "buyback";
+  }
+
+  if (/(narudzb|reklamacij|povrat|refund|r1|racun|račun|problem s narudzb|problem s narudžb|gdje mi je|ostecen|oštećen|kriva knjiga)/.test(normalizedMessage)) {
+    return "order";
+  }
+
+  if (/^(a|i)\s+/.test(normalizedMessage) && activeDomain) {
+    return activeDomain;
+  }
+
+  return getSessionActiveTaskIntent(session) || activeDomain || "";
+}
+
+function buildKnowledgeSearchOptions(session = {}, userMessage = "") {
+  const activeDomain = getSessionActiveDomain(session);
+  const taskIntent = inferTaskIntentFromMessage(userMessage, session) || activeDomain || "";
+  const conversationFacts = [];
+  const retrievalHints = [];
+  const conversationTerms = [];
+
+  if (session?.entryIntent && ENTRY_INTENT_LABELS[session.entryIntent]) {
+    conversationFacts.push(ENTRY_INTENT_LABELS[session.entryIntent]);
+  }
+
+  if (session?.entryPromptAnswer) {
+    conversationFacts.push(session.entryPromptAnswer);
+  }
+
+  if (taskIntent === "delivery") {
+    retrievalHints.push("dostava", "opcije dostave", "gls", "boxnow", "osobno preuzimanje");
+  } else if (taskIntent === "support_info") {
+    retrievalHints.push("kontakt", "radno vrijeme", "adresa", "telefon", "email");
+  } else if (taskIntent === "buyback") {
+    retrievalHints.push("otkup", "prodaja knjiga", "fizicki otkup", "online otkup");
+  } else if (taskIntent === "order") {
+    retrievalHints.push("narudzba", "reklamacija", "povrat", "racun");
+  }
+
+  if (session?.lastStandaloneQuery) {
+    conversationTerms.push(session.lastStandaloneQuery);
+  }
+
+  const recentUserMessages = Array.isArray(session?.messages)
+    ? session.messages
+        .filter((message) => message?.role === "user" && message?.content)
+        .slice(-3)
+        .map((message) => normalizeWhitespace(message.content))
+        .filter(Boolean)
+    : [];
+
+  conversationTerms.push(...recentUserMessages);
+
+  return {
+    taskIntent,
+    activeDomain: taskIntent || activeDomain || "",
+    conversationFacts: [...new Set(conversationFacts.filter(Boolean))],
+    retrievalHints: [...new Set(retrievalHints.filter(Boolean))],
+    conversationTerms: [...new Set(conversationTerms.filter(Boolean))].slice(-4),
+    retrievalFrame: {
+      activeReferenceValue: Array.isArray(session?.lastProductTitles) ? session.lastProductTitles[0] || "" : ""
+    }
+  };
+}
+
 function looksLikeProductContinuationMessage(message = "", session = {}) {
   const normalizedMessage = normalizeForComparison(message).trim();
   const activeDomain = getSessionActiveDomain(session);
@@ -1990,7 +2152,9 @@ function buildProductFeedOutcome(productMatch, { channelType = "web_chat" } = {}
 
 
 async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
+  hydrateSessionRoutingContext(session);
   const channelMessages = getChannelMessages(channelType);
+  const knowledgeSearchOptions = buildKnowledgeSearchOptions(session, userMessage);
 
   if (hasAttachments) {
     return {
@@ -2020,7 +2184,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
 
   let knowledge = null;
   try {
-    knowledge = await knowledgeService.searchKnowledgeDetailed(userMessage);
+    knowledge = await knowledgeService.searchKnowledgeDetailed(userMessage, knowledgeSearchOptions);
   } catch (err) {
     logError("Knowledge search failed:", { message: err.message });
   }

@@ -64,6 +64,55 @@ test("resolveAutomatedOutcome uses grounded answers across web, facebook, and em
   }
 });
 
+test("resolveAutomatedOutcome derives the same delivery retrieval intent across web, facebook, and email", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const recordedOptions = [];
+
+  knowledgeService.searchKnowledgeDetailed = async (_query, options = {}) => {
+    recordedOptions.push(options);
+    return {
+      context: "Izvor 1 (OneDrive):\nNaslov: Dostava\nSadržaj: GLS dostava na kućnu adresu iznosi 5,97 EUR. BOXNOW paketomat iznosi 3,50 EUR.",
+      articles: [
+        {
+          title: "Dostava",
+          body: "GLS dostava na kućnu adresu iznosi 5,97 EUR. BOXNOW paketomat iznosi 3,50 EUR.",
+          score: 40,
+          source: "onedrive"
+        }
+      ],
+      topScore: 40,
+      totalMatches: 1,
+      primarySource: "onedrive"
+    };
+  };
+
+  aiService.generateGroundedAnswer = async () => "Nudimo dostavu na adresu i paketomat.";
+
+  try {
+    for (const channelType of ["web_chat", "facebook", "email"]) {
+      const result = await __internal.resolveAutomatedOutcome(
+        {
+          requesterName: "Ana"
+        },
+        "Koje dostavne opcije nudite?",
+        { channelType }
+      );
+
+      assert.equal(result.outcome.type, "safe_answer");
+      assert.equal(result.outcome.reason, "grounded_answer");
+    }
+
+    assert.equal(recordedOptions.length, 3);
+    assert.ok(recordedOptions.every((options) => options.taskIntent === "delivery"));
+    assert.ok(recordedOptions.every((options) => options.activeDomain === "delivery"));
+    assert.ok(recordedOptions.every((options) => options.retrievalHints.includes("opcije dostave")));
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
 test("resolveAutomatedOutcome uses deterministic fallback copy across channels when KB hit is strong but model answer is missing", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;

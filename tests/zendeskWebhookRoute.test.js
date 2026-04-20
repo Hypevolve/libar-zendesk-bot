@@ -152,3 +152,121 @@ test("webhook processing sends reply for nested email payload instead of rejecti
     resetRuntimeState();
   }
 });
+
+test("webhook processing rebuilds retrieval context from prior conversation for non-web channels", async () => {
+  const originalGetTicketSummary = zendeskService.getTicketSummary;
+  const originalGetTicketAudits = zendeskService.getTicketAudits;
+  const originalUpdateConversationState = zendeskService.updateConversationState;
+  const originalAddBotReplyToTicket = zendeskService.addBotReplyToTicket;
+  const originalAddInternalNote = zendeskService.addInternalNote;
+  const originalEvaluateIncomingMessage = spamFilterService.evaluateIncomingMessage;
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const recordedOptions = [];
+
+  zendeskService.getTicketSummary = async () => ({
+    id: 88798,
+    status: "open",
+    tags: [],
+    requesterId: 1001,
+    requesterName: "Zrinko Kutnjak",
+    requesterEmail: "zrinko@example.com"
+  });
+  zendeskService.getTicketAudits = async () => [
+    createAudit({
+      id: "audit-user-1",
+      createdAt: "2026-04-20T20:00:00.000Z",
+      channel: "facebook",
+      body: "Želim prodati knjige"
+    }),
+    {
+      id: "audit-bot-1",
+      author_id: 9999,
+      created_at: "2026-04-20T20:01:00.000Z",
+      via: { channel: "api" },
+      metadata: {
+        custom: {
+          libar_message_role: "assistant",
+          libar_message_origin: "facebook_ai",
+          libar_task_intent: "buyback"
+        }
+      },
+      events: [
+        {
+          id: "audit-bot-1-comment",
+          type: "Comment",
+          public: true,
+          author_id: 9999,
+          body: "Pošaljite naslov ili ISBN.",
+          html_body: "<div>Pošaljite naslov ili ISBN.</div>",
+          via: { channel: "api" }
+        }
+      ]
+    },
+    createAudit({
+      id: "audit-user-2",
+      createdAt: "2026-04-20T20:02:00.000Z",
+      channel: "facebook",
+      body: "Koje dostavne opcije nudite?"
+    })
+  ];
+  zendeskService.updateConversationState = async () => {};
+  zendeskService.addBotReplyToTicket = async () => {};
+  zendeskService.addInternalNote = async () => {};
+  spamFilterService.evaluateIncomingMessage = async () => ({
+    shouldBlock: false,
+    reason: "support_message"
+  });
+  knowledgeService.searchKnowledgeDetailed = async (_query, options = {}) => {
+    recordedOptions.push(options);
+    return {
+      context: "Izvor 1 (OneDrive):\nNaslov: Dostava\nSadržaj: Dostava je dostupna putem GLS-a i BOXNOW paketomata.",
+      articles: [
+        {
+          title: "Dostava",
+          body: "Dostava je dostupna putem GLS-a i BOXNOW paketomata.",
+          score: 28,
+          source: "onedrive"
+        }
+      ],
+      topScore: 28,
+      totalMatches: 1,
+      primarySource: "onedrive"
+    };
+  };
+  aiService.generateGroundedAnswer = async () => "Dostava je dostupna putem GLS-a i BOXNOW paketomata.";
+
+  try {
+    const result = await __internal.processZendeskWebhookPayload({
+      ticket: {
+        id: 88798,
+        via: {
+          channel: "facebook"
+        }
+      },
+      ticket_event: {
+        id: 445567,
+        comment: {
+          body: "Koje dostavne opcije nudite?"
+        }
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.action, "customer_reply_sent");
+    assert.equal(result.body.channelType, "facebook");
+    assert.equal(recordedOptions.length, 1);
+    assert.equal(recordedOptions[0].taskIntent, "delivery");
+    assert.equal(recordedOptions[0].activeDomain, "delivery");
+  } finally {
+    zendeskService.getTicketSummary = originalGetTicketSummary;
+    zendeskService.getTicketAudits = originalGetTicketAudits;
+    zendeskService.updateConversationState = originalUpdateConversationState;
+    zendeskService.addBotReplyToTicket = originalAddBotReplyToTicket;
+    zendeskService.addInternalNote = originalAddInternalNote;
+    spamFilterService.evaluateIncomingMessage = originalEvaluateIncomingMessage;
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    resetRuntimeState();
+  }
+});
