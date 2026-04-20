@@ -252,6 +252,52 @@ function createFakeZendesk() {
       const ticket = ensureTicket(ticketId);
       applyStateTag(ticket, stateTag);
     },
+    solveTicket: async (ticketId, options = {}) => {
+      const ticket = ensureTicket(ticketId);
+
+      ticket.summary.status = "solved";
+
+      for (const tag of options.additionalTags || []) {
+        if (!ticket.summary.tags.includes(tag)) {
+          ticket.summary.tags.push(tag);
+        }
+      }
+
+      if (options.commentBody) {
+        ticket.audits.push(buildAudit({
+          ticketId,
+          authorId: agentId,
+          body: options.commentBody,
+          channel: "api",
+          isPublic: true,
+          metadata: {
+            libar_message_role: "assistant"
+          }
+        }));
+      }
+    },
+    addHumanReply: ({ ticketId, body, channel = "email" }) => {
+      const ticket = ensureTicket(ticketId);
+      ticket.audits.push(buildAudit({
+        ticketId,
+        authorId: agentId,
+        body,
+        channel,
+        isPublic: true,
+        metadata: {}
+      }));
+    },
+    addUserReply: ({ ticketId, body, channel = "email", attachments = [] }) => {
+      const ticket = ensureTicket(ticketId);
+      ticket.audits.push(buildAudit({
+        ticketId,
+        authorId: ticket.summary.requesterId,
+        body,
+        channel,
+        isPublic: true,
+        attachments
+      }));
+    },
     getTicketSummary: async (ticketId) => {
       const ticket = ensureTicket(ticketId);
       return {
@@ -288,6 +334,7 @@ function createMockResponse() {
     statusCode: 200,
     body: null,
     headers: {},
+    writes: [],
     status(code) {
       this.statusCode = code;
       return this;
@@ -306,12 +353,25 @@ function createMockResponse() {
     },
     setHeader(name, value) {
       this.headers[name] = value;
+    },
+    writeHead(statusCode, headers = {}) {
+      this.statusCode = statusCode;
+      this.headers = {
+        ...this.headers,
+        ...headers
+      };
+      return this;
+    },
+    write(chunk) {
+      this.writes.push(String(chunk));
+      return true;
     }
   };
 }
 
 async function invokeRoute(method, routePath, reqOverrides = {}) {
   const handler = getRouteHandler(method, routePath);
+  const reqListeners = new Map();
   const req = {
     body: {},
     files: [],
@@ -320,9 +380,19 @@ async function invokeRoute(method, routePath, reqOverrides = {}) {
     params: {},
     method: method.toUpperCase(),
     ip: "127.0.0.1",
+    on(event, callback) {
+      reqListeners.set(event, callback);
+    },
+    emit(event) {
+      const listener = reqListeners.get(event);
+      if (listener) {
+        listener();
+      }
+    },
     ...reqOverrides
   };
   const res = createMockResponse();
+  res.req = req;
 
   await handler(req, res);
   return res;
@@ -663,6 +733,328 @@ test("email webhook blocks spam before automation", async () => {
       assert.equal(json.action, "ignored_spam");
       assert.equal(json.channelType, "email");
       assert.match(fakeZendesk.state.internalNotes.at(-1).body, /Spam filter \(email\)/);
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("web lifecycle resolve flow solves ticket and blocks further replies on old thread", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addCustomerMessageToTicket", fakeZendesk.addCustomerMessageToTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "solveTicket", fakeZendesk.solveTicket, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(productService, "searchProducts", async () => null, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async () => buildKnowledgeResult({
+    source: "onedrive",
+    title: "Otkup knjiga - postupak",
+    body: "Knjige možete donijeti u antikvarijat ili poslati popis za procjenu."
+  }), restoreList);
+  stubMethod(aiService, "generateReply", async () => ({
+    decision: "safe_answer",
+    reply: "Knjige možete donijeti u antikvarijat ili poslati popis za procjenu.",
+    clarifying_question: "",
+    reason: "context_supported"
+  }), restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const startResponse = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Želim prodati knjige",
+          entryIntent: "otkup_knjiga",
+          entryFlowVersion: "v1"
+        }
+      });
+      const startJson = startResponse.body;
+
+      const resolvePromptResponse = await invokeRoute("post", "/api/chat/message", {
+        body: {
+          sessionId: startJson.sessionId,
+          message: "hvala, riješeno je"
+        }
+      });
+      assert.equal(resolvePromptResponse.statusCode, 200);
+      assert.equal(resolvePromptResponse.body.resolutionPrompt?.show, true);
+
+      const resolveResponse = await invokeRoute("post", "/api/chat/resolve", {
+        body: {
+          sessionId: startJson.sessionId,
+          confirmed: true
+        }
+      });
+      assert.equal(resolveResponse.statusCode, 200);
+      assert.equal(resolveResponse.body.action, "ticket_solved");
+      assert.equal(resolveResponse.body.conversationState.tone, "resolved");
+
+      const followUpResponse = await invokeRoute("post", "/api/chat/message", {
+        body: {
+          sessionId: startJson.sessionId,
+          message: "Imam još jedno pitanje"
+        }
+      });
+      assert.equal(followUpResponse.statusCode, 409);
+      assert.equal(followUpResponse.body.conversationState.tone, "resolved");
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("zendesk event webhook flips sessions into human_active and resolved states", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addCustomerMessageToTicket", fakeZendesk.addCustomerMessageToTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "solveTicket", fakeZendesk.solveTicket, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(zendeskService, "verifyWebhookToken", () => true, restoreList);
+  stubMethod(productService, "searchProducts", async () => null, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async () => buildKnowledgeResult({
+    source: "zendesk",
+    title: "Radno vrijeme i kontakt",
+    body: "Radimo ponedjeljak-petak 08:00-20:00."
+  }), restoreList);
+  stubMethod(aiService, "generateReply", async () => ({
+    decision: "safe_answer",
+    reply: "Radimo ponedjeljak-petak 08:00-20:00.",
+    clarifying_question: "",
+    reason: "context_supported"
+  }), restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const startResponse = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Koje vam je radno vrijeme?",
+          entryIntent: "opci_upit",
+          entryFlowVersion: "v1"
+        }
+      });
+      const startJson = startResponse.body;
+
+      fakeZendesk.addHumanReply({
+        ticketId: startJson.ticketId,
+        body: "Naš tim preuzima razgovor."
+      });
+
+      const humanEventResponse = await invokeRoute("post", "/webhook/zendesk/events", {
+        headers: {
+          "x-zendesk-webhook-token": "valid"
+        },
+        body: {
+          ticket_id: startJson.ticketId
+        }
+      });
+      assert.equal(humanEventResponse.statusCode, 200);
+      assert.equal(humanEventResponse.body.updatedSessions, 1);
+
+      const sessionAfterHuman = await invokeRoute("get", "/api/chat/session/:sessionId", {
+        params: {
+          sessionId: startJson.sessionId
+        }
+      });
+      assert.equal(sessionAfterHuman.body.session.conversationState.tone, "human-active");
+
+      fakeZendesk.state.tickets.get(startJson.ticketId).summary.status = "solved";
+      const resolvedEventResponse = await invokeRoute("post", "/webhook/zendesk/events", {
+        headers: {
+          "x-zendesk-webhook-token": "valid"
+        },
+        body: {
+          ticket_id: startJson.ticketId
+        }
+      });
+      assert.equal(resolvedEventResponse.statusCode, 200);
+
+      const sessionAfterResolved = await invokeRoute("get", "/api/chat/session/:sessionId", {
+        params: {
+          sessionId: startJson.sessionId
+        }
+      });
+      assert.equal(sessionAfterResolved.body.session.conversationState.tone, "resolved");
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("zendesk event webhook rejects invalid tokens", async () => {
+  const restoreList = [];
+
+  stubMethod(zendeskService, "verifyWebhookToken", () => false, restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const response = await invokeRoute("post", "/webhook/zendesk/events", {
+        headers: {
+          "x-zendesk-webhook-token": "invalid"
+        },
+        body: {
+          ticket_id: 123
+        }
+      });
+
+      assert.equal(response.statusCode, 401);
+      assert.match(response.body.error, /Invalid Zendesk webhook token/);
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("chat stream sends initial session update and subsequent broadcast", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addCustomerMessageToTicket", fakeZendesk.addCustomerMessageToTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(productService, "searchProducts", async () => null, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async () => buildKnowledgeResult({
+    source: "zendesk",
+    title: "Radno vrijeme i kontakt",
+    body: "Radimo ponedjeljak-petak 08:00-20:00."
+  }), restoreList);
+  stubMethod(aiService, "generateReply", async () => ({
+    decision: "safe_answer",
+    reply: "Radimo ponedjeljak-petak 08:00-20:00.",
+    clarifying_question: "",
+    reason: "context_supported"
+  }), restoreList);
+  stubMethod(aiService, "generateGroundedAnswer", async () => "", restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const startResponse = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Koje vam je radno vrijeme?",
+          entryIntent: "opci_upit",
+          entryFlowVersion: "v1"
+        }
+      });
+      const startJson = startResponse.body;
+
+      const streamResponse = await invokeRoute("get", "/api/chat/stream/:sessionId", {
+        params: {
+          sessionId: startJson.sessionId
+        }
+      });
+      assert.equal(streamResponse.statusCode, 200);
+      assert.ok(streamResponse.writes.some((chunk) => chunk.includes("event: session_update")));
+
+      const writesBeforeMessage = streamResponse.writes.length;
+      await invokeRoute("post", "/api/chat/message", {
+        body: {
+          sessionId: startJson.sessionId,
+          message: "A gdje se nalazite?"
+        }
+      });
+      assert.ok(streamResponse.writes.length > writesBeforeMessage);
+      assert.ok(streamResponse.writes.filter((chunk) => chunk.includes("event: session_update")).length >= 2);
+
+      streamResponse.req?.emit?.("close");
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("knowledge failure falls back to soft handoff instead of route crash", async () => {
+  const restoreList = [];
+  const fakeZendesk = createFakeZendesk();
+
+  stubMethod(zendeskService, "uploadAttachments", fakeZendesk.uploadAttachments, restoreList);
+  stubMethod(zendeskService, "createChatTicket", fakeZendesk.createChatTicket, restoreList);
+  stubMethod(zendeskService, "addBotReplyToTicket", fakeZendesk.addBotReplyToTicket, restoreList);
+  stubMethod(zendeskService, "addInternalNote", fakeZendesk.addInternalNote, restoreList);
+  stubMethod(zendeskService, "addTagAndNote", fakeZendesk.addTagAndNote, restoreList);
+  stubMethod(zendeskService, "updateConversationState", fakeZendesk.updateConversationState, restoreList);
+  stubMethod(zendeskService, "getTicketSummary", fakeZendesk.getTicketSummary, restoreList);
+  stubMethod(zendeskService, "getTicketAudits", fakeZendesk.getTicketAudits, restoreList);
+  stubMethod(knowledgeService, "searchKnowledgeDetailed", async () => {
+    throw new Error("Knowledge backend unavailable");
+  }, restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const response = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Koje vam je radno vrijeme?",
+          entryIntent: "opci_upit",
+          entryFlowVersion: "v1"
+        }
+      });
+
+      assert.equal(response.statusCode, 200);
+      const latestAssistant = [...response.body.messages].reverse().find((message) => message.role === "assistant");
+      assert.match(latestAssistant.content, /Ne želim|Ne zelim/);
+      assert.equal(response.body.conversationState.tone, "awaiting-human");
+    });
+  } finally {
+    restoreMethods(restoreList);
+  }
+});
+
+test("attachment upload failure returns retryable web error instead of crashing", async () => {
+  const restoreList = [];
+
+  stubMethod(zendeskService, "uploadAttachments", async () => {
+    throw new Error("Upload unavailable");
+  }, restoreList);
+
+  try {
+    await withRuntimeReset(async () => {
+      const response = await invokeRoute("post", "/api/chat/start", {
+        body: {
+          name: "Ana Horvat",
+          email: "ana@example.com",
+          message: "Šaljem privitak"
+        },
+        files: [
+          {
+            originalname: "slika.jpg",
+            mimetype: "image/jpeg",
+            size: 1024,
+            buffer: Buffer.from("x")
+          }
+        ]
+      });
+
+      assert.equal(response.statusCode, 503);
+      assert.match(response.body.error, /Privitke trenutno ne možemo obraditi/);
     });
   } finally {
     restoreMethods(restoreList);

@@ -59,3 +59,9 @@ Ako fail nastane, prvo utvrditi spada li u jednu od tri skupine:
 - `intent_wrong`
 - `topic_shift_wrong`
 - `source_or_render_wrong`
+
+## Povezani operativni dokumenti
+
+- `docs/pre-release-smoke-checklist.md`
+- `docs/knowledge-source-of-truth.md`
+- `docs/support-runbook.md`

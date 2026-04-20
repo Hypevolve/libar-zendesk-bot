@@ -306,6 +306,70 @@ function stripHtmlWithLineBreaks(html = "") {
     .replace(/<[^>]+>/g, "");
 }
 
+function stripQuotedEmailContent(content = "") {
+  const lines = String(content || "").split("\n");
+
+  if (lines.length === 0) {
+    return "";
+  }
+
+  const quoteMarkerPatterns = [
+    /^>+/,
+    /^-+\s*original message\s*-+$/i,
+    /^on .+wrote:$/i,
+    /^from:\s.+$/i,
+    /^sent:\s.+$/i,
+    /^subject:\s.+$/i,
+    /^to:\s.+$/i,
+    /^\*{2,}\s*original message\s*\*{2,}$/i
+  ];
+  let cutoffIndex = lines.length;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+
+    if (!line) {
+      continue;
+    }
+
+    if (quoteMarkerPatterns.some((pattern) => pattern.test(line))) {
+      cutoffIndex = index;
+      break;
+    }
+  }
+
+  return lines.slice(0, cutoffIndex).join("\n").trim();
+}
+
+function stripEmailSignature(content = "") {
+  const signaturePatterns = [
+    /^--\s*$/,
+    /^srda(?:c|č)an pozdrav[,]?$/i,
+    /^lijep pozdrav[,]?$/i,
+    /^pozdrav[,]?$/i,
+    /^lp[,]?$/i,
+    /^best regards[,]?$/i,
+    /^kind regards[,]?$/i,
+    /^sent from my iphone$/i,
+    /^sent from my android$/i
+  ];
+  const lines = String(content || "").split("\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+
+    if (!line) {
+      continue;
+    }
+
+    if (signaturePatterns.some((pattern) => pattern.test(line))) {
+      return lines.slice(0, index).join("\n").trim();
+    }
+  }
+
+  return String(content || "").trim();
+}
+
 function normalizeZendeskCommentContent(comment = {}) {
   const sources = [comment.html_body, comment.plain_body, comment.body].filter(Boolean);
 
@@ -314,7 +378,11 @@ function normalizeZendeskCommentContent(comment = {}) {
   }
 
   for (const source of sources) {
-    const normalized = decodeHtmlEntities(stripHtmlWithLineBreaks(source))
+    const normalized = stripEmailSignature(
+      stripQuotedEmailContent(
+        decodeHtmlEntities(stripHtmlWithLineBreaks(source))
+      )
+    )
       .replace(/^https?:\/\/(?:www\.)?antikvarijat-libar\.com\/?\s*$/gim, "")
       .replace(/\n[ \t]+/g, "\n")
       .replace(/[ \t]+\n/g, "\n")
@@ -1643,17 +1711,34 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
   } else {
     const searchQuery = conversation.standaloneQuery || userMessage;
-    const productMatch = !preferKnowledgeBeforeClarify && shouldUseProductSearch(conversation)
-      ? await productService.searchProducts(searchQuery)
-      : null;
+    let productMatch = null;
+
+    if (!preferKnowledgeBeforeClarify && shouldUseProductSearch(conversation)) {
+      try {
+        productMatch = await productService.searchProducts(searchQuery);
+      } catch (error) {
+        console.error("Product search failed:", {
+          message: error.message,
+          searchQuery
+        });
+      }
+    }
 
     if (productMatch) {
       outcome = buildProductOutcomeForChannel(productMatch, { channelType });
     } else {
-      knowledge = await knowledgeService.searchKnowledgeDetailed(
-        searchQuery,
-        buildSearchOptions(session, conversation)
-      );
+      try {
+        knowledge = await knowledgeService.searchKnowledgeDetailed(
+          searchQuery,
+          buildSearchOptions(session, conversation)
+        );
+      } catch (error) {
+        console.error("Knowledge search failed:", {
+          message: error.message,
+          searchQuery
+        });
+        knowledge = null;
+      }
       outcome = await determineChatOutcome(searchQuery, knowledge, {
         hasAttachments: false,
         channelType,
@@ -2136,7 +2221,20 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       entryPromptAnswer,
       entryFlowVersion
     });
-    const uploadedAttachments = await zendeskService.uploadAttachments(files);
+    let uploadedAttachments = [];
+    try {
+      uploadedAttachments = await zendeskService.uploadAttachments(files);
+    } catch (error) {
+      console.error("Attachment upload failed while starting chat session:", {
+        message: error.message,
+        stack: error.stack
+      });
+
+      return res.status(503).json({
+        success: false,
+        error: "Privitke trenutno ne možemo obraditi. Pokušajte ponovno bez privitka ili malo kasnije."
+      });
+    }
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
     const { ticketId, requesterId } = await zendeskService.createChatTicket({
       requesterName: name,
@@ -2402,7 +2500,22 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
     });
   }
 
-    const uploadedAttachments = await zendeskService.uploadAttachments(files);
+    let uploadedAttachments = [];
+    try {
+      uploadedAttachments = await zendeskService.uploadAttachments(files);
+    } catch (error) {
+      console.error("Attachment upload failed while continuing chat session:", {
+        sessionId,
+        ticketId: session.ticketId,
+        message: error.message,
+        stack: error.stack
+      });
+
+      return res.status(503).json({
+        success: false,
+        error: "Privitke trenutno ne možemo obraditi. Pokušajte ponovno bez privitka ili malo kasnije."
+      });
+    }
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
 
     await zendeskService.addCustomerMessageToTicket(
@@ -2875,6 +2988,7 @@ module.exports = {
     getAutomationBlockReason,
     getChannelMessages,
     mapZendeskAuditsToMessages,
-    normalizeChannelType
+    normalizeChannelType,
+    normalizeZendeskCommentContent
   }
 };
