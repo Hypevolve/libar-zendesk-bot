@@ -1,4 +1,5 @@
 const oneDriveService = require("./oneDriveService");
+const zendeskService = require("./zendeskService");
 
 const KNOWLEDGE_CONTEXT_ITEMS = Number(process.env.KNOWLEDGE_CONTEXT_ITEMS) || 5;
 
@@ -6,12 +7,29 @@ function normalizeKnowledgeArticles(result) {
   return Array.isArray(result?.articles) ? result.articles : [];
 }
 
-async function searchKnowledgeDetailed(query, options = {}) {
-  // Prema planu, zahtijevamo isključivo OneDrive dokumentaciju.
-  const oneDriveKnowledge = await oneDriveService.searchOneDriveDetailed(query, options);
+function normalizeSourceArticles(result, source) {
+  return normalizeKnowledgeArticles(result).map((entry) => ({
+    ...entry,
+    source: entry?.source || source
+  }));
+}
 
-  const candidates = normalizeKnowledgeArticles(oneDriveKnowledge)
-    .sort((left, right) => (right.score || 0) - (left.score || 0))
+function mergeKnowledgeResults(results = []) {
+  const candidates = results
+    .flatMap(({ result, source }) => normalizeSourceArticles(result, source))
+    .sort((left, right) => {
+      const scoreDifference = (right.score || 0) - (left.score || 0);
+
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      if (left.source === right.source) {
+        return 0;
+      }
+
+      return left.source === "onedrive" ? -1 : 1;
+    })
     .slice(0, KNOWLEDGE_CONTEXT_ITEMS);
 
   if (candidates.length === 0) {
@@ -20,7 +38,7 @@ async function searchKnowledgeDetailed(query, options = {}) {
 
   const context = candidates
     .map((entry, index) => [
-      `Izvor ${index + 1} (Baza znanja):`,
+      `Izvor ${index + 1} (${entry.source === "zendesk" ? "Zendesk Help Center" : "OneDrive"}):`,
       `Naslov: ${entry.title}`,
       `Sadržaj: ${entry.body}`
     ].filter(Boolean).join("\n"))
@@ -31,8 +49,20 @@ async function searchKnowledgeDetailed(query, options = {}) {
     articles: candidates,
     topScore: candidates[0]?.score || 0,
     totalMatches: candidates.length,
-    primarySource: "onedrive"
+    primarySource: candidates[0]?.source || null
   };
+}
+
+async function searchKnowledgeDetailed(query, options = {}) {
+  const [oneDriveKnowledge, zendeskKnowledge] = await Promise.all([
+    oneDriveService.searchOneDriveDetailed(query, options),
+    zendeskService.searchHelpCenterDetailed(query, options)
+  ]);
+
+  return mergeKnowledgeResults([
+    { result: oneDriveKnowledge, source: "onedrive" },
+    { result: zendeskKnowledge, source: "zendesk" }
+  ]);
 }
 
 async function searchKnowledge(query, options = {}) {
