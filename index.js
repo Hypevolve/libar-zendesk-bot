@@ -26,7 +26,7 @@ const CHAT_START_DEDUPLICATION_TTL_MS =
 const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 8;
-const BLOCKED_AUTOPILOT_TAGS = new Set(["human_active", "resolved"]);
+const BLOCKED_AUTOPILOT_TAGS = new Set(["resolved"]);
 const ENTRY_FLOW_VERSION = "v1";
 const ENTRY_INTENT_LABELS = {
   kupnja_knjiga: "Kupnja knjiga",
