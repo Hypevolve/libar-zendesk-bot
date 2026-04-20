@@ -9,14 +9,8 @@ const aiService = require("./services/aiService");
 const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
 const spamFilterService = require("./services/spamFilterService");
-const productService = require("./services/productService");
-const reasoningService = require("./services/reasoningService");
-const memoryService = require("./services/memoryService");
-const plannerService = require("./services/plannerService");
 const runtimeStore = require("./services/runtimeStore");
 const metricsService = require("./services/metricsService");
-const { composeDeterministicReply } = require("./services/responseComposer");
-const { validateAnswerQuality } = require("./services/answerQualityService");
 const { BASE_URL, buildDirectWebsiteLinks } = require("./services/siteLinkService");
 const { normalizeForComparison } = require("./services/textUtils");
 
@@ -831,10 +825,6 @@ function applyZendeskStateToSession(session, { audits = [], ticketSummary = null
   session.messages = mapZendeskAuditsToMessages(audits, session.requesterId, ticketSummary);
   session.requesterName = ticketSummary.requesterName || session.requesterName || "";
   session.requesterEmail = ticketSummary.requesterEmail || session.requesterEmail || "";
-  memoryService.applyWorkingMemoryToSession(
-    session,
-    memoryService.extractLatestWorkingMemory(audits)
-  );
   session.conversationState = buildConversationState(ticketSummary, session.messages);
   session.resolutionPrompt = getResolutionPrompt(session, ticketSummary);
   session.updatedAt = new Date().toISOString();
@@ -1074,69 +1064,21 @@ function buildAutopilotNote({
   outcome,
   userMessage,
   knowledge,
-  channelType = "web_chat",
-  conversation = null
+  channelType = "web_chat"
 }) {
-  const topArticles = Array.isArray(knowledge?.articles) ? knowledge.articles.slice(0, 2) : [];
-  const sourceSummary = topArticles
-    .map((article) => article.title)
-    .filter(Boolean)
-    .join(" | ");
-  const selectedSources = Array.isArray(conversation?.supportPlan?.selectedSources)
-    ? conversation.supportPlan.selectedSources
-    : [];
-  const blockedSources = Array.isArray(conversation?.supportPlan?.mustNotUseSources)
-    ? conversation.supportPlan.mustNotUseSources
-    : [];
   const summaryLine = [
     `Kanal: ${formatChannelLabel(channelType)}`,
-    `Ishod: ${outcome?.type || "unknown"}`,
-    conversation?.supportPlan?.route ? `Ruta: ${conversation.supportPlan.route}` : null,
-    conversation?.reasoningResult?.taskIntent ? `Tema: ${conversation.reasoningResult.taskIntent}` : null
-  ]
-    .filter(Boolean)
-    .join(" | ");
-  const analysisLine = [
-    conversation?.reasoningResult?.actionIntent ? `Akcija: ${conversation.reasoningResult.actionIntent}` : null,
-    conversation?.reasoningResult?.questionType ? `Pitanje: ${conversation.reasoningResult.questionType}` : null,
-    conversation?.reasoningResult?.emotionalTone ? `Ton: ${conversation.reasoningResult.emotionalTone}` : null,
-    conversation?.isFollowUp ? "Follow-up: da" : null
-  ]
-    .filter(Boolean)
-    .join(" | ");
-  const knowledgeLine = [
-    knowledge?.primarySource
-      ? `Primarni izvor: ${knowledge.primarySource === "onedrive" ? "OneDrive" : "Zendesk"}`
-      : outcome?.source === "product_feed"
-        ? "Primarni izvor: Product feed"
-        : null,
-    knowledge?.quality?.isStrong ? "Knowledge: strong" : null,
-    knowledge?.quality?.isWeak ? "Knowledge: weak" : null,
-    knowledge?.quality?.hasConflict ? "Knowledge: conflict" : null,
-    Number.isFinite(Number(knowledge?.topScore)) ? `Score: ${Number(knowledge.topScore).toFixed(2)}` : null
-  ]
-    .filter(Boolean)
-    .join(" | ");
+    `Ishod: ${outcome?.type || "unknown"}`
+  ].filter(Boolean).join(" | ");
+
+  const knowledgeLine = knowledge && knowledge.articles && knowledge.articles.length > 0
+    ? `Korišteni dokument: ${knowledge.articles[0].title}`
+    : "Odgovor nije pronađen na OneDrive-u.";
 
   return [
     summaryLine,
     `Korisnik: ${userMessage}`,
-    conversation?.standaloneQuery && conversation.standaloneQuery !== userMessage
-      ? `Standalone upit: ${conversation.standaloneQuery}`
-      : null,
-    analysisLine || null,
-    selectedSources.length > 0 ? `Dozvoljeni izvori: ${selectedSources.join(", ")}` : null,
-    blockedSources.length > 0 ? `Blokirani izvori: ${blockedSources.join(", ")}` : null,
-    conversation?.missingSlots?.length ? `Nedostaje: ${conversation.missingSlots.join(", ")}` : null,
-    conversation?.riskFlags?.length ? `Rizici: ${conversation.riskFlags.join(", ")}` : null,
-    knowledgeLine || null,
-    knowledge?.quality?.hasConflict && knowledge?.quality?.conflictFields?.length
-      ? `Konfliktna polja: ${knowledge.quality.conflictFields.join(", ")}`
-      : null,
-    sourceSummary ? `Korišteni izvori: ${sourceSummary}` : null,
-    Array.isArray(outcome?.products) && outcome.products.length > 0
-      ? `Proizvodi: ${outcome.products.map((product) => product.title).filter(Boolean).join(", ")}`
-      : null,
+    knowledgeLine,
     outcome?.reason ? `Razlog: ${outcome.reason}` : null
   ]
     .filter(Boolean)
@@ -1267,18 +1209,8 @@ function appendDirectWebsiteLink(
   };
 }
 
-function buildMemoryNote(session, conversation, outcome, knowledge, ticketSummary, previousMemory = null) {
-  const memory = memoryService.buildWorkingMemory({
-    session,
-    conversation,
-    outcome,
-    knowledge,
-    ticketSummary,
-    previousMemory
-  });
-
-  session.workingMemory = memory;
-  return memoryService.serializeWorkingMemory(memory);
+function buildMemoryNote() {
+  return null;
 }
 
 function buildLifecycleOutcome(session, tone = "") {
@@ -1630,21 +1562,15 @@ async function persistWorkingMemory(session, conversation, outcome, knowledge, t
   return session.workingMemory;
 }
 
-async function determineChatOutcome(
-  userMessage,
-  knowledge,
-  {
-    hasAttachments = false,
-    channelType = "web_chat",
-    conversation = null,
-    allowClarifyingQuestion = true,
-    clarifyAfterKnowledge = false,
-    customerName = "",
-    supportPlan = null,
-    reasoningResult = null,
-    responsePolicy = null
-  } = {}
-) {
+
+
+
+
+
+
+
+
+async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
   const channelMessages = getChannelMessages(channelType);
 
   if (hasAttachments) {
@@ -1652,510 +1578,43 @@ async function determineChatOutcome(
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: "attachments_present",
-      customerMessage: channelMessages.attachmentHandoff
+      outcome: { type: "hard_handoff", stateTag: "awaiting_human", customerMessage: channelMessages.attachmentHandoff },
+      conversation: { missingSlots: [], canAskClarifyingQuestion: false }
     };
   }
 
-  if (
-    supportPlan?.route === "handoff_hard" ||
-    hasCriticalRiskFlags(conversation)
-  ) {
-    return {
-      type: "hard_handoff",
-      stateTag: "awaiting_human",
-      reason: "sensitive_or_complaint_topic",
-      customerMessage: channelMessages.hardHandoff
-    };
-  }
-
-  const hasClarifyingNeed = Boolean(
-    allowClarifyingQuestion &&
-      (responsePolicy?.mode === "ask_one_question" || supportPlan?.route === "clarify") &&
-      ((conversation?.missingSlots?.length > 0 && conversation?.canAskClarifyingQuestion) ||
-        supportPlan?.route === "clarify") &&
-      conversation?.clarifyingQuestion
-  );
-
-  if (!clarifyAfterKnowledge && hasClarifyingNeed) {
-    return {
-      type: "ask_clarifying_question",
-      stateTag: "awaiting_customer_detail",
-      reason: "missing_required_detail",
-      customerMessage: conversation.clarifyingQuestion
-    };
-  }
-
-  if (!knowledge?.context || !knowledge?.topScore || knowledge.topScore < KNOWLEDGE_MIN_TOP_SCORE) {
-    if (clarifyAfterKnowledge && hasClarifyingNeed) {
-      return {
-        type: "ask_clarifying_question",
-        stateTag: "awaiting_customer_detail",
-        reason: "missing_required_detail",
-        customerMessage: conversation.clarifyingQuestion
-      };
-    }
-
-    return {
-      type: "soft_handoff",
-      stateTag: "awaiting_human",
-      reason: "insufficient_context_confidence",
-      customerMessage: channelMessages.softHandoff
-    };
-  }
-
-  if (knowledge?.quality?.hasConflict) {
-    metricsService.increment("knowledge_conflict_handoff_total");
-    return {
-      type: "soft_handoff",
-      stateTag: "awaiting_human",
-      reason: "knowledge_source_conflict",
-      customerMessage: channelMessages.softHandoff
-    };
-  }
-
-  if (knowledge?.quality?.isWeak) {
-    if (clarifyAfterKnowledge && hasClarifyingNeed) {
-      return {
-        type: "ask_clarifying_question",
-        stateTag: "awaiting_customer_detail",
-        reason: "missing_required_detail",
-        customerMessage: conversation.clarifyingQuestion
-      };
-    }
-
-    return {
-      type: "soft_handoff",
-      stateTag: "awaiting_human",
-      reason: "knowledge_intent_mismatch",
-      customerMessage: channelMessages.softHandoff
-    };
-  }
-
-  if (
-    responsePolicy?.acceptLowMarginDirectInfo &&
-    knowledge?.quality?.directAnswerability &&
-    knowledge?.quality?.contextConsistency &&
-    knowledge?.quality?.jobMatch
-  ) {
-    knowledge.quality.isStrong = true;
-  }
-
-  if (
-    (allowClarifyingQuestion || clarifyAfterKnowledge) &&
-    knowledge?.quality &&
-    !knowledge.quality.isStrong &&
-    responsePolicy?.mode === "ask_one_question" &&
-    conversation?.clarifyingQuestion
-  ) {
-    return {
-      type: "ask_clarifying_question",
-      stateTag: "awaiting_customer_detail",
-      reason: "knowledge_ambiguous",
-      customerMessage: conversation.clarifyingQuestion
-    };
-  }
-
-  const deterministicReply = composeDeterministicReply({ conversation, knowledge });
-
-  if (deterministicReply) {
-    metricsService.increment("deterministic_kb_answer_total");
-    return {
-      type: "safe_answer",
-      stateTag: "ai_active",
-      reason: "deterministic_kb_answer",
-      customerMessage: deterministicReply,
-      source: knowledge?.primarySource || ""
-    };
-  }
-
-  const aiDecision = await aiService.generateReply(userMessage, knowledge.context, {
-    channelType,
-    conversationSummary: conversation?.summary || "",
-    responsePlan: conversation?.responsePlan || null,
-    supportPlan,
-    reasoningResult,
-    standaloneQuery: conversation?.standaloneQuery || userMessage,
-    missingSlots: conversation?.missingSlots || [],
-    riskFlags: conversation?.riskFlags || [],
-    customerName,
-    knowledgeQuality: knowledge?.quality || null,
-    responsePolicy
-  });
-
-  if (responsePolicy?.mode === "answer_now" && aiDecision.decision === "ask_clarifying_question") {
-    return {
-      type: "safe_answer",
-      stateTag: "ai_active",
-      reason: "forced_answer_now",
-      customerMessage: aiDecision.reply || channelMessages.softHandoff
-    };
-  }
-
-  if (aiDecision.decision === "hard_handoff") {
-    return {
-      type: "hard_handoff",
-      stateTag: "awaiting_human",
-      reason: aiDecision.reason || "ai_flagged_hard_handoff",
-      customerMessage: channelMessages.hardHandoff
-    };
-  }
-
-  if (aiDecision.decision === "ask_clarifying_question") {
-    return {
-      type: "ask_clarifying_question",
-      stateTag: "awaiting_customer_detail",
-      reason: aiDecision.reason || "needs_clarification",
-      customerMessage: aiDecision.clarifyingQuestion || aiDecision.reply
-    };
-  }
-
-  if (aiDecision.decision === "soft_handoff") {
-    if (shouldAttemptGroundedAnswerFallback(knowledge)) {
-      const focusedContext = buildFocusedKnowledgeContext(knowledge, 2);
-      const groundedReply = await aiService.generateGroundedAnswer(userMessage, focusedContext, {
-        channelType,
-        customerName,
-        conversationSummary: conversation?.summary || ""
-      });
-
-      if (groundedReply) {
-        return {
-          type: "safe_answer",
-          stateTag: "ai_active",
-          reason: "grounded_answer_fallback",
-          customerMessage: groundedReply
-        };
-      }
-    }
-
-    return {
-      type: "soft_handoff",
-      stateTag: "awaiting_human",
-      reason: aiDecision.reason || "ai_flagged_unknown",
-      customerMessage: channelMessages.softHandoff
-    };
-  }
-
-  return {
-    type: "safe_answer",
-    stateTag: "ai_active",
-    reason: aiDecision.reason || "context_grounded_answer",
-    customerMessage: aiDecision.reply
-  };
-}
-
-function buildProductOutcome(productMatch) {
-  return buildProductOutcomeForChannel(productMatch, { channelType: "web_chat" });
-}
-
-function buildProductReplyForChannel(products = [], channelType = "web_chat") {
-  const normalizedChannelType = normalizeChannelType(channelType);
-  const intro =
-    products.length === 1
-      ? "Našao sam ovaj udžbenik."
-      : "Našao sam nekoliko relevantnih udžbenika.";
-  const disclaimer =
-    "Cijena i dostupnost mogu odstupati, pa ih prije kupnje provjerite na webshop linku.";
-
-  if (normalizedChannelType === "web_chat") {
-    return [intro, disclaimer].join("\n");
-  }
-
-  const productBlocks = products.map((product, index) =>
-    [
-      `${index + 1}. ${product.title}`,
-      product.priceLabel ? `Cijena: ${product.priceLabel}` : null,
-      product.priceLabel ? "" : null,
-      product.buyLink ? `Kupnja: ${product.buyLink}` : null,
-      product.buyLink && product.sellLink ? "" : null,
-      product.sellLink ? `Otkup: ${product.sellLink}` : null
-    ]
-      .filter((line) => line !== null)
-      .join("\n")
-  );
-
-  const sections = [intro, ...productBlocks, disclaimer].filter(Boolean);
-  return sections.join("\n\n");
-}
-
-function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" } = {}) {
-  const replyText = buildProductReplyForChannel(productMatch.products, channelType);
-
-  return {
-    type: "safe_answer",
-    source: "product_feed",
-    stateTag: "ai_active",
-    reason: "product_feed_match",
-    topScore: productMatch.topScore,
-    customerMessage: replyText,
-    products: productMatch.products,
-    zendeskMessage: replyText,
-    zendeskSummary: productMatch.zendeskSummary
-  };
-}
-
-function buildConversationAnalysis(session, userMessage) {
-  const baseConversation = reasoningService.analyzeConversation({
-    message: userMessage,
-    messages: session?.messages || [],
-    entryIntent: session?.entryIntent || "",
-    pendingClarification: session?.pendingClarification || null,
-    session: session || {}
-  });
-  const entryTopicLockReleased = shouldReleaseEntryTopicLock(session, baseConversation);
-  const plannerSession = entryTopicLockReleased
-    ? {
-        ...session,
-        entryTopicLock: "",
-        entryTopicSourcePolicy: null
-      }
-    : session;
-  const supportPlan = plannerService.buildSupportPlan({
-    reasoningResult: baseConversation.reasoningResult,
-    session: plannerSession,
-    hasAttachments: false
-  });
-  const responsePolicy = {
-    mode:
-      baseConversation.reasoningResult?.answerabilityClass === "ask_one_question"
-        ? "ask_one_question"
-        : baseConversation.reasoningResult?.answerabilityClass === "handoff"
-          ? "handoff"
-          : "answer_now",
-    brevity:
-      ["buyback", "delivery", "order"].includes(baseConversation.reasoningResult?.activeDomain)
-        ? "procedural_short"
-        : baseConversation.reasoningResult?.activeDomain === "support_info"
-          ? "terse"
-          : "short",
-    sourceContract: baseConversation.reasoningResult?.sourceContract || "knowledge_first",
-    acceptLowMarginDirectInfo: baseConversation.reasoningResult?.activeDomain === "support_info",
-    forbiddenContent:
-      baseConversation.reasoningResult?.sourceContract === "support_only"
-        ? ["product_links", "webshop_mentions", "multi_questioning"]
-        : []
-  };
-  const retrievalFrame = {
-    activeDomain: baseConversation.reasoningResult?.activeDomain || "",
-    userJob: baseConversation.reasoningResult?.actionIntent || "",
-    questionType: baseConversation.reasoningResult?.questionType || "",
-    subjectType: baseConversation.reasoningResult?.subjectType || "",
-    activeReferenceType:
-      baseConversation.reasoningResult?.entities?.order_reference
-        ? "order"
-        : baseConversation.reasoningResult?.entities?.city
-          ? "city"
-          : baseConversation.reasoningResult?.entities?.book_title
-            ? "book"
-            : "",
-    activeReferenceValue:
-      baseConversation.reasoningResult?.entities?.order_reference ||
-      baseConversation.reasoningResult?.entities?.city ||
-      baseConversation.reasoningResult?.entities?.book_title ||
-      "",
-    shouldResetPreviousRetrieval: baseConversation.reasoningResult?.topicShiftType === "support_to_support_shift",
-    allowedSources: supportPlan.selectedSources || [],
-    blockedSources: supportPlan.mustNotUseSources || []
-  };
-  const responsePlan = {
-    intent: baseConversation.reasoningResult?.primaryIntent || "general_support",
-    taskIntent: baseConversation.reasoningResult?.taskIntent || "",
-    actionIntent: baseConversation.reasoningResult?.actionIntent || "",
-    nextStep:
-      supportPlan.nextBestAction === "ask_missing_detail" || supportPlan.nextBestAction === "disambiguate"
-        ? baseConversation.missingSlots?.[0] || "clarify"
-        : "answer",
-    steps: [
-      `Planner route: ${supportPlan.route}`,
-      `Response mode: ${supportPlan.responseMode}`,
-      `Tone mode: ${supportPlan.toneMode}`,
-      baseConversation.reasoningResult?.taskIntent
-        ? `Task intent: ${baseConversation.reasoningResult.taskIntent}`
-        : "",
-      baseConversation.reasoningResult?.actionIntent
-        ? `Action intent: ${baseConversation.reasoningResult.actionIntent}`
-        : "",
-      baseConversation.standaloneQuery
-        ? `Standalone upit za retrieval: ${baseConversation.standaloneQuery.slice(0, 180)}`
-        : ""
-    ].filter(Boolean)
-  };
-
-  return {
-    ...baseConversation,
-    entryTopicLockActive: Boolean(plannerSession?.entryTopicLock),
-    entryTopicLockReleased,
-    effectiveEntryTopicLock: plannerSession?.entryTopicLock || "",
-    retrievalFrame,
-    responsePolicy,
-    responsePlan,
-    supportPlan
-  };
-}
-
-function shouldUseProductSearch(conversation = null) {
-  if (!conversation) {
-    return false;
-  }
-
-  const route = String(conversation.supportPlan?.route || "").trim();
-  const primaryIntent = String(conversation.reasoningResult?.primaryIntent || "").trim();
-  const taskIntent = String(conversation.reasoningResult?.taskIntent || "").trim();
-  const activeDomain = String(conversation.reasoningResult?.activeDomain || "").trim();
-  const sourceContract = String(conversation.reasoningResult?.sourceContract || "").trim();
-  const effectiveEntryTopicLock = String(conversation.effectiveEntryTopicLock || "").trim();
-
-  if (conversation.supportPlan?.mustNotUseSources?.includes("product_feed")) {
-    return false;
-  }
-
-  if (sourceContract !== "product_allowed") {
-    return false;
-  }
-
-  if (effectiveEntryTopicLock && effectiveEntryTopicLock !== "product_lookup") {
-    return false;
-  }
-
-  if ((activeDomain && activeDomain !== "product_lookup") || (taskIntent && taskIntent !== "product_lookup")) {
-    return false;
-  }
-
-  return route === "product_feed" &&
-    (primaryIntent === "product_availability" || primaryIntent === "product_pricing");
-}
-
-function shouldPreferKnowledgeBeforeClarify(conversation = null) {
-  if (!conversation) {
-    return false;
-  }
-
-  return (
-    conversation.reasoningResult?.taskIntent === "buyback" &&
-    (conversation.effectiveEntryTopicLock === "buyback" ||
-      ["ask_how_to", "ask_policy", "request_estimate", "ask_timeline", "ask_info"].includes(
-        conversation.reasoningResult?.actionIntent
-      ))
-  );
-}
-
-function buildClosureAcknowledgment(conversation, channelType) {
-  const channelMessages = getChannelMessages(channelType);
-  const closureReplies = [
-    "Nema na čemu! Ako vam zatreba još nešto, slobodno se javite.",
-    "Drago mi je da sam mogao pomoći. Javite se ako bude još pitanja.",
-    "Hvala vama! Tu smo ako zatreba."
-  ];
-  const index = Math.floor(Math.random() * closureReplies.length);
-
-  return {
-    type: "safe_answer",
-    stateTag: "ai_active",
-    reason: "closure_acknowledgment",
-    customerMessage: closureReplies[index]
-  };
-}
-
-async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = false, channelType = "web_chat" } = {}) {
-  const conversation = buildConversationAnalysis(session, userMessage);
-  if (hasAttachments) {
-    conversation.supportPlan = plannerService.buildSupportPlan({
-      reasoningResult: conversation.reasoningResult,
-      session,
-      hasAttachments: true
-    });
-  }
   let knowledge = null;
-  let outcome = null;
-  const customerName = memoryService.getFirstName(session?.requesterName || session?.workingMemory?.customerProfile?.name);
-  const preferKnowledgeBeforeClarify = shouldPreferKnowledgeBeforeClarify(conversation);
-
-  // Fix #4: Closure messages get an acknowledgment, not a handoff.
-  if (
-    !hasAttachments &&
-    conversation.reasoningResult?.primaryIntent === "small_talk_or_closure" &&
-    conversation.supportPlan?.route === "clarify"
-  ) {
-    outcome = buildClosureAcknowledgment(conversation, channelType);
-  } else if (
-    hasAttachments ||
-    conversation.supportPlan?.route === "handoff_hard" ||
-    (!preferKnowledgeBeforeClarify &&
-      (conversation.supportPlan?.route === "clarify" ||
-        (conversation.missingSlots.length > 0 && conversation.canAskClarifyingQuestion)))
-  ) {
-    outcome = await determineChatOutcome(userMessage, null, {
-      hasAttachments,
-      channelType,
-      conversation,
-      allowClarifyingQuestion: true,
-      customerName,
-      supportPlan: conversation.supportPlan,
-      reasoningResult: conversation.reasoningResult,
-      responsePolicy: conversation.responsePolicy
-    });
-  } else {
-    const searchQuery = conversation.standaloneQuery || userMessage;
-    let productMatch = null;
-
-    if (!preferKnowledgeBeforeClarify && shouldUseProductSearch(conversation)) {
-      try {
-        productMatch = await productService.searchProducts(searchQuery);
-      } catch (error) {
-        logError("Product search failed:", {
-          message: error.message,
-          searchQuery
-        });
-      }
-    }
-
-    if (productMatch) {
-      outcome = buildProductOutcomeForChannel(productMatch, { channelType });
-    } else {
-      try {
-        knowledge = await knowledgeService.searchKnowledgeDetailed(
-          searchQuery,
-          buildSearchOptions(session, conversation)
-        );
-      } catch (error) {
-        logError("Knowledge search failed:", {
-          message: error.message,
-          searchQuery
-        });
-        knowledge = null;
-      }
-      outcome = await determineChatOutcome(searchQuery, knowledge, {
-        hasAttachments: false,
-        channelType,
-        conversation,
-        allowClarifyingQuestion: true,
-        clarifyAfterKnowledge: preferKnowledgeBeforeClarify,
-        customerName,
-        supportPlan: conversation.supportPlan,
-        reasoningResult: conversation.reasoningResult,
-        responsePolicy: conversation.responsePolicy
-      });
-    }
+  try {
+    knowledge = await knowledgeService.searchKnowledgeDetailed(userMessage);
+  } catch (err) {
+    logError("Knowledge search failed:", { message: err.message });
   }
 
-  outcome = finalizeOutcomeForCustomer(outcome, {
-    channelType,
-    knowledge,
-    conversation
-  });
-  outcome = appendDirectWebsiteLink(outcome, {
-    conversation,
-    knowledge,
-    channelType
-  });
-  updateSessionMemory(session, conversation, outcome, knowledge);
-  recordOutcomeMetrics(outcome, conversation, knowledge);
+  let customerMessage = null;
+  if (knowledge && knowledge.context) {
+    customerMessage = await aiService.generateGroundedAnswer(userMessage, knowledge.context, {
+      channelType,
+      customerName: session.requesterName || ""
+    });
+  }
 
-  return {
-    conversation,
-    knowledge,
-    outcome
-  };
+  if (customerMessage) {
+    const outcome = {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "grounded_answer",
+      customerMessage
+    };
+    return { outcome, knowledge, conversation: {} };
+  } else {
+    const outcome = {
+      type: "hard_handoff",
+      stateTag: "awaiting_human",
+      reason: "no_answer_found",
+      customerMessage: channelMessages.hardHandoff
+    };
+    return { outcome, knowledge, conversation: {} };
+  }
 }
 
 function attachProductsToLatestAssistantMessage(session, products = [], expectedContent = "") {
@@ -2710,7 +2169,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       entryTopicSourcePolicy: session.entryTopicSourcePolicy,
       customerProfile: {
         name,
-        firstName: memoryService.getFirstName(name),
+        firstName: name,
         email,
         source: "zendesk_requester"
       }
@@ -2853,8 +2312,7 @@ app.post("/api/chat/restore", async (req, res) => {
       );
     }
     const restoredMessages = mapZendeskAuditsToMessages(audits, requesterId, ticketSummary);
-    const latestMemory = memoryService.extractLatestWorkingMemory(audits);
-
+    
     if (isClosedTicketStatus(ticketSummary.status)) {
       if (existingSession) {
         removeSession(existingSession.sessionId);
@@ -2877,8 +2335,7 @@ app.post("/api/chat/restore", async (req, res) => {
       existingSession.messages = restoredMessages;
       existingSession.requesterName = ticketSummary.requesterName || existingSession.requesterName || "";
       existingSession.requesterEmail = ticketSummary.requesterEmail || existingSession.requesterEmail || "";
-      memoryService.applyWorkingMemoryToSession(existingSession, latestMemory);
-      existingSession.conversationState = buildConversationState(ticketSummary, existingSession.messages);
+            existingSession.conversationState = buildConversationState(ticketSummary, existingSession.messages);
       existingSession.updatedAt = new Date().toISOString();
       scheduleRuntimePersist();
 
@@ -2899,8 +2356,7 @@ app.post("/api/chat/restore", async (req, res) => {
     });
 
     session.messages = restoredMessages;
-    memoryService.applyWorkingMemoryToSession(session, latestMemory);
-    session.conversationState = buildConversationState(ticketSummary, session.messages);
+        session.conversationState = buildConversationState(ticketSummary, session.messages);
     session.updatedAt = new Date().toISOString();
     scheduleRuntimePersist();
 
