@@ -72,6 +72,14 @@ function buildWorkingMemory({
       conversation?.reasoningResult?.subjectType ||
       previousMemory?.activeSubjectType ||
       "",
+    entryTopicLock:
+      session?.entryTopicLock ||
+      previousMemory?.entryTopicLock ||
+      "",
+    entryTopicSourcePolicy:
+      session?.entryTopicSourcePolicy ||
+      previousMemory?.entryTopicSourcePolicy ||
+      null,
     openSlots:
       outcome?.type === "ask_clarifying_question"
         ? conversation?.missingSlots || []
@@ -221,6 +229,8 @@ function applyWorkingMemoryToSession(session, memory = null) {
     ? memory.lastProductContext.slice(0, 3)
     : session.lastProductTitles || [];
   session.lastResolvedEntity = memory.lastResolvedEntity || session.lastResolvedEntity || "";
+  session.entryTopicLock = memory.entryTopicLock || session.entryTopicLock || "";
+  session.entryTopicSourcePolicy = memory.entryTopicSourcePolicy || session.entryTopicSourcePolicy || null;
   session.requesterName =
     normalizeText(memory.customerProfile?.name) || session.requesterName || "";
   session.requesterEmail =
@@ -256,6 +266,8 @@ function normalizeComparableMemory(memory = {}) {
     clarificationTurnCount: Number(memory.clarificationTurnCount || 0),
     activeTaskIntent: memory.activeTaskIntent || "",
     activeSubjectType: memory.activeSubjectType || "",
+    entryTopicLock: memory.entryTopicLock || "",
+    entryTopicSourcePolicy: memory.entryTopicSourcePolicy || null,
     lastResolvedEntity: memory.lastResolvedEntity || "",
     lastIntentEvidence: Array.isArray(memory.lastIntentEvidence) ? memory.lastIntentEvidence : [],
     customerProfile: {

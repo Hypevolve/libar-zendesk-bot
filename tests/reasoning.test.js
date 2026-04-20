@@ -257,6 +257,44 @@ test("how to sell books resolves to procedural buyback intent", () => {
   assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 
+test("buyback entry lock keeps support routing for generic sell-books opening", () => {
+  const conversation = analyze("Želim prodati knjige", {
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.taskIntent, "buyback");
+  assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
+});
+
+test("buyback follow-up with quantity stays in buyback under entry lock", () => {
+  const conversation = analyze("Imam 4 knjige. Kako da ih prodam?", {
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      },
+      workingMemory: {
+        activeIntent: "otkup_upit",
+        activeTaskIntent: "buyback"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "otkup_upit");
+  assert.equal(conversation.reasoningResult.taskIntent, "buyback");
+  assert.equal(conversation.reasoningResult.actionIntent, "ask_how_to");
+  assert.notEqual(conversation.supportPlan.route, "product_feed");
+});
+
 test("book valuation stays on buyback intent and not product lookup", () => {
   const conversation = analyze("Koliko vrijede ove knjige?");
 
@@ -284,4 +322,23 @@ test("delivery to product topic shift switches to product lookup", () => {
   assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
   assert.equal(conversation.reasoningResult.taskIntent, "product_lookup");
   assert.equal(conversation.reasoningResult.topicShiftDetected, true);
+});
+
+test("explicit product lookup can break buyback lock", () => {
+  const conversation = analyze('Imate li knjigu "Algebra 1"?', {
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      },
+      workingMemory: {
+        activeIntent: "otkup_upit",
+        activeTaskIntent: "buyback"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "product_availability");
+  assert.equal(conversation.isExplicitProductLookup, true);
 });

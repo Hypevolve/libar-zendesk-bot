@@ -416,6 +416,10 @@ function buildIntentScores(text = "", contextText = "") {
     scores.otkup_upit += 10;
   }
 
+  if (/(želim prodati|zelim prodati|kako da prodam|kako da ih prodam|imam \d+\s+knjig|koliko traje otkup|koliko traje procjen|koliko traje procjena)/.test(normalized)) {
+    scores.otkup_upit += 10;
+  }
+
   if (/(koliko vrijedi|koliko vrijede|vrijedi li|vrijede li)/.test(normalized)) {
     scores.otkup_upit += 9;
     scores.product_pricing -= 2;
@@ -437,6 +441,11 @@ function buildIntentScores(text = "", contextText = "") {
   if (/(otkup|prodati|prodajem|procjen|procjenu|vrednovanj|nudim knjig|želim prodati|zelim prodati)/.test(normalized)) {
     scores.product_availability -= 8;
     scores.product_pricing -= 6;
+  }
+
+  if (/(imam \d+\s+knjig|kako da prodam|kako da ih prodam|koliko traje otkup|koliko traje procjen|koliko traje procjena)/.test(normalized)) {
+    scores.product_availability -= 8;
+    scores.product_pricing -= 5;
   }
 
   if (/(imate li|ima li|na stanju|isbn|autor|cijena knjige|cijena udzbenika|cijena udžbenika)/.test(normalized)) {
@@ -543,6 +552,23 @@ function mapLegacyIntent(intent = "") {
   }
 }
 
+function mapEntryFlowIntentToPrimaryIntent(intent = "") {
+  switch (intent) {
+    case "kupnja_knjiga":
+      return "product_availability";
+    case "dostava":
+      return "dostava_info";
+    case "narudzba":
+      return "narudzba_status";
+    case "reklamacija_problem":
+      return "reklamacija_povrat";
+    case "otkup_knjiga":
+      return "otkup_upit";
+    default:
+      return "general_support";
+  }
+}
+
 function mergeEntityValue(currentValue = "", fallbackValue = "") {
   return currentValue || fallbackValue || "";
 }
@@ -626,10 +652,18 @@ function buildConversationFacts(reasoningResult = {}) {
   return facts;
 }
 
-function buildMissingSlots(intent, entities = {}, message = "", pendingClarification = null) {
+function buildMissingSlots(
+  intent,
+  entities = {},
+  message = "",
+  pendingClarification = null,
+  options = {}
+) {
   const normalized = normalizeComparableText(message);
   const missingSlots = [];
   const hasSpecificQuestion = /\?/.test(message) || /(koliko|kada|rok|traj|cijena|moze li|može li|kako)/i.test(message);
+  const actionIntent = String(options.actionIntent || "").trim();
+  const isTopicLockedToBuyback = options.entryTopicLock === "buyback";
 
   if (intent === "narudzba_status" && !entities.order_reference) {
     missingSlots.push("order_reference");
@@ -654,7 +688,14 @@ function buildMissingSlots(intent, entities = {}, message = "", pendingClarifica
     }
   }
 
-  if (intent === "otkup_upit" && !entities.book_title && !entities.quantity && !hasSpecificQuestion) {
+  if (
+    intent === "otkup_upit" &&
+    !entities.book_title &&
+    !entities.quantity &&
+    !hasSpecificQuestion &&
+    !["ask_how_to", "ask_policy", "ask_timeline", "request_estimate"].includes(actionIntent) &&
+    !isTopicLockedToBuyback
+  ) {
     missingSlots.push("book_details");
   }
 
@@ -699,6 +740,18 @@ function buildClarifyingQuestion(slotKey, reasoningResult = {}) {
   }
 
   return `${prefix}možete li mi samo malo preciznije napisati što vam treba?`;
+}
+
+function isExplicitProductLookupMessage(text = "", entities = {}) {
+  const normalized = normalizeComparableText(text);
+
+  if (entities.book_title || entities.isbn || entities.author) {
+    return true;
+  }
+
+  return /(imate li|ima li|na stanju|isbn|autor|tražim|trazim|kupiti|kupnja|kupio|kupnja knjiga)/.test(
+    normalized
+  );
 }
 
 function buildStandaloneQuery({
@@ -790,7 +843,7 @@ function analyzeConversation({
   const primaryRanked = rankIntents(primaryScores);
   const fallbackScores = allowHistory ? buildIntentScores(normalizedMessage, combinedText) : primaryScores;
   const ranked = allowHistory ? rankIntents(fallbackScores) : primaryRanked;
-  const mappedEntryIntent = entryIntent ? mapLegacyIntent(entryIntent) : "";
+  const mappedEntryIntent = entryIntent ? mapEntryFlowIntentToPrimaryIntent(entryIntent) : "";
   const clarificationIntent = normalizeText(pendingClarification?.intent || "");
   const previousIntent = normalizeText(session?.workingMemory?.activeIntent || "");
   const canReusePreviousIntent =
@@ -837,13 +890,6 @@ function analyzeConversation({
         )
     )
   );
-  const { missingSlots, canAskAgain } = buildMissingSlots(
-    primaryIntent,
-    entities,
-    normalizedMessage,
-    pendingClarification
-  );
-  const customerGoal = deriveCustomerGoal(primaryIntent, entities, normalizedMessage);
   const taskIntent = deriveTaskIntent(primaryIntent);
   const subjectType = deriveSubjectType(primaryIntent, entities, entities.policy_topic);
   const actionIntent = deriveActionIntent(primaryIntent, normalizedMessage, entities);
@@ -853,6 +899,17 @@ function analyzeConversation({
     isFollowUp,
     pendingClarification
   });
+  const { missingSlots, canAskAgain } = buildMissingSlots(
+    primaryIntent,
+    entities,
+    normalizedMessage,
+    pendingClarification,
+    {
+      actionIntent,
+      entryTopicLock: session?.entryTopicLock || session?.workingMemory?.entryTopicLock || ""
+    }
+  );
+  const customerGoal = deriveCustomerGoal(primaryIntent, entities, normalizedMessage);
   const riskLevel =
     riskFlags.includes("legal_or_abuse") ||
     riskFlags.includes("payment") ||
@@ -912,6 +969,7 @@ function analyzeConversation({
     topicAnchor,
     usedMemory: Boolean(isFollowUp && topicAnchor?.value),
     intentEvidence,
+    isExplicitProductLookup: isExplicitProductLookupMessage(normalizedMessage, entities),
     summary: [
       `Intent: ${primaryIntent}`,
       secondaryIntent ? `Secondary intent: ${secondaryIntent}` : "",
@@ -935,6 +993,7 @@ module.exports = {
   buildConversationFacts,
   buildEntities,
   deriveCustomerGoal,
+  mapEntryFlowIntentToPrimaryIntent,
   mapLegacyIntent,
   normalizeComparableText,
   normalizeText

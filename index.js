@@ -24,11 +24,12 @@ const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 8
 const BLOCKED_AUTOPILOT_TAGS = new Set(["human_active", "resolved"]);
 const ENTRY_FLOW_VERSION = "v1";
 const ENTRY_INTENT_LABELS = {
+  kupnja_knjiga: "Kupnja knjiga",
   narudzba: "Narudžba",
   dostava: "Dostava",
-  otkup_knjiga: "Otkup knjiga",
+  otkup_knjiga: "Prodaja knjiga / otkup",
   reklamacija_problem: "Reklamacija ili problem",
-  opci_upit: "Opći upit"
+  opci_upit: "Drugo"
 };
 const chatUpload = multer({
   storage: multer.memoryStorage(),
@@ -219,6 +220,9 @@ function createSession(payload) {
     lastStandaloneQuery: "",
     lastKnowledgeSource: "",
     lastProductTitles: [],
+    entryTopicLock: "",
+    entryTopicSourcePolicy: null,
+    entryTopicSetAt: null,
     sessionId,
     ...payload,
     createdAt: new Date().toISOString(),
@@ -368,6 +372,11 @@ function getMessageProductsFromMetadata(audit = {}) {
   return [];
 }
 
+function getSupportTaskIntentFromMetadata(audit = {}) {
+  const customMetadata = getZendeskAuditCustomMetadata(audit);
+  return String(customMetadata.libar_task_intent || customMetadata.libarTaskIntent || "").trim();
+}
+
 function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary) {
   const normalizedRequesterId = Number(requesterId);
   const commentAuthorId = Number(commentEvent?.author_id ?? audit?.author_id);
@@ -440,6 +449,7 @@ function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
           createdAt: audit.created_at,
           sourceChannel,
           authoredByHuman: role === "assistant" && sourceChannel !== "api",
+          supportTaskIntent: role === "assistant" ? getSupportTaskIntentFromMetadata(audit) : "",
           products: role === "assistant" ? getMessageProductsFromMetadata(audit) : [],
           attachments: Array.isArray(commentEvent.attachments)
             ? commentEvent.attachments.map((attachment) => ({
@@ -798,6 +808,9 @@ function buildAutopilotNote({
       ? `Response mode: ${conversation.supportPlan.responseMode}`
       : null,
     conversation?.supportPlan?.toneMode ? `Tone mode: ${conversation.supportPlan.toneMode}` : null,
+    conversation?.entryTopicLockActive
+      ? `Entry topic lock active: ${conversation.effectiveEntryTopicLock || "yes"}`
+      : null,
     Array.isArray(conversation?.supportPlan?.selectedSources) && conversation.supportPlan.selectedSources.length > 0
       ? `Allowed sources: ${conversation.supportPlan.selectedSources.join(", ")}`
       : null,
@@ -933,6 +946,7 @@ function hasCriticalRiskFlags(conversation = null) {
 }
 
 function buildSearchOptions(session, conversation) {
+  const entryTopicSourcePolicy = session?.entryTopicSourcePolicy || null;
   const preferredSource =
     (Array.isArray(conversation?.supportPlan?.sourcePriority) && conversation.supportPlan.sourcePriority[0]
       ? conversation.supportPlan.sourcePriority[0].replace("_knowledge", "")
@@ -945,14 +959,90 @@ function buildSearchOptions(session, conversation) {
     conversationFacts: conversation?.conversationFacts || [],
     conversationTerms: conversation?.conversationFacts || [],
     preferredSource,
-    allowedSources: conversation?.supportPlan?.selectedSources || [],
-    blockedSources: conversation?.supportPlan?.mustNotUseSources || [],
+    allowedSources:
+      conversation?.supportPlan?.selectedSources?.length
+        ? conversation.supportPlan.selectedSources
+        : entryTopicSourcePolicy?.allowedSources || [],
+    blockedSources:
+      conversation?.supportPlan?.mustNotUseSources?.length
+        ? conversation.supportPlan.mustNotUseSources
+        : entryTopicSourcePolicy?.blockedSources || [],
     sourcePriority: conversation?.supportPlan?.sourcePriority || [],
     taskIntent: conversation?.reasoningResult?.taskIntent || "",
     actionIntent: conversation?.reasoningResult?.actionIntent || "",
     subjectType: conversation?.reasoningResult?.subjectType || "",
     questionType: conversation?.reasoningResult?.questionType || ""
   };
+}
+
+function buildEntryTopicPolicy(entryIntent = "") {
+  switch (String(entryIntent || "").trim()) {
+    case "kupnja_knjiga":
+      return {
+        entryTopicLock: "product_lookup",
+        entryTopicSourcePolicy: {
+          allowedSources: ["product_feed"],
+          blockedSources: []
+        }
+      };
+    case "otkup_knjiga":
+      return {
+        entryTopicLock: "buyback",
+        entryTopicSourcePolicy: {
+          allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+          blockedSources: ["product_feed"]
+        }
+      };
+    case "dostava":
+      return {
+        entryTopicLock: "delivery",
+        entryTopicSourcePolicy: {
+          allowedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+          blockedSources: ["product_feed"]
+        }
+      };
+    case "narudzba":
+      return {
+        entryTopicLock: "order_status",
+        entryTopicSourcePolicy: {
+          allowedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+          blockedSources: ["product_feed"]
+        }
+      };
+    case "reklamacija_problem":
+      return {
+        entryTopicLock: "complaint",
+        entryTopicSourcePolicy: {
+          allowedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+          blockedSources: ["product_feed"]
+        }
+      };
+    default:
+      return {
+        entryTopicLock: "",
+        entryTopicSourcePolicy: null
+      };
+  }
+}
+
+function shouldReleaseEntryTopicLock(session, conversation) {
+  const currentLock = String(session?.entryTopicLock || "").trim();
+  const nextTaskIntent = String(conversation?.reasoningResult?.taskIntent || "").trim();
+  const confidence = Number(conversation?.reasoningResult?.intentConfidence || 0);
+
+  if (!currentLock || !nextTaskIntent || currentLock === nextTaskIntent) {
+    return false;
+  }
+
+  if (currentLock === "buyback") {
+    if (nextTaskIntent === "product_lookup") {
+      return confidence >= 0.72 && Boolean(conversation?.isExplicitProductLookup);
+    }
+
+    return confidence >= 0.72 && ["delivery", "order_status", "order_issue", "complaint"].includes(nextTaskIntent);
+  }
+
+  return confidence >= 0.72;
 }
 
 function clearSessionClarification(session) {
@@ -1002,6 +1092,12 @@ function updateSessionMemory(session, conversation, outcome, knowledge = null) {
 
   if (conversation?.supportPlan) {
     session.lastRoute = conversation.supportPlan.route;
+  }
+
+  if (conversation?.entryTopicLockReleased) {
+    session.entryTopicLock = "";
+    session.entryTopicSourcePolicy = null;
+    session.entryTopicSetAt = null;
   }
 
   session.lastResolvedEntity =
@@ -1060,6 +1156,7 @@ async function determineChatOutcome(
     channelType = "web_chat",
     conversation = null,
     allowClarifyingQuestion = true,
+    clarifyAfterKnowledge = false,
     customerName = "",
     supportPlan = null,
     reasoningResult = null
@@ -1088,12 +1185,14 @@ async function determineChatOutcome(
     };
   }
 
-  if (
+  const hasClarifyingNeed = Boolean(
     allowClarifyingQuestion &&
-    ((conversation?.missingSlots?.length > 0 && conversation?.canAskClarifyingQuestion) ||
-      supportPlan?.route === "clarify") &&
-    conversation?.clarifyingQuestion
-  ) {
+      ((conversation?.missingSlots?.length > 0 && conversation?.canAskClarifyingQuestion) ||
+        supportPlan?.route === "clarify") &&
+      conversation?.clarifyingQuestion
+  );
+
+  if (!clarifyAfterKnowledge && hasClarifyingNeed) {
     return {
       type: "ask_clarifying_question",
       stateTag: "awaiting_customer_detail",
@@ -1103,6 +1202,15 @@ async function determineChatOutcome(
   }
 
   if (!knowledge?.context || !knowledge?.topScore || knowledge.topScore < KNOWLEDGE_MIN_TOP_SCORE) {
+    if (clarifyAfterKnowledge && hasClarifyingNeed) {
+      return {
+        type: "ask_clarifying_question",
+        stateTag: "awaiting_customer_detail",
+        reason: "missing_required_detail",
+        customerMessage: conversation.clarifyingQuestion
+      };
+    }
+
     return {
       type: "soft_handoff",
       stateTag: "awaiting_human",
@@ -1112,6 +1220,15 @@ async function determineChatOutcome(
   }
 
   if (knowledge?.quality?.isWeak) {
+    if (clarifyAfterKnowledge && hasClarifyingNeed) {
+      return {
+        type: "ask_clarifying_question",
+        stateTag: "awaiting_customer_detail",
+        reason: "missing_required_detail",
+        customerMessage: conversation.clarifyingQuestion
+      };
+    }
+
     return {
       type: "soft_handoff",
       stateTag: "awaiting_human",
@@ -1121,7 +1238,7 @@ async function determineChatOutcome(
   }
 
   if (
-    allowClarifyingQuestion &&
+    (allowClarifyingQuestion || clarifyAfterKnowledge) &&
     knowledge?.quality &&
     !knowledge.quality.isStrong &&
     conversation?.clarifyingQuestion
@@ -1251,42 +1368,55 @@ function buildProductOutcomeForChannel(productMatch, { channelType = "web_chat" 
 }
 
 function buildConversationAnalysis(session, userMessage) {
-  const conversation = reasoningService.analyzeConversation({
+  const baseConversation = reasoningService.analyzeConversation({
     message: userMessage,
     messages: session?.messages || [],
     entryIntent: session?.entryIntent || "",
     pendingClarification: session?.pendingClarification || null,
     session: session || {}
   });
+  const entryTopicLockReleased = shouldReleaseEntryTopicLock(session, baseConversation);
+  const plannerSession = entryTopicLockReleased
+    ? {
+        ...session,
+        entryTopicLock: "",
+        entryTopicSourcePolicy: null
+      }
+    : session;
   const supportPlan = plannerService.buildSupportPlan({
-    reasoningResult: conversation.reasoningResult,
-    session,
+    reasoningResult: baseConversation.reasoningResult,
+    session: plannerSession,
     hasAttachments: false
   });
   const responsePlan = {
-    intent: conversation.reasoningResult?.primaryIntent || "general_support",
-    taskIntent: conversation.reasoningResult?.taskIntent || "",
-    actionIntent: conversation.reasoningResult?.actionIntent || "",
+    intent: baseConversation.reasoningResult?.primaryIntent || "general_support",
+    taskIntent: baseConversation.reasoningResult?.taskIntent || "",
+    actionIntent: baseConversation.reasoningResult?.actionIntent || "",
     nextStep:
       supportPlan.nextBestAction === "ask_missing_detail" || supportPlan.nextBestAction === "disambiguate"
-        ? conversation.missingSlots?.[0] || "clarify"
+        ? baseConversation.missingSlots?.[0] || "clarify"
         : "answer",
     steps: [
       `Planner route: ${supportPlan.route}`,
       `Response mode: ${supportPlan.responseMode}`,
       `Tone mode: ${supportPlan.toneMode}`,
-      conversation.reasoningResult?.taskIntent
-        ? `Task intent: ${conversation.reasoningResult.taskIntent}`
+      baseConversation.reasoningResult?.taskIntent
+        ? `Task intent: ${baseConversation.reasoningResult.taskIntent}`
         : "",
-      conversation.reasoningResult?.actionIntent
-        ? `Action intent: ${conversation.reasoningResult.actionIntent}`
+      baseConversation.reasoningResult?.actionIntent
+        ? `Action intent: ${baseConversation.reasoningResult.actionIntent}`
         : "",
-      conversation.standaloneQuery ? `Standalone upit za retrieval: ${conversation.standaloneQuery.slice(0, 180)}` : ""
+      baseConversation.standaloneQuery
+        ? `Standalone upit za retrieval: ${baseConversation.standaloneQuery.slice(0, 180)}`
+        : ""
     ].filter(Boolean)
   };
 
   return {
-    ...conversation,
+    ...baseConversation,
+    entryTopicLockActive: Boolean(plannerSession?.entryTopicLock),
+    entryTopicLockReleased,
+    effectiveEntryTopicLock: plannerSession?.entryTopicLock || "",
     responsePlan,
     supportPlan
   };
@@ -1299,13 +1429,37 @@ function shouldUseProductSearch(conversation = null) {
 
   const route = String(conversation.supportPlan?.route || "").trim();
   const primaryIntent = String(conversation.reasoningResult?.primaryIntent || "").trim();
+  const taskIntent = String(conversation.reasoningResult?.taskIntent || "").trim();
+  const effectiveEntryTopicLock = String(conversation.effectiveEntryTopicLock || "").trim();
 
   if (conversation.supportPlan?.mustNotUseSources?.includes("product_feed")) {
     return false;
   }
 
+  if (effectiveEntryTopicLock && effectiveEntryTopicLock !== "product_lookup") {
+    return false;
+  }
+
+  if (taskIntent && taskIntent !== "product_lookup") {
+    return false;
+  }
+
   return route === "product_feed" &&
     (primaryIntent === "product_availability" || primaryIntent === "product_pricing");
+}
+
+function shouldPreferKnowledgeBeforeClarify(conversation = null) {
+  if (!conversation) {
+    return false;
+  }
+
+  return (
+    conversation.reasoningResult?.taskIntent === "buyback" &&
+    (conversation.effectiveEntryTopicLock === "buyback" ||
+      ["ask_how_to", "ask_policy", "request_estimate", "ask_timeline", "ask_info"].includes(
+        conversation.reasoningResult?.actionIntent
+      ))
+  );
 }
 
 function buildClosureAcknowledgment(conversation, channelType) {
@@ -1337,6 +1491,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   let knowledge = null;
   let outcome = null;
   const customerName = memoryService.getFirstName(session?.requesterName || session?.workingMemory?.customerProfile?.name);
+  const preferKnowledgeBeforeClarify = shouldPreferKnowledgeBeforeClarify(conversation);
 
   // Fix #4: Closure messages get an acknowledgment, not a handoff.
   if (
@@ -1348,8 +1503,9 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   } else if (
     hasAttachments ||
     conversation.supportPlan?.route === "handoff_hard" ||
-    conversation.supportPlan?.route === "clarify" ||
-    (conversation.missingSlots.length > 0 && conversation.canAskClarifyingQuestion)
+    (!preferKnowledgeBeforeClarify &&
+      (conversation.supportPlan?.route === "clarify" ||
+        (conversation.missingSlots.length > 0 && conversation.canAskClarifyingQuestion)))
   ) {
     outcome = await determineChatOutcome(userMessage, null, {
       hasAttachments,
@@ -1362,7 +1518,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
   } else {
     const searchQuery = conversation.standaloneQuery || userMessage;
-    const productMatch = shouldUseProductSearch(conversation)
+    const productMatch = !preferKnowledgeBeforeClarify && shouldUseProductSearch(conversation)
       ? await productService.searchProducts(searchQuery)
       : null;
 
@@ -1378,6 +1534,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
         channelType,
         conversation,
         allowClarifyingQuestion: true,
+        clarifyAfterKnowledge: preferKnowledgeBeforeClarify,
         customerName,
         supportPlan: conversation.supportPlan,
         reasoningResult: conversation.reasoningResult
@@ -1688,7 +1845,10 @@ app.post("/webhook/zendesk", async (req, res) => {
     if (outcome.type === "ask_clarifying_question") {
       await zendeskService.updateConversationState(ticketId, outcome.stateTag);
       await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
-        channelType
+        channelType,
+        metadata: {
+          libar_task_intent: conversation.reasoningResult?.taskIntent || ""
+        }
       });
       await persistWorkingMemory(
         temporarySession,
@@ -1756,7 +1916,15 @@ app.post("/webhook/zendesk", async (req, res) => {
       zendeskService.updateConversationState(ticketId, outcome.stateTag),
       zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
         channelType,
-        additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : []
+        additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : [],
+        metadata: {
+          ...(outcome.products?.length
+            ? {
+                libar_products: JSON.stringify(outcome.products)
+              }
+            : {}),
+          libar_task_intent: conversation.reasoningResult?.taskIntent || ""
+        }
       }),
       persistWorkingMemory(
         temporarySession,
@@ -1872,7 +2040,13 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       }),
       externalId: initialSessionKey
     };
+    const entryTopicPolicy = buildEntryTopicPolicy(entryIntent);
+    session.entryTopicLock = entryTopicPolicy.entryTopicLock;
+    session.entryTopicSourcePolicy = entryTopicPolicy.entryTopicSourcePolicy;
+    session.entryTopicSetAt = session.entryTopicLock ? new Date().toISOString() : null;
     session.workingMemory = {
+      entryTopicLock: session.entryTopicLock,
+      entryTopicSourcePolicy: session.entryTopicSourcePolicy,
       customerProfile: {
         name,
         firstName: memoryService.getFirstName(name),
@@ -1909,11 +2083,14 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     await zendeskService.updateConversationState(ticketId, outcome.stateTag);
     await zendeskService.addBotReplyToTicket(ticketId, outcome.zendeskMessage || outcome.customerMessage, {
       channelType: "web_chat",
-      metadata: outcome.products?.length
-        ? {
-            libar_products: JSON.stringify(outcome.products)
-          }
-        : undefined
+      metadata: {
+        ...(outcome.products?.length
+          ? {
+              libar_products: JSON.stringify(outcome.products)
+            }
+          : {}),
+        libar_task_intent: conversation.reasoningResult?.taskIntent || ""
+      }
     });
     await persistWorkingMemory(session, conversation, outcome, knowledge, {
       requesterName: name,
@@ -1949,6 +2126,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
         entryPromptAnswer: session.entryPromptAnswer,
         entryFlowVersion: session.entryFlowVersion,
         entryFlowSkipped: session.entryFlowSkipped,
+        entryTopicLock: session.entryTopicLock,
         conversationState: session.conversationState,
         resolutionPrompt: session.resolutionPrompt || null
       },
@@ -2183,11 +2361,14 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       outcome.zendeskMessage || outcome.customerMessage,
       {
         channelType: "web_chat",
-        metadata: outcome.products?.length
-          ? {
-              libar_products: JSON.stringify(outcome.products)
-            }
-          : undefined
+        metadata: {
+          ...(outcome.products?.length
+            ? {
+                libar_products: JSON.stringify(outcome.products)
+              }
+            : {}),
+          libar_task_intent: conversation.reasoningResult?.taskIntent || ""
+        }
       }
     );
     await persistWorkingMemory(session, conversation, outcome, knowledge, ticketSummary);

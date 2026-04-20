@@ -271,6 +271,22 @@ test("buyback opening without details asks exactly one slot question", () => {
   assert.match(conversation.clarifyingQuestion.toLowerCase(), /koje knjige|koliko ih/);
 });
 
+test("planner enforces buyback entry lock as support-only source policy", () => {
+  const { conversation, supportPlan } = analyze("Imam 4 knjige. Kako da ih prodam?", {
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.taskIntent, "buyback");
+  assert.equal(supportPlan.route, "onedrive_knowledge");
+  assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
+});
+
 test("knowledge merge respects source blocking and reranks buyback article first", () => {
   const knowledge = knowledgeService.mergeKnowledgeResults(
     {

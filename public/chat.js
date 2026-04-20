@@ -45,6 +45,13 @@ const chatInputArea = document.querySelector(".chat-input-area");
 const ENTRY_FLOW_VERSION = "v1";
 const ENTRY_FLOW_INTENTS = [
   {
+    id: "kupnja_knjiga",
+    label: "Kupnja knjiga",
+    description: "Traženje knjiga, cijena ili dostupnost naslova.",
+    promptLabel: "Koju knjigu tražite?",
+    promptPlaceholder: "Primjer: Algebra 1 ili ISBN broj"
+  },
+  {
     id: "narudzba",
     label: "Narudžba",
     description: "Pitanja o statusu, izmjeni ili detaljima narudžbe.",
@@ -60,10 +67,10 @@ const ENTRY_FLOW_INTENTS = [
   },
   {
     id: "otkup_knjiga",
-    label: "Otkup knjiga",
+    label: "Prodaja knjiga / otkup",
     description: "Želite prodati knjige ili zatražiti procjenu.",
-    promptLabel: "Koje knjige nudite za otkup?",
-    promptPlaceholder: "Primjer: 20 stručnih knjiga iz ekonomije"
+    promptLabel: "Napišite ukratko koliko knjiga imate ili što vas zanima oko otkupa.",
+    promptPlaceholder: "Primjer: Imam 4 knjige i zanima me kako ide otkup"
   },
   {
     id: "reklamacija_problem",
@@ -74,7 +81,7 @@ const ENTRY_FLOW_INTENTS = [
   },
   {
     id: "opci_upit",
-    label: "Opći upit",
+    label: "Drugo",
     description: "Treba vam pomoć oko nečeg drugog.",
     promptLabel: "",
     promptPlaceholder: ""
@@ -207,6 +214,15 @@ function mergeProductDataIntoMessages(nextMessages = [], ...messageSources) {
   }
 
   return nextMessages.map((message) => {
+    const supportTaskIntent = String(message?.supportTaskIntent || "").trim();
+
+    if (supportTaskIntent && supportTaskIntent !== "product_lookup") {
+      return {
+        ...message,
+        products: []
+      };
+    }
+
     if (Array.isArray(message.products) && message.products.length > 0) {
       return message;
     }
@@ -742,8 +758,9 @@ function createMessageElement(message) {
   }
 
   const products = Array.isArray(message.products) ? message.products : [];
+  const supportTaskIntent = String(message?.supportTaskIntent || "").trim();
 
-  if (products.length > 0) {
+  if (products.length > 0 && (!supportTaskIntent || supportTaskIntent === "product_lookup")) {
     const productsEl = document.createElement("div");
     productsEl.className = "message-products";
 

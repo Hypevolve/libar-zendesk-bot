@@ -4,6 +4,57 @@ function normalizeIntent(intent = "") {
   return String(intent || "").trim();
 }
 
+function getEntryTopicPolicy(session = {}) {
+  const lock = String(
+    session?.entryTopicLock ||
+      session?.workingMemory?.entryTopicLock ||
+      ""
+  ).trim();
+
+  switch (lock) {
+    case "buyback":
+      return {
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge"],
+        mustNotUseSources: ["product_feed"],
+        mergeStrategy: "support_only",
+        preferredTaskIntent: "buyback"
+      };
+    case "delivery":
+      return {
+        route: "zendesk_knowledge",
+        selectedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+        mustNotUseSources: ["product_feed"],
+        mergeStrategy: "support_only",
+        preferredTaskIntent: "delivery"
+      };
+    case "order_status":
+    case "order_issue":
+    case "complaint":
+      return {
+        route: "zendesk_knowledge",
+        selectedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+        mustNotUseSources: ["product_feed"],
+        mergeStrategy: "support_only",
+        preferredTaskIntent: lock
+      };
+    case "product_lookup":
+      return {
+        route: "product_feed",
+        selectedSources: ["product_feed"],
+        sourcePriority: ["product_feed", "zendesk_knowledge", "onedrive_knowledge"],
+        mustNotUseSources: [],
+        mergeStrategy: "product_first",
+        preferredTaskIntent: "product_lookup"
+      };
+    default:
+      return null;
+  }
+}
+
 function buildSourcePlan(primaryIntent, secondaryIntent = null) {
   if (
     secondaryIntent &&
@@ -106,7 +157,10 @@ function shouldUseCustomerName(reasoningResult = {}, session = {}) {
 function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments = false } = {}) {
   const primaryIntent = normalizeIntent(reasoningResult.primaryIntent);
   const secondaryIntent = normalizeIntent(reasoningResult.secondaryIntent);
-  const sourcePlan = buildSourcePlan(primaryIntent, secondaryIntent);
+  const defaultSourcePlan = buildSourcePlan(primaryIntent, secondaryIntent);
+  const lockedPolicy = getEntryTopicPolicy(session);
+  const useLockedPolicy = Boolean(lockedPolicy);
+  const sourcePlan = useLockedPolicy ? lockedPolicy : defaultSourcePlan;
   const missingSlots = Array.isArray(reasoningResult.missingSlots) ? reasoningResult.missingSlots : [];
   const isClosure = primaryIntent === "small_talk_or_closure";
   const isComplaint =
