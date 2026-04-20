@@ -791,6 +791,9 @@ function createMessageElement(message) {
 function createProductCardElement(product) {
   const card = document.createElement("article");
   card.className = "product-card";
+  card.dataset.productId = product.id || "";
+
+  const primaryLink = product.buyLink || product.sellLink || "";
 
   if (product.imageUrl) {
     const image = document.createElement("img");
@@ -802,7 +805,18 @@ function createProductCardElement(product) {
       image.remove();
       card.classList.add("product-card--no-image");
     }, { once: true });
-    card.appendChild(image);
+
+    if (primaryLink) {
+      const imageLink = document.createElement("a");
+      imageLink.className = "product-card__image-link";
+      imageLink.href = primaryLink;
+      imageLink.target = "_blank";
+      imageLink.rel = "noopener noreferrer";
+      imageLink.appendChild(image);
+      card.appendChild(imageLink);
+    } else {
+      card.appendChild(image);
+    }
   } else {
     card.classList.add("product-card--no-image");
   }
@@ -810,10 +824,31 @@ function createProductCardElement(product) {
   const body = document.createElement("div");
   body.className = "product-card__body";
 
-  const title = document.createElement("h3");
-  title.className = "product-card__title";
-  title.textContent = product.title || "Pronađeni proizvod";
-  body.appendChild(title);
+  if (product.availabilityLabel) {
+    const badge = document.createElement("p");
+    badge.className = `product-card__availability is-${product.availabilityTone || "available"}`;
+    badge.textContent = product.availabilityLabel;
+    body.appendChild(badge);
+  }
+
+  if (primaryLink) {
+    const titleLink = document.createElement("a");
+    titleLink.className = "product-card__title-link";
+    titleLink.href = primaryLink;
+    titleLink.target = "_blank";
+    titleLink.rel = "noopener noreferrer";
+
+    const title = document.createElement("h3");
+    title.className = "product-card__title";
+    title.textContent = product.title || "Pronađeni proizvod";
+    titleLink.appendChild(title);
+    body.appendChild(titleLink);
+  } else {
+    const title = document.createElement("h3");
+    title.className = "product-card__title";
+    title.textContent = product.title || "Pronađeni proizvod";
+    body.appendChild(title);
+  }
 
   if (product.metaLine) {
     const meta = document.createElement("p");
@@ -833,11 +868,15 @@ function createProductCardElement(product) {
   actions.className = "product-card__actions";
 
   if (product.buyLink) {
-    actions.appendChild(createProductActionElement(product.buyLink, "Kupi", true));
+    actions.appendChild(
+      createProductActionElement(product.buyLink, product.buyButtonLabel || "Kupi", true)
+    );
   }
 
   if (product.sellLink) {
-    actions.appendChild(createProductActionElement(product.sellLink, "Otkup", false));
+    actions.appendChild(
+      createProductActionElement(product.sellLink, product.sellButtonLabel || "Otkup", false)
+    );
   }
 
   if (actions.children.length > 0) {

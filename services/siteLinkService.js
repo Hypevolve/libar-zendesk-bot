@@ -78,7 +78,7 @@ function chooseLinkKeys({ conversation = null, knowledge = null, outcome = null 
       outcome?.customerMessage ||
       ""
   );
-  const taskIntent = String(conversation?.reasoningResult?.taskIntent || "").trim();
+  const taskIntent = String(conversation?.reasoningResult?.taskIntent || outcome?.taskIntent || "").trim();
   const actionIntent = String(conversation?.reasoningResult?.actionIntent || "").trim();
   const primaryIntent = String(conversation?.reasoningResult?.primaryIntent || "").trim();
   const source = String(knowledge?.primarySource || outcome?.source || "").trim();
@@ -117,7 +117,7 @@ function chooseLinkKeys({ conversation = null, knowledge = null, outcome = null 
 
   if (
     taskIntent === "support_info" &&
-    containsAny(query, ["kontakt", "radno vrijeme", "adresa", "telefon", "email", "mail", "gdje ste"])
+    containsAny(query, ["kontakt", "radno vrijeme", "adresa", "telefon", "email", "mail", "gdje ste", "gdje se nalaz"])
   ) {
     pushUnique(links, "contact");
   }

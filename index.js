@@ -8,11 +8,12 @@ const zendeskService = require("./services/zendeskService");
 const aiService = require("./services/aiService");
 const knowledgeService = require("./services/knowledgeService");
 const oneDriveService = require("./services/oneDriveService");
+const productFeedService = require("./services/productFeedService");
 const spamFilterService = require("./services/spamFilterService");
 const runtimeStore = require("./services/runtimeStore");
 const metricsService = require("./services/metricsService");
 const { BASE_URL, buildDirectWebsiteLinks } = require("./services/siteLinkService");
-const { normalizeForComparison } = require("./services/textUtils");
+const { normalizeForComparison, normalizeWhitespace } = require("./services/textUtils");
 
 const app = express();
 const IS_TEST_ENV = process.env.NODE_ENV === "test";
@@ -1069,7 +1070,9 @@ function buildAutopilotNote({
 
   const knowledgeLine = knowledge && knowledge.articles && knowledge.articles.length > 0
     ? `Korišteni dokument: ${knowledge.articles[0].title}`
-    : "Odgovor nije pronađen na OneDrive-u.";
+    : outcome?.source === "product_feed" && Array.isArray(outcome?.products) && outcome.products.length > 0
+      ? `Korišteni proizvod: ${outcome.products[0].title}`
+      : "Odgovor nije pronađen na OneDrive-u.";
 
   return [
     summaryLine,
@@ -1315,6 +1318,7 @@ function finalizeOutcomeForCustomer(
 function appendDirectWebsiteLink(
   outcome = null,
   {
+    conversation = null,
     knowledge = null,
     channelType = "web_chat"
   } = {}
@@ -1330,6 +1334,7 @@ function appendDirectWebsiteLink(
   }
 
   const directLinks = buildDirectWebsiteLinks({
+    conversation,
     knowledge,
     outcome
   });
@@ -1430,26 +1435,87 @@ function isGreetingOnlyMessage(message = "") {
   ].includes(normalizedMessage);
 }
 
-function looksLikeProductLookupMessage(message = "") {
-  const normalizedMessage = normalizeForComparison(message).trim();
+function getSessionActiveDomain(session = {}) {
+  const rawDomain = normalizeForComparison(
+    session?.workingMemory?.activeDomain || session?.entryTopicLock || session?.entryIntent || ""
+  );
 
-  if (!normalizedMessage) {
+  if (/(buyback|otkup|prodaja|otkup_knjiga)/.test(rawDomain)) {
+    return "buyback";
+  }
+
+  if (/(delivery|dostava)/.test(rawDomain)) {
+    return "delivery";
+  }
+
+  if (/(support|opci|kontakt|contact)/.test(rawDomain)) {
+    return "support_info";
+  }
+
+  if (/(order|narudzba|reklamacija)/.test(rawDomain)) {
+    return "order";
+  }
+
+  if (/(product|kupnja|availability)/.test(rawDomain)) {
+    return "product_lookup";
+  }
+
+  return "";
+}
+
+function looksLikeProductContinuationMessage(message = "", session = {}) {
+  const normalizedMessage = normalizeForComparison(message).trim();
+  const activeDomain = getSessionActiveDomain(session);
+  const hasProductContext =
+    activeDomain === "product_lookup" ||
+    (Array.isArray(session?.lastProductTitles) && session.lastProductTitles.length > 0);
+
+  if (!hasProductContext || !normalizedMessage) {
     return false;
   }
 
   if (
-    /(refund|reklamacij|povrat|dostav|isporuk|otkup|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
+    /(dostava|isporuka|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|reklamacij|povrat|otkup|prodaja|prodati|problem)/.test(
       normalizedMessage
     )
   ) {
     return false;
   }
 
-  if (/\b(imate li|treba mi|trazim|knjigu|knjiga|udzbenik|udzbenike|isbn|autor)\b/.test(normalizedMessage)) {
+  return /(^|\b)(ima li (je|ga|ih|jos)|je li (jos )?(dostupn|na stanju)|jos (ima|dostupn)|koliko kost|koja je cijena|cijena|na stanju|moze li se kupiti|moze li se naruciti|mogu li naruciti|imate li jos|postoji li jos|je li ostala)(\b|$)/.test(
+    normalizedMessage
+  );
+}
+
+function looksLikeProductLookupMessage(message = "", session = {}) {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  if (looksLikeProductContinuationMessage(message, session)) {
     return true;
   }
 
-  const tokens = normalizedMessage.split(/\s+/).filter(Boolean);
+  if (
+    /(refund|reklamacij|povrat|dostav|isporuk|\botkup\b|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
+      normalizedMessage
+    )
+  ) {
+    return false;
+  }
+
+  if (/^(a|i)\s+(koliko|kako|gdje|kada|sto|što|zasto|zašto|za)\b/.test(normalizedMessage)) {
+    return false;
+  }
+
+  if (/\b(imate li|prodajete li|treba mi|trazim|knjigu|knjiga|udzbenik|udzbenike|isbn|autor)\b/.test(normalizedMessage)) {
+    return true;
+  }
+
+  const preprocessedQuery = normalizeForComparison(productFeedService.__internal.preprocessQuery(message));
+  const tokens = preprocessedQuery.split(/\s+/).filter(Boolean);
   const genericSupportTokens = new Set([
     "pitanje",
     "pomoc",
@@ -1460,14 +1526,19 @@ function looksLikeProductLookupMessage(message = "") {
     "dostava",
     "kontakt"
   ]);
+  const questionLeadPattern = /^(koliko|kako|gdje|kada|sto|što|zasto|zašto|koje|koji|koja)\b/;
   const hasGenericOnlyVocabulary =
     tokens.length > 0 && tokens.every((token) => genericSupportTokens.has(token));
-  const hasTitleLikeSignal = tokens.some((token) => /\d/.test(token)) || normalizedMessage.length >= 12;
+  const hasTitleLikeSignal =
+    tokens.some((token) => /\d/.test(token)) ||
+    (tokens.length >= 2 &&
+      tokens.some((token) => token.length >= 5) &&
+      !questionLeadPattern.test(tokens.join(" ")));
 
   return tokens.length >= 1 && tokens.length <= 10 && hasTitleLikeSignal && !hasGenericOnlyVocabulary;
 }
 
-function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat" } = {}) {
+function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelType = "web_chat" } = {}) {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
 
   if (isResolutionCandidateMessage(userMessage)) {
@@ -1529,20 +1600,42 @@ function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat"
   }
 
   if (
-    /(troskovi dostave|cijena dostave|dostava|isporuka|paketomat|gls|boxnow)/.test(normalizedMessage)
+    /(gdje se nalaz|adresa|lokacija|radno vrijeme|kontakt|telefon|email|mail|placanje|placanjem|nacini placanja|pouzecem|pouzece)/.test(
+      normalizedMessage
+    )
+  ) {
+    return {
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "support_info_link_fallback",
+      source: "website_links",
+      taskIntent: "support_info",
+      customerMessage:
+        "Najbrže ćete provjeriti te informacije na našem webu. Ako želite, mogu zatim pomoći protumačiti što je relevantno za vaš slučaj."
+    };
+  }
+
+  if (
+    /(troskovi dostave|cijena dostave|dostava|isporuka|paketomat|gls|boxnow|box now|pouzecem|pouzece)/.test(
+      normalizedMessage
+    )
   ) {
     return {
       type: "safe_answer",
       stateTag: "ai_active",
       reason: "delivery_link_fallback",
       source: "website_links",
+      taskIntent: "delivery",
       customerMessage:
         "Najbrže ćete provjeriti troškove i opcije dostave na ovoj stranici. Ako želite, mogu zatim pomoći protumačiti što vam odgovara."
     };
   }
 
   if (
-    /^(prodaja|otkup|otkupljujete li knjige|da li otkupljujete knjige|koje knjige otkupljujete|koje su cujene otkupa|koje su cijene otkupa|otkupljujete li udzbenike cijelu godinu|pa kada ih mogu otkupiti|otkupljujete li knjige koje nisu udzbenici)/.test(
+    /^(prodaja|otkup|otkupljujete li knjige|da li otkupljujete knjige|koje knjige otkupljujete|koje su cujene otkupa|koje su cijene otkupa|otkupljujete li udzbenike cijelu godinu|pa kada ih mogu otkupiti|otkupljujete li knjige koje nisu udzbenici|kako mogu prodati|zelim prodati|želim prodati|mogu li prodati|mogu li se prodat|jel otkupljujemo knjige|zelim pomoc oko otkupa|želim pomoć oko otkupa|sta se mora napraviti za prodaju|što se mora napraviti za prodaju)/.test(
+      normalizedMessage
+    ) ||
+    /(prodati (udzbenike|knjige)|prodaja knjiga|prodaja udzbenika|otkup knjiga|otkup udzbenika|pomoc oko otkupa|pomo[cć] oko otkupa|prodaju udzbenika|prodaju knjiga|zelim prodati knjigu|zelim prodati knjige|želim prodati knjigu|želim prodati knjige|zelim .*prodati|želim .*prodati|zaraditi vise na svojim udzbenicima|prodati .*u kosaricu|prodati .*kosaricu)/.test(
       normalizedMessage
     )
   ) {
@@ -1551,8 +1644,9 @@ function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat"
       stateTag: "ai_active",
       reason: "buyback_clarification",
       source: "website_links",
+      taskIntent: "buyback",
       customerMessage:
-        "Ako želite prodati knjige, pošaljite naslov, barkod ili fotografije hrpta pa ću vas usmjeriti na najbrži način otkupa."
+        `Ako želite prodati knjige, pošaljite naslov, barkod, ISBN ili fotografije hrpta pa ću vas usmjeriti na najbrži način otkupa. Opći postupak možete otvoriti i ovdje: ${BASE_URL}/prodaj-udzbenike/`
     };
   }
 
@@ -1572,18 +1666,103 @@ function buildNoContextAutonomousOutcome(userMessage, { channelType = "web_chat"
     };
   }
 
-  if (looksLikeProductLookupMessage(userMessage)) {
+  if (looksLikeProductLookupMessage(userMessage, session)) {
     return {
       type: "safe_answer",
       stateTag: "ai_active",
       reason: "product_lookup_fallback",
       source: "website_links",
+      taskIntent: "product_lookup",
       customerMessage:
         "Najbrže ćete provjeriti dostupnost udžbenika na našem webu. Ako želite, pošaljite puni naslov ili ISBN pa ću vas dodatno usmjeriti."
     };
   }
 
   return null;
+}
+
+function updateSessionRouteMemory(session, userMessage, outcome = {}) {
+  if (!session || typeof session !== "object") {
+    return;
+  }
+
+  session.lastStandaloneQuery = normalizeWhitespace(userMessage || "");
+  session.lastKnowledgeSource = String(outcome.source || "").trim();
+  session.lastResolvedIntent = String(outcome.taskIntent || outcome.reason || "").trim();
+  session.workingMemory = session.workingMemory && typeof session.workingMemory === "object"
+    ? session.workingMemory
+    : {};
+
+  if (outcome.source === "product_feed" || outcome.taskIntent === "product_lookup" || outcome.reason === "product_lookup_fallback") {
+    session.workingMemory.activeDomain = "product_lookup";
+    session.workingMemory.activeTaskIntent = "product_lookup";
+    session.lastProductTitles = Array.isArray(outcome.products)
+      ? outcome.products.map((product) => product?.title).filter(Boolean).slice(0, 5)
+      : session.lastProductTitles || [];
+    return;
+  }
+
+  if (outcome.reason === "buyback_clarification") {
+    session.workingMemory.activeDomain = "buyback";
+    session.workingMemory.activeTaskIntent = "buyback";
+    return;
+  }
+
+  if (outcome.reason === "order_issue_clarification") {
+    session.workingMemory.activeDomain = "order";
+    session.workingMemory.activeTaskIntent = "order";
+    return;
+  }
+
+  if (outcome.reason === "delivery_link_fallback") {
+    session.workingMemory.activeDomain = "delivery";
+    session.workingMemory.activeTaskIntent = "delivery";
+    return;
+  }
+
+  if (outcome.source === "onedrive_knowledge" || outcome.source === "zendesk_knowledge") {
+    session.workingMemory.activeDomain = outcome.taskIntent || session.workingMemory.activeDomain || "";
+    session.workingMemory.activeTaskIntent = outcome.taskIntent || session.workingMemory.activeTaskIntent || "";
+  }
+}
+
+function buildProductFeedOutcome(productMatch, { channelType = "web_chat" } = {}) {
+  const products = Array.isArray(productMatch?.products) ? productMatch.products : [];
+
+  if (products.length === 0) {
+    return null;
+  }
+
+  const primaryProduct = productMatch.rawProducts?.[0] || null;
+  const availabilityText = primaryProduct?.availableForPurchase
+    ? primaryProduct?.stockCount
+      ? `Trenutno je dostupan. Na zalihi je ${primaryProduct.stockCount} kom.`
+      : "Trenutno je dostupan za kupnju."
+    : "Pronašao sam traženi artikl, ali trenutno nije dostupan za kupnju.";
+  const intro =
+    products.length === 1
+      ? `${availabilityText} ${primaryProduct?.buyPriceEur ? `Cijena je ${products[0].priceLabel}.` : ""}`.trim()
+      : "Pronašao sam nekoliko mogućih rezultata. Otvorite artikl koji najviše odgovara naslovu ili autoru.";
+
+  const productLines = products
+    .map((product) => `- ${product.title}${product.priceLabel ? ` (${product.priceLabel})` : ""}: ${product.buyLink}`)
+    .join("\n");
+  const customerMessage =
+    channelType === "web_chat"
+      ? `${intro}\nPoveznice:\n${productLines}`
+      : `${intro}\nPoveznice:\n${productLines}`;
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "product_feed_match",
+    source: "product_feed",
+    taskIntent: "product_lookup",
+    customerMessage,
+    zendeskMessage: customerMessage,
+    products,
+    zendeskSummary: productMatch.zendeskSummary || ""
+  };
 }
 
 
@@ -1619,6 +1798,23 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     };
   }
 
+  if (looksLikeProductLookupMessage(userMessage, session)) {
+    try {
+      const productMatch = await productFeedService.searchProductsDetailed(userMessage);
+
+      if (productMatch?.products?.length) {
+        const outcome = buildProductFeedOutcome(productMatch, { channelType });
+
+        if (outcome) {
+          updateSessionRouteMemory(session, userMessage, outcome);
+          return { outcome, knowledge: null };
+        }
+      }
+    } catch (err) {
+      logError("Product feed search failed:", { message: err.message });
+    }
+  }
+
   let knowledge = null;
   try {
     knowledge = await knowledgeService.searchKnowledgeDetailed(userMessage);
@@ -1646,6 +1842,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
 
     if (outcome?.type === "safe_answer") {
+      updateSessionRouteMemory(session, userMessage, outcome);
       return { outcome, knowledge };
     }
   }
@@ -1664,17 +1861,22 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
 
     if (outcome?.type === "safe_answer") {
+      updateSessionRouteMemory(session, userMessage, outcome);
       return { outcome, knowledge };
     }
   }
 
-  const noContextAutonomousOutcome = buildNoContextAutonomousOutcome(userMessage, { channelType });
+  const noContextAutonomousOutcome = buildNoContextAutonomousOutcome(userMessage, { session, channelType });
 
   if (noContextAutonomousOutcome) {
     const outcome = appendDirectWebsiteLink(noContextAutonomousOutcome, {
+      conversation: {
+        standaloneQuery: userMessage
+      },
       knowledge,
       channelType
     });
+    updateSessionRouteMemory(session, userMessage, outcome);
     return { outcome, knowledge };
   }
 
@@ -1684,6 +1886,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     reason: "no_answer_found",
     customerMessage: channelMessages.hardHandoff
   };
+  updateSessionRouteMemory(session, userMessage, outcome);
   return { outcome, knowledge };
 }
 
@@ -2016,7 +2219,7 @@ app.post("/webhook/zendesk", async (req, res) => {
       await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
         channelType,
         metadata: {
-          libar_task_intent: ""
+          libar_task_intent: outcome.taskIntent || ""
         }
       });
             await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
@@ -2074,7 +2277,7 @@ app.post("/webhook/zendesk", async (req, res) => {
                 libar_products: JSON.stringify(outcome.products)
               }
             : {}),
-          libar_task_intent: ""
+          libar_task_intent: outcome.taskIntent || ""
         }
       }),
       zendeskService.addInternalNote(ticketId, buildAutopilotNote({
@@ -2244,7 +2447,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
               libar_products: JSON.stringify(outcome.products)
             }
           : {}),
-        libar_task_intent: ""
+        libar_task_intent: outcome.taskIntent || ""
       }
     });
         await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
@@ -2560,7 +2763,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
                 libar_products: JSON.stringify(outcome.products)
               }
             : {}),
-          libar_task_intent: ""
+          libar_task_intent: outcome.taskIntent || ""
         }
       }
     );
@@ -2954,10 +3157,14 @@ module.exports = {
     formatChannelLabel,
     getAutomationBlockReason,
     getChannelMessages,
+    getSessionActiveDomain,
+    looksLikeProductContinuationMessage,
+    looksLikeProductLookupMessage,
     mapZendeskAuditsToMessages,
     normalizeChannelType,
     normalizeZendeskCommentContent,
     resolveAutomatedOutcome,
+    updateSessionRouteMemory,
     validateAnswerQuality
   }
 };

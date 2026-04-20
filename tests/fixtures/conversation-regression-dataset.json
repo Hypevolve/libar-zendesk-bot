@@ -206,5 +206,107 @@
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
     "expectedRoute": "onedrive_knowledge"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Želim prodati knjige" },
+      { "role": "assistant", "content": "Pošaljite naslov, ISBN ili fotografije." }
+    ],
+    "message": "A koliko traje?",
+    "session": {
+      "workingMemory": {
+        "activeDomain": "buyback",
+        "activeTaskIntent": "buyback"
+      }
+    },
+    "expectedDomain": "buyback",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "clarify"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Želim prodati knjige" },
+      { "role": "assistant", "content": "Pošaljite naslov, ISBN ili fotografije." }
+    ],
+    "message": "A za udžbenike?",
+    "session": {
+      "workingMemory": {
+        "activeDomain": "buyback",
+        "activeTaskIntent": "buyback"
+      }
+    },
+    "expectedDomain": "buyback",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "clarify"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Imate li Algebra 1?" },
+      {
+        "role": "assistant",
+        "content": "Našao sam Algebra 1.",
+        "products": [{ "title": "Algebra 1" }]
+      }
+    ],
+    "message": "Ima li je još na stanju?",
+    "session": {
+      "lastProductTitles": ["Algebra 1"],
+      "workingMemory": {
+        "activeDomain": "product_lookup",
+        "activeTaskIntent": "product_lookup"
+      }
+    },
+    "expectedDomain": "product_lookup",
+    "expectedUserJob": "check_availability",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "product_allowed",
+    "shouldUseProductFeed": true,
+    "expectedRoute": "product_feed"
+  },
+  {
+    "channel": "web_chat",
+    "history": [
+      { "role": "user", "content": "Imate li Algebra 1?" },
+      {
+        "role": "assistant",
+        "content": "Našao sam Algebra 1.",
+        "products": [{ "title": "Algebra 1" }]
+      }
+    ],
+    "message": "Koja je dostava za Split?",
+    "session": {
+      "lastProductTitles": ["Algebra 1"],
+      "workingMemory": {
+        "activeDomain": "product_lookup",
+        "activeTaskIntent": "product_lookup"
+      }
+    },
+    "expectedDomain": "delivery",
+    "expectedUserJob": "ask_info",
+    "expectedTopicShiftType": "product_to_support_shift",
+    "expectedSourceContract": "support_only",
+    "shouldUseProductFeed": false,
+    "expectedRoute": "onedrive_knowledge"
+  },
+  {
+    "channel": "web_chat",
+    "history": [],
+    "message": "Prodajete li Hrvatski pravopis Babić, Finka, Moguš?",
+    "session": {},
+    "expectedDomain": "product_lookup",
+    "expectedUserJob": "check_availability",
+    "expectedTopicShiftType": "same_domain_continuation",
+    "expectedSourceContract": "product_allowed",
+    "shouldUseProductFeed": true,
+    "expectedRoute": "product_feed"
   }
 ]

@@ -5,6 +5,7 @@ process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-openrou
 
 const knowledgeService = require("../services/knowledgeService");
 const aiService = require("../services/aiService");
+const productFeedService = require("../services/productFeedService");
 const { __internal } = require("../index");
 
 test("resolveAutomatedOutcome returns grounded OneDrive answer and preserves response context metadata", async () => {
@@ -178,12 +179,68 @@ test("resolveAutomatedOutcome replies politely to acknowledgement-only messages 
   }
 });
 
-test("resolveAutomatedOutcome sends website-guided fallback for product lookup when knowledge is missing", async () => {
+test("resolveAutomatedOutcome returns product cards and links when product feed finds a clear match", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
 
   knowledgeService.searchKnowledgeDetailed = async () => null;
   aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => ({
+    topScore: 220,
+    matchCount: 1,
+    rawProducts: [
+      {
+        title: "SOLUTIONS 3rd ed. INTERMEDIATE",
+        availableForPurchase: true,
+        stockCount: 12,
+        buyPriceEur: 8.55
+      }
+    ],
+    products: [
+      {
+        id: "12",
+        title: "SOLUTIONS 3rd ed. INTERMEDIATE",
+        imageUrl: "https://example.test/solutions.jpg",
+        metaLine: "Engleski jezik • 2. razred • radna bilježnica",
+        priceLabel: "8,55 EUR",
+        buyLink: "https://antikvarijat-libar.com/kupi-udzbenike/?pretraga=SOLUTIONS+3rd+ed.+INTERMEDIATE",
+        sellLink: "https://antikvarijat-libar.com/otkup-udzbenika/?tab=tab-form&pretraga_isbn=9780194563819"
+      }
+    ],
+    zendeskSummary: "1. SOLUTIONS 3rd ed. INTERMEDIATE | dostupno za kupnju"
+  });
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Trebam SOLUTIONS intermediate workbook od Tim Falle",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "product_feed_match");
+    assert.equal(outcome.source, "product_feed");
+    assert.equal(outcome.taskIntent, "product_lookup");
+    assert.equal(outcome.products.length, 1);
+    assert.match(outcome.customerMessage, /Trenutno je dostupan/i);
+    assert.match(outcome.customerMessage, /8,55 EUR/i);
+    assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome sends website-guided fallback for product lookup when product feed has no match", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => null;
 
   try {
     const { outcome } = await __internal.resolveAutomatedOutcome(
@@ -200,6 +257,68 @@ test("resolveAutomatedOutcome sends website-guided fallback for product lookup w
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome treats 'Prodajete li [naslov]' as a product lookup, not a buyback request", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalled = false;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalled = true;
+    return null;
+  };
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Prodajete li Hrvatski pravopis Babić, Finka, Moguš?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(productLookupCalled, true);
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "product_lookup_fallback");
+    assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome does not route generic buyback support questions through the product feed", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalled = false;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalled = true;
+    return null;
+  };
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Kako mogu prodati udžbenike kod vas?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(productLookupCalled, false);
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "buyback_clarification");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
   }
 });
 
@@ -270,6 +389,56 @@ test("resolveAutomatedOutcome asks for a fuller title on short ambiguous product
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome sends website-guided support info fallback for location questions", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome({}, "Gdje se nalazi antikvarijat?", {
+      channelType: "web_chat"
+    });
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "support_info_link_fallback");
+    assert.match(outcome.customerMessage, /kontakt/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome catches natural buyback phrasing without routing into product lookup", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalled = false;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalled = true;
+    return null;
+  };
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome({}, "Mogu li se prodat knjige?", {
+      channelType: "web_chat"
+    });
+
+    assert.equal(productLookupCalled, false);
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "buyback_clarification");
+    assert.match(outcome.customerMessage, /prodaj-udzbenike/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
   }
 });
 
