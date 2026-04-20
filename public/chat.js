@@ -994,6 +994,15 @@ function startPolling() {
       const data = await response.json();
 
       if (!response.ok) {
+        if (response.status === 404) {
+          const restored = await recoverMissingSession({ showErrorMessage: false });
+
+          if (!restored) {
+            showError(data.error || "Razgovor više nije dostupan.");
+          }
+          return;
+        }
+
         throw new Error(data.error || "Osvježavanje razgovora nije uspjelo.");
       }
 
@@ -1177,6 +1186,92 @@ async function startZendeskChat() {
   startPolling();
 }
 
+async function restoreSessionFromSnapshot() {
+  const sessionSnapshot = getSessionSnapshot();
+
+  if (!sessionSnapshot) {
+    return false;
+  }
+
+  const restoreResponse = await fetch("/api/chat/restore", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(sessionSnapshot)
+  });
+  const restoreData = await restoreResponse.json();
+
+  if (!restoreResponse.ok) {
+    return false;
+  }
+
+  if (restoreData.mode === "closed_session") {
+    localStorage.removeItem(storageKey);
+    clearOnboardingState();
+    saveSessionSnapshot({
+      ticketId: restoreData.ticket?.id,
+      requesterId: restoreData.requester?.requesterId,
+      requesterName: restoreData.requester?.name,
+      requesterEmail: restoreData.requester?.email
+    });
+    resetOnboardingState();
+    onboarding.stage = "closed";
+    closeStream();
+    stopPolling();
+    clearResolutionPrompt();
+    applyConversationState({ conversationState: restoreData.conversationState });
+    applySessionMessages(restoreData.messages || []);
+    renderEntryFlow();
+    showClosedConversationPanel(restoreData);
+    return true;
+  }
+
+  if (restoreData.mode === "active_session" && restoreData.session) {
+    localStorage.setItem(storageKey, restoreData.session.sessionId);
+    saveSessionSnapshot({
+      sessionId: restoreData.session.sessionId,
+      ticketId: restoreData.session.ticketId,
+      requesterId: restoreData.session.requesterId,
+      requesterName: restoreData.session.requesterName,
+      requesterEmail: restoreData.session.requesterEmail
+    });
+    onboarding.stage = "connected";
+    hideClosedConversationPanel();
+    setComposerEnabled(true);
+    applyConversationState(restoreData.session);
+    setResolutionPrompt(restoreData.session?.resolutionPrompt || null);
+    applySessionMessages(restoreData.session.messages);
+    renderEntryFlow();
+    closeStream();
+    stopPolling();
+    startStream(restoreData.session.sessionId);
+    startPolling();
+    return true;
+  }
+
+  return false;
+}
+
+async function recoverMissingSession({ showErrorMessage = true } = {}) {
+  closeStream();
+  stopPolling();
+
+  if (await restoreSessionFromSnapshot()) {
+    clearError();
+    return true;
+  }
+
+  localStorage.removeItem(storageKey);
+  setComposerEnabled(false);
+
+  if (showErrorMessage) {
+    showError("Veza s razgovorom je izgubljena. Osvježite stranicu ili pokrenite novi razgovor.");
+  }
+
+  return false;
+}
+
 async function submitEntryStartForm() {
   const message = entryStartMessage?.value.trim() || "";
   const name = entryStartName?.value.trim() || "";
@@ -1217,74 +1312,7 @@ async function submitEntryStartForm() {
 }
 
 async function loadExistingSession() {
-  const sessionSnapshot = getSessionSnapshot();
-
-  async function restoreFromSnapshot() {
-    if (!sessionSnapshot) {
-      return false;
-    }
-
-    const restoreResponse = await fetch("/api/chat/restore", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(sessionSnapshot)
-    });
-    const restoreData = await restoreResponse.json();
-
-    if (!restoreResponse.ok) {
-      return false;
-    }
-
-    if (restoreData.mode === "closed_session") {
-      localStorage.removeItem(storageKey);
-      clearOnboardingState();
-      saveSessionSnapshot({
-        ticketId: restoreData.ticket?.id,
-        requesterId: restoreData.requester?.requesterId,
-        requesterName: restoreData.requester?.name,
-        requesterEmail: restoreData.requester?.email
-      });
-      resetOnboardingState();
-      onboarding.stage = "closed";
-      closeStream();
-      stopPolling();
-      clearResolutionPrompt();
-      applyConversationState({ conversationState: restoreData.conversationState });
-      applySessionMessages(restoreData.messages || []);
-      renderEntryFlow();
-      showClosedConversationPanel(restoreData);
-      return true;
-    }
-
-    if (restoreData.mode === "active_session" && restoreData.session) {
-      localStorage.setItem(storageKey, restoreData.session.sessionId);
-      saveSessionSnapshot({
-        sessionId: restoreData.session.sessionId,
-        ticketId: restoreData.session.ticketId,
-        requesterId: restoreData.session.requesterId,
-        requesterName: restoreData.session.requesterName,
-        requesterEmail: restoreData.session.requesterEmail
-      });
-      onboarding.stage = "connected";
-      hideClosedConversationPanel();
-      setComposerEnabled(true);
-      applyConversationState(restoreData.session);
-      setResolutionPrompt(restoreData.session?.resolutionPrompt || null);
-      applySessionMessages(restoreData.session.messages);
-      renderEntryFlow();
-      closeStream();
-      stopPolling();
-      startStream(restoreData.session.sessionId);
-      startPolling();
-      return true;
-    }
-
-    return false;
-  }
-
-  if (await restoreFromSnapshot()) {
+  if (await restoreSessionFromSnapshot()) {
     return;
   }
 
@@ -1332,11 +1360,11 @@ async function loadExistingSession() {
       }
 
       localStorage.removeItem(storageKey);
-      if (await restoreFromSnapshot()) {
+      if (await restoreSessionFromSnapshot()) {
         return;
       }
     } catch (error) {
-      if (await restoreFromSnapshot()) {
+      if (await restoreSessionFromSnapshot()) {
         return;
       }
 
@@ -1752,23 +1780,40 @@ messageForm.addEventListener("submit", async (event) => {
     if (shouldShowTypingIndicator) {
       showTypingIndicator();
     }
-    const formData = new FormData();
-    formData.append("sessionId", sessionId);
-    formData.append("message", message);
-
-    for (const file of pendingFiles) {
-      formData.append("attachments", file);
-    }
-
+    const filesToSend = [...pendingFiles];
     pendingFiles = [];
     renderPendingFiles();
 
-    const response = await fetch("/api/chat/message", {
-      method: "POST",
-      body: formData
-    });
+    async function sendMessageRequest(activeSessionId) {
+      const formData = new FormData();
+      formData.append("sessionId", activeSessionId);
+      formData.append("message", message);
 
-    const data = await response.json();
+      for (const file of filesToSend) {
+        formData.append("attachments", file);
+      }
+
+      const response = await fetch("/api/chat/message", {
+        method: "POST",
+        body: formData
+      });
+
+      return {
+        response,
+        data: await response.json()
+      };
+    }
+
+    let { response, data } = await sendMessageRequest(sessionId);
+
+    if (response.status === 404) {
+      const restored = await recoverMissingSession({ showErrorMessage: false });
+      const recoveredSessionId = localStorage.getItem(storageKey);
+
+      if (restored && recoveredSessionId) {
+        ({ response, data } = await sendMessageRequest(recoveredSessionId));
+      }
+    }
 
     if (!response.ok) {
       if (response.status === 409 && data.conversationState?.tone === "resolved") {
