@@ -81,6 +81,15 @@ test("refund request remains high-risk and routes to hard handoff", () => {
   assert.equal(conversation.supportPlan.route, "handoff_hard");
 });
 
+test("refund policy question stays knowledge-answerable and does not hard escalate", () => {
+  const conversation = analyze("Koji je rok za povrat i zamjenu?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "reklamacija_povrat");
+  assert.equal(conversation.reasoningResult.actionIntent, "ask_timeline");
+  assert.notEqual(conversation.reasoningResult.riskLevel, "high");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
+});
+
 test("clarification is short and concrete for vague problem", () => {
   const conversation = analyze("Imam problem");
 
@@ -388,6 +397,27 @@ test("buyback to operating-hours follow-up becomes support info shift", () => {
   assert.equal(conversation.reasoningResult.activeDomain, "support_info");
   assert.equal(conversation.reasoningResult.topicShiftType, "support_to_support_shift");
   assert.equal(conversation.reasoningResult.sourceContract, "support_only");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
+});
+
+test("complaint to loyalty-program follow-up becomes support info shift", () => {
+  const conversation = analyze("A kako funkcionira loyalty program?", {
+    messages: [
+      { role: "user", content: "Koji je rok za povrat i zamjenu?" },
+      { role: "assistant", content: "Provjeravam uvjete povrata." }
+    ],
+    session: {
+      lastStandaloneQuery: "Koji je rok za povrat i zamjenu?",
+      workingMemory: {
+        activeIntent: "reklamacija_povrat",
+        activeDomain: "complaint",
+        activeTaskIntent: "complaint"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
+  assert.equal(conversation.reasoningResult.activeDomain, "support_info");
   assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 

@@ -128,6 +128,10 @@ function detectPolicyTopic(text = "") {
     return "support_info";
   }
 
+  if (/(loyalty|program vjernosti|program vjernost|vjernost|bonus program|bodov)/.test(normalized)) {
+    return "support_info";
+  }
+
   return "";
 }
 
@@ -432,6 +436,13 @@ function buildIntentScores(text = "", contextText = "") {
   if (/(adresa|gdje ste|gdje se nalazite|lokacija|kontakt|telefon|email|e-mail|mail)/.test(normalized)) {
     scores.support_info += 11;
     scores.product_availability -= 5;
+  }
+
+  if (/(loyalty|program vjernosti|program vjernost|vjernost|bonus program|bodov)/.test(normalized)) {
+    scores.support_info += 14;
+    scores.reklamacija_povrat -= 6;
+    scores.narudzba_problem -= 4;
+    scores.otkup_upit += 2;
   }
 
   if (/(placanj|plaćanj|kartic|gotovin|pouzece|pouzeće|osobno preuzimanje|preuzimanje u poslovnici)/.test(normalized)) {
@@ -1111,10 +1122,13 @@ function analyzeConversation({
     isExplicitProductLookup: explicitProductLookup,
     isFollowUp
   });
+  const isPolicyLikeRefundQuestion =
+    primaryIntent === "reklamacija_povrat" &&
+    ["ask_policy", "ask_timeline", "ask_general_info"].includes(actionIntent);
   const riskLevel =
     riskFlags.includes("legal_or_abuse") ||
     riskFlags.includes("payment") ||
-    riskFlags.includes("refund")
+    (riskFlags.includes("refund") && !isPolicyLikeRefundQuestion)
       ? "high"
       : riskFlags.includes("complaint") ||
           primaryIntent === "reklamacija_povrat" ||

@@ -1367,9 +1367,14 @@ function recordOutcomeMetrics(outcome = null, conversation = null, knowledge = n
 
 function hasCriticalRiskFlags(conversation = null) {
   const flags = Array.isArray(conversation?.riskFlags) ? conversation.riskFlags : [];
+  const primaryIntent = String(conversation?.reasoningResult?.primaryIntent || "").trim();
+  const actionIntent = String(conversation?.reasoningResult?.actionIntent || "").trim();
+  const refundIsPolicyLike =
+    primaryIntent === "reklamacija_povrat" &&
+    ["ask_policy", "ask_timeline", "ask_general_info"].includes(actionIntent);
 
   return (
-    flags.includes("refund") ||
+    (flags.includes("refund") && !refundIsPolicyLike) ||
     flags.includes("payment") ||
     flags.includes("legal_or_abuse")
   );
