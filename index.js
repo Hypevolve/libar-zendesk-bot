@@ -1249,7 +1249,11 @@ function validateAnswerQuality({ answer = "", outcomeType = "", knowledge = null
   }
 
   const answerTokens = extractMeaningfulTokens(normalizedForComparison);
-  const knowledgeTokens = new Set(extractMeaningfulTokens(knowledge.context));
+  const knowledgeReferenceText = [
+    knowledge.context,
+    ...knowledge.articles.flatMap((article) => [article?.title || "", article?.body || ""])
+  ].join(" ");
+  const knowledgeTokens = new Set(extractMeaningfulTokens(knowledgeReferenceText));
   const overlappingTokens = answerTokens.filter((token) => knowledgeTokens.has(token));
   const overlapRatio = answerTokens.length > 0 ? overlappingTokens.length / answerTokens.length : 0;
 
@@ -1349,6 +1353,65 @@ function appendDirectWebsiteLink(
   };
 }
 
+function trimKnowledgeFallbackText(value = "", maxLength = 520) {
+  const normalized = sanitizeCustomerFacingText(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+
+  if (sentences.length > 1) {
+    let collected = "";
+
+    for (const sentence of sentences) {
+      const nextValue = collected ? `${collected} ${sentence}` : sentence;
+
+      if (nextValue.length > maxLength && collected) {
+        break;
+      }
+
+      collected = nextValue;
+
+      if (collected.length >= Math.min(240, maxLength)) {
+        break;
+      }
+    }
+
+    if (collected) {
+      return collected;
+    }
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildKnowledgeFallbackAnswer(knowledge = null) {
+  if (
+    !knowledge ||
+    Number(knowledge.topScore || 0) < KNOWLEDGE_MIN_TOP_SCORE ||
+    !Array.isArray(knowledge.articles) ||
+    knowledge.articles.length === 0
+  ) {
+    return "";
+  }
+
+  for (const article of knowledge.articles) {
+    const candidate = trimKnowledgeFallbackText(article?.body || "");
+
+    if (candidate && !looksLikeKnowledgeTitleDump(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
 
 
 
@@ -1407,16 +1470,37 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       channelType,
       knowledge
     });
-    return { outcome, knowledge };
-  } else {
-    const outcome = {
-      type: "hard_handoff",
-      stateTag: "awaiting_human",
-      reason: "no_answer_found",
-      customerMessage: channelMessages.hardHandoff
-    };
-    return { outcome, knowledge };
+
+    if (outcome?.type === "safe_answer") {
+      return { outcome, knowledge };
+    }
   }
+
+  const fallbackAnswer = buildKnowledgeFallbackAnswer(knowledge);
+
+  if (fallbackAnswer) {
+    const outcome = finalizeOutcomeForCustomer({
+      type: "safe_answer",
+      stateTag: "ai_active",
+      reason: "knowledge_fallback",
+      customerMessage: fallbackAnswer
+    }, {
+      channelType,
+      knowledge
+    });
+
+    if (outcome?.type === "safe_answer") {
+      return { outcome, knowledge };
+    }
+  }
+
+  const outcome = {
+    type: "hard_handoff",
+    stateTag: "awaiting_human",
+    reason: "no_answer_found",
+    customerMessage: channelMessages.hardHandoff
+  };
+  return { outcome, knowledge };
 }
 
 function attachProductsToLatestAssistantMessage(session, products = [], expectedContent = "") {

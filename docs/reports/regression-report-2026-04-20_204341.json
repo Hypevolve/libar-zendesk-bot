@@ -1,0 +1,282 @@
+{
+  "generatedAt": "2026-04-20T18:43:18.847Z",
+  "knowledge": {
+    "totalCases": 1000,
+    "passedCases": 1000,
+    "failedCases": 0,
+    "durationMs": 22995,
+    "passRate": 100,
+    "avgTopScore": 65,
+    "groupDistribution": {
+      "aircash-unavailable": 40,
+      "buyback-basic-school": 40,
+      "buyback-faculty-books": 40,
+      "buyback-methods": 40,
+      "buyback-romanesque": 40,
+      "contact-channels": 40,
+      "courier-no-show": 40,
+      "delivery-times": 40,
+      "home-delivery-price": 40,
+      "installments": 40,
+      "locker-delivery-price": 40,
+      "loyalty-program": 40,
+      "no-self-dropoff": 40,
+      "online-buyback-free-shipping": 40,
+      "online-buyback-payout-timing": 40,
+      "online-buyback-small-shipping": 40,
+      "package-label": 40,
+      "physical-buyback-address": 40,
+      "physical-buyback-payment": 40,
+      "physical-buyback-what-to-bring": 40,
+      "r1-invoice": 40,
+      "return-and-exchange": 40,
+      "same-title-limit": 40,
+      "tracking-info": 40,
+      "working-hours": 40
+    },
+    "groupBreakdown": {
+      "aircash-unavailable": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 47.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "buyback-basic-school": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 12.25,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "buyback-faculty-books": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 65.25,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "buyback-methods": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 113.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "buyback-romanesque": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 81.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "contact-channels": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 91.5,
+        "autonomySafe": 0,
+        "autonomySoftHandoff": 40
+      },
+      "courier-no-show": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 40.5,
+        "autonomySafe": 30,
+        "autonomySoftHandoff": 10
+      },
+      "delivery-times": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 81.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "home-delivery-price": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 98,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "installments": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 22,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "locker-delivery-price": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 71.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "loyalty-program": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 93.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "no-self-dropoff": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 71.25,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "online-buyback-free-shipping": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 117.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "online-buyback-payout-timing": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 12.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "online-buyback-small-shipping": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 115.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "package-label": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 20.25,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "physical-buyback-address": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 113.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "physical-buyback-payment": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 50.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "physical-buyback-what-to-bring": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 94.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "r1-invoice": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 20.25,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "return-and-exchange": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 102.75,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "same-title-limit": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 28.75,
+        "autonomySafe": 30,
+        "autonomySoftHandoff": 10
+      },
+      "tracking-info": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 21,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      },
+      "working-hours": {
+        "total": 40,
+        "passed": 40,
+        "failed": 0,
+        "avgTopScore": 36.5,
+        "autonomySafe": 40,
+        "autonomySoftHandoff": 0
+      }
+    },
+    "channelDistribution": {
+      "email": 250,
+      "facebook": 250,
+      "web_chat": 500
+    },
+    "sourceDistribution": {
+      "onedrive": 1000
+    },
+    "autonomySimulation": {
+      "safeAnswers": 940,
+      "nonAutonomous": 60,
+      "channelSafeDistribution": {
+        "email": 236,
+        "facebook": 234,
+        "web_chat": 470
+      },
+      "reasonDistribution": {
+        "safe_answer": 940,
+        "soft_handoff:internal_process_leak": 60
+      }
+    },
+    "failures": []
+  },
+  "golden": {
+    "totalCases": 150,
+    "passedCases": 150,
+    "failedCases": 0,
+    "durationMs": 128,
+    "passRate": 100,
+    "channelDistribution": {
+      "email": 50,
+      "facebook": 50,
+      "web_chat": 50
+    },
+    "reasonDistribution": {
+      "internal_process_leak": 25,
+      "invalid_generated_reply": 21,
+      "low_knowledge_overlap": 4,
+      "ok": 75,
+      "unsupported_fact_signal": 25
+    },
+    "failures": []
+  }
+}

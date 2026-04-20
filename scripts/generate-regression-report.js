@@ -26,16 +26,34 @@ async function runKnowledgeRegression() {
   const failures = [];
   const groupStats = new Map();
   const channelStats = new Map();
+  const sourceStats = new Map();
+  const autonomyReasonStats = new Map();
+  const autonomyChannelStats = new Map();
+  let topScoreSum = 0;
+  let topScoreCount = 0;
   const startedAt = Date.now();
 
   try {
     for (const testCase of knowledgeRegressionCases) {
-      groupStats.set(testCase.groupId, (groupStats.get(testCase.groupId) || 0) + 1);
+      if (!groupStats.has(testCase.groupId)) {
+        groupStats.set(testCase.groupId, {
+          total: 0,
+          passed: 0,
+          failed: 0,
+          avgTopScore: 0,
+          autonomySafe: 0,
+          autonomySoftHandoff: 0
+        });
+      }
+
+      const groupEntry = groupStats.get(testCase.groupId);
+      groupEntry.total += 1;
       channelStats.set(testCase.channel, (channelStats.get(testCase.channel) || 0) + 1);
 
       const result = await service.searchOneDriveDetailed(testCase.query);
 
       if (!result?.context) {
+        groupEntry.failed += 1;
         failures.push({
           id: testCase.id,
           type: "missing_context",
@@ -46,8 +64,48 @@ async function runKnowledgeRegression() {
         continue;
       }
 
+      groupEntry.passed += 1;
+      sourceStats.set(result.articles?.[0]?.source || "unknown", (sourceStats.get(result.articles?.[0]?.source || "unknown") || 0) + 1);
+
+      if (Number.isFinite(Number(result.topScore))) {
+        topScoreSum += Number(result.topScore);
+        topScoreCount += 1;
+        groupEntry.avgTopScore += Number(result.topScore);
+      }
+
+      const simulatedAutonomyOutcome = __internal.finalizeOutcomeForCustomer(
+        {
+          type: "safe_answer",
+          stateTag: "ai_active",
+          reason: "knowledge_fallback",
+          customerMessage: result.articles?.[0]?.body || ""
+        },
+        {
+          channelType: testCase.channel,
+          knowledge: result
+        }
+      );
+
+      const autonomyKey = simulatedAutonomyOutcome?.type === "safe_answer"
+        ? "safe_answer"
+        : `${simulatedAutonomyOutcome?.type || "unknown"}:${simulatedAutonomyOutcome?.reason || "unknown"}`;
+
+      autonomyReasonStats.set(autonomyKey, (autonomyReasonStats.get(autonomyKey) || 0) + 1);
+      autonomyChannelStats.set(
+        testCase.channel,
+        (autonomyChannelStats.get(testCase.channel) || 0) + (simulatedAutonomyOutcome?.type === "safe_answer" ? 1 : 0)
+      );
+
+      if (simulatedAutonomyOutcome?.type === "safe_answer") {
+        groupEntry.autonomySafe += 1;
+      } else {
+        groupEntry.autonomySoftHandoff += 1;
+      }
+
       for (const pattern of testCase.patterns) {
         if (!pattern.test(result.context)) {
+          groupEntry.passed -= 1;
+          groupEntry.failed += 1;
           failures.push({
             id: testCase.id,
             type: "pattern_mismatch",
@@ -64,14 +122,35 @@ async function runKnowledgeRegression() {
     restore();
   }
 
+  const normalizedGroupStats = Object.fromEntries(
+    [...groupStats.entries()]
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([groupId, entry]) => [
+        groupId,
+        {
+          ...entry,
+          avgTopScore: entry.total > 0 ? Number((entry.avgTopScore / entry.total).toFixed(2)) : 0
+        }
+      ])
+  );
+
   return {
     totalCases: knowledgeRegressionCases.length,
     passedCases: knowledgeRegressionCases.length - failures.length,
     failedCases: failures.length,
     durationMs: Date.now() - startedAt,
     passRate: Number((((knowledgeRegressionCases.length - failures.length) / knowledgeRegressionCases.length) * 100).toFixed(2)),
-    groupDistribution: Object.fromEntries([...groupStats.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+    avgTopScore: topScoreCount > 0 ? Number((topScoreSum / topScoreCount).toFixed(2)) : 0,
+    groupDistribution: Object.fromEntries([...groupStats.entries()].sort((left, right) => left[0].localeCompare(right[0])).map(([groupId, entry]) => [groupId, entry.total])),
+    groupBreakdown: normalizedGroupStats,
     channelDistribution: Object.fromEntries([...channelStats.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+    sourceDistribution: Object.fromEntries([...sourceStats.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+    autonomySimulation: {
+      safeAnswers: [...autonomyReasonStats.entries()].reduce((sum, [reason, count]) => sum + (reason === "safe_answer" ? count : 0), 0),
+      nonAutonomous: [...autonomyReasonStats.entries()].reduce((sum, [reason, count]) => sum + (reason === "safe_answer" ? 0 : count), 0),
+      channelSafeDistribution: Object.fromEntries([...autonomyChannelStats.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+      reasonDistribution: Object.fromEntries([...autonomyReasonStats.entries()].sort((left, right) => left[0].localeCompare(right[0])))
+    },
     failures: failures.slice(0, 20)
   };
 }
@@ -156,9 +235,24 @@ function buildMarkdownReport({ generatedAt, knowledge, golden }) {
     `- Failed: ${knowledge.failedCases}`,
     `- Pass rate: ${knowledge.passRate}%`,
     `- Duration: ${knowledge.durationMs} ms`,
+    `- Average top score: ${knowledge.avgTopScore}`,
     "",
     "Channel distribution:",
     ...Object.entries(knowledge.channelDistribution).map(([channel, count]) => `- ${channel}: ${count}`),
+    "",
+    "Source distribution:",
+    ...Object.entries(knowledge.sourceDistribution).map(([source, count]) => `- ${source}: ${count}`),
+    "",
+    "Autonomy simulation:",
+    `- Safe answers: ${knowledge.autonomySimulation.safeAnswers}`,
+    `- Non-autonomous outcomes: ${knowledge.autonomySimulation.nonAutonomous}`,
+    ...Object.entries(knowledge.autonomySimulation.channelSafeDistribution).map(([channel, count]) => `- ${channel} safe: ${count}`),
+    "",
+    "Autonomy reasons:",
+    ...Object.entries(knowledge.autonomySimulation.reasonDistribution).map(([reason, count]) => `- ${reason}: ${count}`),
+    "",
+    "Group breakdown:",
+    ...Object.entries(knowledge.groupBreakdown).map(([groupId, stats]) => `- ${groupId}: pass ${stats.passed}/${stats.total}, avg top score ${stats.avgTopScore}, autonomy ${stats.autonomySafe}/${stats.total}`),
     "",
     "## Golden Answers",
     `- Total cases: ${golden.totalCases}`,

@@ -64,13 +64,47 @@ test("resolveAutomatedOutcome uses grounded answers across web, facebook, and em
   }
 });
 
-test("resolveAutomatedOutcome returns channel-specific handoff copy when KB answer is missing", async () => {
+test("resolveAutomatedOutcome uses deterministic fallback copy across channels when KB hit is strong but model answer is missing", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
   knowledgeService.searchKnowledgeDetailed = async () => ({
     context: "Postoji kontekst, ali generator ne uspijeva složiti odgovor.",
-    articles: [{ title: "Mock KB", body: "Mock body", score: 99 }]
+    articles: [{ title: "Mock KB", body: "Radimo ponedjeljkom do petka od 08:00 do 20:00.", score: 99 }],
+    topScore: 99
+  });
+
+  aiService.generateGroundedAnswer = async () => null;
+
+  try {
+    const webResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "web_chat" });
+    assert.equal(webResult.outcome.type, "safe_answer");
+    assert.equal(webResult.outcome.reason, "knowledge_fallback");
+    assert.equal(webResult.outcome.customerMessage, "Radimo ponedjeljkom do petka od 08:00 do 20:00.");
+
+    const facebookResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "facebook" });
+    assert.equal(facebookResult.outcome.type, "safe_answer");
+    assert.equal(facebookResult.outcome.reason, "knowledge_fallback");
+    assert.equal(facebookResult.outcome.customerMessage, "Radimo ponedjeljkom do petka od 08:00 do 20:00.");
+
+    const emailResult = await __internal.resolveAutomatedOutcome({}, "Pitanje", { channelType: "email" });
+    assert.equal(emailResult.outcome.type, "safe_answer");
+    assert.equal(emailResult.outcome.reason, "knowledge_fallback");
+    assert.equal(emailResult.outcome.customerMessage, "Radimo ponedjeljkom do petka od 08:00 do 20:00.");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit is too weak and model answer is missing", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => ({
+    context: "Postoji kontekst, ali rezultat je slab.",
+    articles: [{ title: "Mock KB", body: "Mock body", score: 2 }],
+    topScore: 2
   });
 
   aiService.generateGroundedAnswer = async () => null;

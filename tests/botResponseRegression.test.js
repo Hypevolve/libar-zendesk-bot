@@ -69,7 +69,7 @@ test("resolveAutomatedOutcome returns grounded OneDrive answer and preserves res
   }
 });
 
-test("resolveAutomatedOutcome escalates when Zendesk knowledge exists but grounded answer is unavailable", async () => {
+test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when grounded answer is unavailable", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
@@ -99,10 +99,9 @@ test("resolveAutomatedOutcome escalates when Zendesk knowledge exists but ground
 
     assert.ok(knowledge);
     assert.equal(knowledge.primarySource, "zendesk");
-    assert.equal(outcome.type, "hard_handoff");
-    assert.equal(outcome.reason, "no_answer_found");
-    assert.match(outcome.customerMessage, /provjeriti ručno/i);
-    assert.match(outcome.customerMessage, /javit ćemo vam se ovdje/i);
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "knowledge_fallback");
+    assert.equal(outcome.customerMessage, "Povrat zahtijeva ručnu provjeru.");
 
     const note = __internal.buildAutopilotNote({
       outcome,
@@ -112,7 +111,44 @@ test("resolveAutomatedOutcome escalates when Zendesk knowledge exists but ground
     });
 
     assert.match(note, /Korišteni dokument: Povrat/);
-    assert.match(note, /Razlog: no_answer_found/);
+    assert.match(note, /Razlog: knowledge_fallback/);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome still escalates when knowledge score is too weak for deterministic fallback", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => ({
+    context: "Izvor 1 (Zendesk Help Center):\nNaslov: Općenito\nSadržaj: Ovo je preširok i slabo rangiran rezultat.",
+    articles: [
+      {
+        title: "Općenito",
+        body: "Ovo je preširok i slabo rangiran rezultat.",
+        score: 3,
+        source: "zendesk"
+      }
+    ],
+    topScore: 3,
+    totalMatches: 1,
+    primarySource: "zendesk"
+  });
+
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Trebam pomoć oko nečeg nejasnog.",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "hard_handoff");
+    assert.equal(outcome.reason, "no_answer_found");
+    assert.match(outcome.customerMessage, /provjeriti ručno/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
