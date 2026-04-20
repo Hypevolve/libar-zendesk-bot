@@ -830,6 +830,78 @@ function applyZendeskStateToSession(session, { audits = [], ticketSummary = null
   return session;
 }
 
+function isZendeskRateLimitError(error) {
+  return Number(error?.status || error?.response?.status) === 429;
+}
+
+function buildConversationStateFromOutcome(outcome = {}) {
+  if (outcome?.stateTag === "resolved") {
+    return {
+      tone: "resolved",
+      badge: "Riješeno",
+      subtitle: "Ovaj razgovor je završen. Ako imate novo pitanje, možete započeti novi razgovor."
+    };
+  }
+
+  if (outcome?.stateTag === "awaiting_human") {
+    return {
+      tone: "awaiting-human",
+      badge: "Provjera upita",
+      subtitle: "Pregledavamo vaš upit. Odgovor stiže ovdje čim ga pripremimo."
+    };
+  }
+
+  if (outcome?.type === "ask_clarifying_question") {
+    return {
+      tone: "awaiting-customer-detail",
+      badge: "Treba još detalja",
+      subtitle: "Trebamo još jednu kratku informaciju da bismo nastavili odgovor."
+    };
+  }
+
+  return {
+    tone: "ai-active",
+    badge: "Aktivan",
+    subtitle: "Odgovaramo odmah, a po potrebi se u razgovor uključuje i naš tim."
+  };
+}
+
+function appendLocalAssistantOutcome(session, outcome = {}) {
+  if (!session || !outcome?.customerMessage) {
+    return session;
+  }
+
+  const latestAssistantMessage = [...(session.messages || [])]
+    .reverse()
+    .find((message) => message.role === "assistant" && !message.authoredByHuman);
+
+  if (latestAssistantMessage?.content === outcome.customerMessage) {
+    session.conversationState = buildConversationStateFromOutcome(outcome);
+    session.resolutionPrompt = null;
+    session.updatedAt = new Date().toISOString();
+    scheduleRuntimePersist();
+    return session;
+  }
+
+  session.messages = Array.isArray(session.messages) ? session.messages : [];
+  session.messages.push({
+    id: randomUUID(),
+    role: "assistant",
+    content: outcome.customerMessage,
+    createdAt: new Date().toISOString(),
+    sourceChannel: "api",
+    authoredByHuman: false,
+    supportTaskIntent: outcome.taskIntent || "",
+    products: Array.isArray(outcome.products) ? outcome.products : [],
+    attachments: []
+  });
+  session.conversationState = buildConversationStateFromOutcome(outcome);
+  session.resolutionPrompt = null;
+  session.updatedAt = new Date().toISOString();
+  scheduleRuntimePersist();
+  return session;
+}
+
 async function syncSessionMessagesWithFallback(session, contextLabel = "session_sync") {
   try {
     const syncedSession = await syncSessionMessages(session);
@@ -2438,29 +2510,45 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       );
     }
 
-    await zendeskService.updateConversationState(ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(ticketId, outcome.zendeskMessage || outcome.customerMessage, {
-      channelType: "web_chat",
-      metadata: {
-        ...(outcome.products?.length
-          ? {
-              libar_products: JSON.stringify(outcome.products)
-            }
-          : {}),
-        libar_task_intent: outcome.taskIntent || ""
+    let zendeskWriteDegraded = false;
+    try {
+      await zendeskService.updateConversationState(ticketId, outcome.stateTag);
+      await zendeskService.addBotReplyToTicket(ticketId, outcome.zendeskMessage || outcome.customerMessage, {
+        channelType: "web_chat",
+        metadata: {
+          ...(outcome.products?.length
+            ? {
+                libar_products: JSON.stringify(outcome.products)
+              }
+            : {}),
+          libar_task_intent: outcome.taskIntent || ""
+        }
+      });
+      await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
+        outcome,
+        userMessage: message,
+        knowledge,
+        channelType: "web_chat",
+      }));
+      if (outcome.source === "product_feed" && outcome.zendeskSummary) {
+        await zendeskService.addInternalNote(
+          ticketId,
+          `Product feed sažetak:\n${outcome.zendeskSummary}`
+        );
       }
-    });
-        await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
-      outcome,
-      userMessage: message,
-      knowledge,
-      channelType: "web_chat",
-    }));
-    if (outcome.source === "product_feed" && outcome.zendeskSummary) {
-      await zendeskService.addInternalNote(
+    } catch (error) {
+      if (!isZendeskRateLimitError(error)) {
+        throw error;
+      }
+
+      zendeskWriteDegraded = true;
+      logWarn("zendesk_write_rate_limited", {
+        sessionId: session.sessionId,
         ticketId,
-        `Product feed sažetak:\n${outcome.zendeskSummary}`
-      );
+        status: error.status || error.response?.status || 429,
+        reason: outcome.reason
+      });
+      appendLocalAssistantOutcome(session, outcome);
     }
     const startSync = await syncSessionMessagesWithFallback(session, "chat_start_final_sync");
     attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
@@ -2475,7 +2563,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
 
     return res.status(200).json({
       success: true,
-      degraded: startSync.degraded,
+      degraded: startSync.degraded || zendeskWriteDegraded,
       sessionId: session.sessionId,
       session: {
         sessionId: session.sessionId,
@@ -2751,33 +2839,49 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       );
     }
 
-    await zendeskService.updateConversationState(session.ticketId, outcome.stateTag);
-    await zendeskService.addBotReplyToTicket(
-      session.ticketId,
-      outcome.zendeskMessage || outcome.customerMessage,
-      {
-        channelType: "web_chat",
-        metadata: {
-          ...(outcome.products?.length
-            ? {
-                libar_products: JSON.stringify(outcome.products)
-              }
-            : {}),
-          libar_task_intent: outcome.taskIntent || ""
-        }
-      }
-    );
-        await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
-      outcome,
-      userMessage: message || "Šaljem privitak.",
-      knowledge,
-      channelType: "web_chat",
-    }));
-    if (outcome.source === "product_feed" && outcome.zendeskSummary) {
-      await zendeskService.addInternalNote(
+    let zendeskWriteDegraded = false;
+    try {
+      await zendeskService.updateConversationState(session.ticketId, outcome.stateTag);
+      await zendeskService.addBotReplyToTicket(
         session.ticketId,
-        `Product feed sažetak:\n${outcome.zendeskSummary}`
+        outcome.zendeskMessage || outcome.customerMessage,
+        {
+          channelType: "web_chat",
+          metadata: {
+            ...(outcome.products?.length
+              ? {
+                  libar_products: JSON.stringify(outcome.products)
+                }
+              : {}),
+            libar_task_intent: outcome.taskIntent || ""
+          }
+        }
       );
+      await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
+        outcome,
+        userMessage: message || "Šaljem privitak.",
+        knowledge,
+        channelType: "web_chat",
+      }));
+      if (outcome.source === "product_feed" && outcome.zendeskSummary) {
+        await zendeskService.addInternalNote(
+          session.ticketId,
+          `Product feed sažetak:\n${outcome.zendeskSummary}`
+        );
+      }
+    } catch (error) {
+      if (!isZendeskRateLimitError(error)) {
+        throw error;
+      }
+
+      zendeskWriteDegraded = true;
+      logWarn("zendesk_write_rate_limited", {
+        sessionId,
+        ticketId: session.ticketId,
+        status: error.status || error.response?.status || 429,
+        reason: outcome.reason
+      });
+      appendLocalAssistantOutcome(session, outcome);
     }
     const messageSync = await syncSessionMessagesWithFallback(session, "chat_message_final_sync");
     attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
@@ -2785,7 +2889,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
 
     return res.status(200).json({
       success: true,
-      degraded: messageSync.degraded,
+      degraded: messageSync.degraded || zendeskWriteDegraded,
       ticketId: session.ticketId,
       messages: session.messages,State: session.conversationState,
       resolutionPrompt: session.resolutionPrompt || null
@@ -3152,11 +3256,14 @@ module.exports = {
     appendDirectWebsiteLink,
     buildAutopilotNote,
     buildConversationState,
+    buildConversationStateFromOutcome,
     detectTicketChannelType,
     finalizeOutcomeForCustomer,
     formatChannelLabel,
     getAutomationBlockReason,
     getChannelMessages,
+    appendLocalAssistantOutcome,
+    isZendeskRateLimitError,
     getSessionActiveDomain,
     looksLikeProductContinuationMessage,
     looksLikeProductLookupMessage,

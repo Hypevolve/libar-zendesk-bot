@@ -130,9 +130,13 @@ function buildZendeskApiError(actionLabel, error, extra = {}) {
 
   const details = Object.keys(extra).length > 0 ? ` ${JSON.stringify(extra)}` : "";
 
-  return new Error(
+  const zendeskError = new Error(
     `${actionLabel} failed${status ? ` with status ${status}` : ""}.${details}`
   );
+  zendeskError.status = status || null;
+  zendeskError.responseData = responseData || null;
+  zendeskError.extra = extra;
+  return zendeskError;
 }
 
 function getZendeskConfigSummary() {
@@ -786,6 +790,7 @@ module.exports = {
   getTicketSummary,
   replyToTicket,
   searchHelpCenter,
+  searchHelpCenterDetailed,
   
   setTicketTags,
   solveTicket,

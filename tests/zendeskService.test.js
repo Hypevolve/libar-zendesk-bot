@@ -98,3 +98,38 @@ test("getPublicTicketComments keeps only public comments", async () => {
   }
 });
 
+test("searchHelpCenterDetailed is exported for knowledge service integration", () => {
+  const { service, restore } = loadFreshZendeskService();
+
+  try {
+    assert.equal(typeof service.searchHelpCenterDetailed, "function");
+  } finally {
+    restore();
+  }
+});
+
+test("Zendesk API errors preserve rate-limit status metadata", async () => {
+  const client = {
+    get: async () => ({ data: {} }),
+    put: async () => {
+      const error = new Error("Request failed with status code 429");
+      error.response = {
+        status: 429,
+        data: { errors: [{ title: "Rate Limited" }] }
+      };
+      throw error;
+    },
+    post: async () => ({ data: {} })
+  };
+
+  const { service, restore } = loadFreshZendeskService({ client });
+
+  try {
+    await assert.rejects(
+      service.addBotReplyToTicket(123, "Test reply"),
+      (error) => error?.status === 429
+    );
+  } finally {
+    restore();
+  }
+});

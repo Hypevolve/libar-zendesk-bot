@@ -442,6 +442,47 @@ test("resolveAutomatedOutcome catches natural buyback phrasing without routing i
   }
 });
 
+test("appendLocalAssistantOutcome keeps the chat usable when Zendesk write is rate-limited", () => {
+  const session = {
+    messages: [
+      {
+        id: "u1",
+        role: "user",
+        content: "Imate li Algebra 1?",
+        createdAt: new Date("2026-04-20T19:30:00Z").toISOString(),
+        attachments: []
+      }
+    ]
+  };
+
+  __internal.appendLocalAssistantOutcome(session, {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "product_feed_match",
+    source: "product_feed",
+    taskIntent: "product_lookup",
+    customerMessage: "Trenutno je dostupna. Cijena je 9,90 EUR.",
+    products: [
+      {
+        title: "Algebra 1",
+        buyLink: "https://antikvarijat-libar.com/kupi-udzbenike/?pretraga=Algebra%201"
+      }
+    ]
+  });
+
+  assert.equal(session.messages.length, 2);
+  assert.equal(session.messages[1].role, "assistant");
+  assert.equal(session.messages[1].supportTaskIntent, "product_lookup");
+  assert.equal(session.messages[1].products.length, 1);
+  assert.equal(session.conversationState.tone, "ai-active");
+});
+
+test("isZendeskRateLimitError recognizes propagated Zendesk 429 errors", () => {
+  assert.equal(__internal.isZendeskRateLimitError({ status: 429 }), true);
+  assert.equal(__internal.isZendeskRateLimitError({ response: { status: 429 } }), true);
+  assert.equal(__internal.isZendeskRateLimitError({ status: 503 }), false);
+});
+
 test("buildGroundedAnswerPrompt encodes answer constraints for exact facts and channel tone", () => {
   const prompt = aiService.buildGroundedAnswerPrompt(
     "Izvor 1 (OneDrive):\nNaslov: Dostava\nSadržaj: GLS dostava na kućnu adresu iznosi 5,97 EUR.",
