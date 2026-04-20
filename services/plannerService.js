@@ -23,18 +23,18 @@ function getEntryTopicPolicy(session = {}) {
       };
     case "delivery":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only",
         preferredTaskIntent: "delivery"
       };
     case "support_info":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only",
         preferredTaskIntent: "support_info"
@@ -43,9 +43,9 @@ function getEntryTopicPolicy(session = {}) {
     case "order_issue":
     case "complaint":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only",
         preferredTaskIntent: lock
@@ -98,17 +98,17 @@ function buildSourcePlan(primaryIntent, secondaryIntent = null) {
       };
     case "dostava_info":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only"
       };
     case "support_info":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only"
       };
@@ -124,9 +124,9 @@ function buildSourcePlan(primaryIntent, secondaryIntent = null) {
     case "narudzba_problem":
     case "reklamacija_povrat":
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: ["product_feed"],
         mergeStrategy: "support_only"
       };
@@ -140,9 +140,9 @@ function buildSourcePlan(primaryIntent, secondaryIntent = null) {
       };
     default:
       return {
-        route: "zendesk_knowledge",
-        selectedSources: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
-        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge", "website_knowledge"],
+        route: "onedrive_knowledge",
+        selectedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        sourcePriority: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
         mustNotUseSources: [],
         mergeStrategy: "support_only"
       };

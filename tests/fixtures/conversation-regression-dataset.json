@@ -40,7 +40,7 @@
     "expectedTopicShiftType": "support_to_support_shift",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   },
   {
     "channel": "web_chat",
@@ -78,7 +78,7 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   },
   {
     "channel": "facebook",
@@ -98,7 +98,7 @@
     "expectedTopicShiftType": "support_to_support_shift",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   },
   {
     "channel": "facebook",
@@ -129,7 +129,7 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   },
   {
     "channel": "email",
@@ -149,7 +149,7 @@
     "expectedTopicShiftType": "support_to_support_shift",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   },
   {
     "channel": "email",
@@ -205,6 +205,6 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "zendesk_knowledge"
+    "expectedRoute": "onedrive_knowledge"
   }
 ]

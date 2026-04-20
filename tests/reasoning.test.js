@@ -29,7 +29,7 @@ test("support vs product disambiguation stays on knowledge route", () => {
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
   assert.equal(conversation.reasoningResult.taskIntent, "delivery");
   assert.equal(conversation.reasoningResult.entities.city, "Dubrovnik");
-  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
   assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
 });
 
@@ -40,7 +40,7 @@ test("operating hours resolves to support info domain", () => {
   assert.equal(conversation.reasoningResult.taskIntent, "support_info");
   assert.equal(conversation.reasoningResult.activeDomain, "support_info");
   assert.equal(conversation.reasoningResult.actionIntent, "ask_general_info");
-  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
   assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
 });
 
@@ -49,7 +49,7 @@ test("address question resolves to support info domain", () => {
 
   assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
   assert.equal(conversation.reasoningResult.activeDomain, "support_info");
-  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 
 test("order status and order problem split into different intents", () => {
@@ -199,7 +199,7 @@ test("delivery follow-up keeps previous support intent", () => {
 
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
   assert.equal(conversation.reasoningResult.entities.city, "Dubrovnik");
-  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 
 test("clarification answer preserves original order-problem intent", () => {
@@ -388,7 +388,7 @@ test("buyback to operating-hours follow-up becomes support info shift", () => {
   assert.equal(conversation.reasoningResult.activeDomain, "support_info");
   assert.equal(conversation.reasoningResult.topicShiftType, "support_to_support_shift");
   assert.equal(conversation.reasoningResult.sourceContract, "support_only");
-  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.equal(conversation.supportPlan.route, "onedrive_knowledge");
 });
 
 test("delivery to product topic shift switches to product lookup", () => {

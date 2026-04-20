@@ -66,7 +66,7 @@ test("topic shift after clarification drops stale secondary intent", () => {
 
   assert.equal(conversation.reasoningResult.primaryIntent, "dostava_info");
   assert.equal(conversation.reasoningResult.secondaryIntent, null);
-  assert.equal(supportPlan.route, "zendesk_knowledge");
+  assert.equal(supportPlan.route, "onedrive_knowledge");
 });
 
 test("working memory persists structured intent fields", () => {
@@ -296,14 +296,31 @@ test("planner enforces buyback entry lock as support-only source policy", () => 
   assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
 });
 
+test("delivery entry lock now keeps onedrive as primary knowledge source", () => {
+  const { supportPlan } = analyze("Koliko košta dostava GLS?", {
+    session: {
+      entryTopicLock: "delivery",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge", "website_knowledge"],
+        blockedSources: ["product_feed"]
+      }
+    }
+  });
+
+  assert.equal(supportPlan.route, "onedrive_knowledge");
+  assert.equal(supportPlan.sourcePriority[0], "onedrive_knowledge");
+});
+
 test("support info intent is treated as support-only source policy", () => {
   const { conversation, supportPlan } = analyze("Radite li subotom?");
 
   assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
   assert.equal(conversation.reasoningResult.sourceContract, "support_only");
-  assert.equal(supportPlan.route, "zendesk_knowledge");
+  assert.equal(supportPlan.route, "onedrive_knowledge");
   assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
   assert.ok(supportPlan.selectedSources.includes("website_knowledge"));
+  assert.equal(supportPlan.selectedSources[0], "onedrive_knowledge");
+  assert.equal(supportPlan.sourcePriority[0], "onedrive_knowledge");
 });
 
 test("knowledge merge respects source blocking and reranks buyback article first", () => {
