@@ -826,6 +826,9 @@ function buildAutopilotNote({
     conversation?.reasoningResult?.answerabilityClass
       ? `Answerability class: ${conversation.reasoningResult.answerabilityClass}`
       : null,
+    conversation?.reasoningResult?.topicShiftType
+      ? `Topic shift type: ${conversation.reasoningResult.topicShiftType}`
+      : null,
     conversation?.reasoningResult?.sourceContract
       ? `Source contract: ${conversation.reasoningResult.sourceContract}`
       : null,
@@ -847,7 +850,7 @@ function buildAutopilotNote({
       : null,
     knowledge?.topScore ? `Top relevantnost: ${knowledge.topScore}` : null,
     knowledge?.quality
-      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
+      ? `Knowledge quality: margin=${knowledge.quality.scoreMargin || 0}, relevance=${knowledge.quality.relevanceMatch ? "yes" : "no"}, domainMatch=${knowledge.quality.domainMatch ? "yes" : "no"}, jobMatch=${knowledge.quality.jobMatch ? "yes" : "no"}, directAnswerability=${knowledge.quality.directAnswerability ? "yes" : "no"}, contextConsistency=${knowledge.quality.contextConsistency ? "yes" : "no"}, strong=${knowledge.quality.isStrong ? "yes" : "no"}`
       : null,
     outcome?.topScore ? `Top product score: ${outcome.topScore}` : null,
     productSummary ? `Pronađeni proizvodi: ${productSummary}` : null,
@@ -1017,6 +1020,14 @@ function buildEntryTopicPolicy(entryIntent = "") {
           blockedSources: ["product_feed"]
         }
       };
+    case "opci_upit":
+      return {
+        entryTopicLock: "support_info",
+        entryTopicSourcePolicy: {
+          allowedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+          blockedSources: ["product_feed"]
+        }
+      };
     case "narudzba":
       return {
         entryTopicLock: "order_status",
@@ -1053,6 +1064,10 @@ function shouldReleaseEntryTopicLock(session, conversation) {
   if (currentLock === "buyback") {
     if (nextTaskIntent === "product_lookup") {
       return confidence >= 0.72 && Boolean(conversation?.isExplicitProductLookup);
+    }
+
+    if (nextTaskIntent === "support_info") {
+      return confidence >= 0.55;
     }
 
     return confidence >= 0.72 && ["delivery", "order_status", "order_issue", "complaint"].includes(nextTaskIntent);
@@ -1261,6 +1276,15 @@ async function determineChatOutcome(
   }
 
   if (
+    responsePolicy?.acceptLowMarginDirectInfo &&
+    knowledge?.quality?.directAnswerability &&
+    knowledge?.quality?.contextConsistency &&
+    knowledge?.quality?.jobMatch
+  ) {
+    knowledge.quality.isStrong = true;
+  }
+
+  if (
     (allowClarifyingQuestion || clarifyAfterKnowledge) &&
     knowledge?.quality &&
     !knowledge.quality.isStrong &&
@@ -1432,7 +1456,11 @@ function buildConversationAnalysis(session, userMessage) {
     brevity:
       ["buyback", "delivery", "order"].includes(baseConversation.reasoningResult?.activeDomain)
         ? "procedural_short"
-        : "short",
+        : baseConversation.reasoningResult?.activeDomain === "support_info"
+          ? "terse"
+          : "short",
+    sourceContract: baseConversation.reasoningResult?.sourceContract || "knowledge_first",
+    acceptLowMarginDirectInfo: baseConversation.reasoningResult?.activeDomain === "support_info",
     forbiddenContent:
       baseConversation.reasoningResult?.sourceContract === "support_only"
         ? ["product_links", "webshop_mentions", "multi_questioning"]
@@ -1456,6 +1484,7 @@ function buildConversationAnalysis(session, userMessage) {
       baseConversation.reasoningResult?.entities?.city ||
       baseConversation.reasoningResult?.entities?.book_title ||
       "",
+    shouldResetPreviousRetrieval: baseConversation.reasoningResult?.topicShiftType === "support_to_support_shift",
     allowedSources: supportPlan.selectedSources || [],
     blockedSources: supportPlan.mustNotUseSources || []
   };

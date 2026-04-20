@@ -35,6 +35,20 @@
     "expectedOutcome": "answer"
   },
   {
+    "message": "Koje vam je radno vrijeme?",
+    "intent": "support_info",
+    "desiredSource": "zendesk",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  },
+  {
+    "message": "Gdje se nalazite?",
+    "intent": "support_info",
+    "desiredSource": "zendesk",
+    "shouldUseProductFeed": false,
+    "expectedOutcome": "answer"
+  },
+  {
     "message": "A koliko traje?",
     "intent": "otkup_upit",
     "desiredSource": "onedrive",

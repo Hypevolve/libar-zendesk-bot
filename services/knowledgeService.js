@@ -66,6 +66,10 @@ function rerankEntry(entry, options = {}) {
     score += 4;
   }
 
+  if (activeDomain === "support_info" && /(radno vrijeme|ponedjeljak|subota|nedjelja|adresa|osijek|županijska|zupanijska|kontakt|telefon|email|mail|plaćanje|placanje|kartica|gotovina|pouzeće|pouzece)/.test(normalizedText)) {
+    score += 8;
+  }
+
   if (taskIntent === "delivery" && /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText)) {
     score += 5;
   }
@@ -106,24 +110,42 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
 
   let relevanceMatch = false;
   let jobMatch = false;
+  let domainMatch = false;
   let contextConsistency = true;
+  let directAnswerability = false;
 
   if (taskIntent === "buyback") {
     relevanceMatch = /(otkup|procjen|vrednovanj|prodati|bonus)/.test(normalizedText);
     jobMatch = /(postupak|proces|uvjeti|koraci|pošaljite|pošalji|procjen|vrednovanj|otkup)/.test(normalizedText);
+    domainMatch = relevanceMatch;
     contextConsistency = !/(webshop|na stanju|isbn|autor|kupnja)/.test(normalizedText);
+    directAnswerability = /(otkup|postupak|uvjeti|pošaljite|pošalji|isplata)/.test(normalizedText);
+  } else if (taskIntent === "support_info" || activeDomain === "support_info") {
+    relevanceMatch = /(radno vrijeme|ponedjeljak|petak|subota|nedjelja|adresa|osijek|županijska|zupanijska|kontakt|telefon|email|mail|plaćanje|placanje|kartica|gotovina|pouzeće|pouzece|preuzimanje)/.test(normalizedText);
+    jobMatch = relevanceMatch;
+    domainMatch = relevanceMatch;
+    contextConsistency = !/(webshop|na stanju|isbn|autor|otkupna cijena)/.test(normalizedText);
+    directAnswerability = relevanceMatch;
   } else if (taskIntent === "delivery") {
     relevanceMatch = /(dostav|isporuk|rok|kurir|pošt|pošta)/.test(normalizedText);
     jobMatch = /(dostav|isporuk|rok|kurir|pošt|pošta|cijena dostave)/.test(normalizedText);
+    domainMatch = relevanceMatch;
+    directAnswerability = jobMatch;
   } else if (taskIntent === "order_status" || questionType === "status") {
     relevanceMatch = /(narudžb|narudzb|status|broj narudžbe|broj narudzbe)/.test(normalizedText);
     jobMatch = relevanceMatch;
+    domainMatch = relevanceMatch;
+    directAnswerability = jobMatch;
   } else if (actionIntent === "ask_how_to") {
     relevanceMatch = /(kako|koraci|postupak|potrebno|trebate|pošaljite|pošalji)/.test(normalizedText);
     jobMatch = relevanceMatch;
+    domainMatch = relevanceMatch;
+    directAnswerability = jobMatch;
   } else {
     relevanceMatch = topScore > 0;
     jobMatch = relevanceMatch;
+    domainMatch = relevanceMatch;
+    directAnswerability = relevanceMatch;
   }
 
   if (!jobMatch && activeDomain === "buyback") {
@@ -144,7 +166,9 @@ function buildKnowledgeQuality(candidates = [], options = {}) {
     scoreMargin,
     relevanceMatch,
     jobMatch,
+    domainMatch,
     contextConsistency,
+    directAnswerability,
     acceptanceReason: isStrong ? "context_and_job_match" : isWeak ? "insufficient_job_match" : "ambiguous_match",
     isStrong,
     isWeak

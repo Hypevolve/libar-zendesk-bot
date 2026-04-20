@@ -33,6 +33,25 @@ test("support vs product disambiguation stays on knowledge route", () => {
   assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
 });
 
+test("operating hours resolves to support info domain", () => {
+  const conversation = analyze("Koje vam je radno vrijeme?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
+  assert.equal(conversation.reasoningResult.taskIntent, "support_info");
+  assert.equal(conversation.reasoningResult.activeDomain, "support_info");
+  assert.equal(conversation.reasoningResult.actionIntent, "ask_general_info");
+  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+  assert.ok(conversation.supportPlan.mustNotUseSources.includes("product_feed"));
+});
+
+test("address question resolves to support info domain", () => {
+  const conversation = analyze("Gdje se nalazite?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
+  assert.equal(conversation.reasoningResult.activeDomain, "support_info");
+  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
+});
+
 test("order status and order problem split into different intents", () => {
   const status = analyze("Gdje mi je narudžba #12345?");
   const problem = analyze("Imam problem s narudžbom #12345");
@@ -331,6 +350,35 @@ test("buyback follow-up about textbooks stays in buyback domain", () => {
   assert.equal(conversation.reasoningResult.activeDomain, "buyback");
   assert.equal(conversation.reasoningResult.sourceContract, "support_only");
   assert.notEqual(conversation.supportPlan.route, "product_feed");
+});
+
+test("buyback to operating-hours follow-up becomes support info shift", () => {
+  const conversation = analyze("Koje vam je radno vrijeme?", {
+    messages: [
+      { role: "user", content: "Želim prodati knjige" },
+      { role: "assistant", content: "Možete ih donijeti u poslovnicu ili poslati online." }
+    ],
+    session: {
+      entryTopicLock: "buyback",
+      entryTopicSourcePolicy: {
+        allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+        blockedSources: ["product_feed"]
+      },
+      lastStandaloneQuery: "Želim prodati knjige",
+      workingMemory: {
+        activeIntent: "otkup_upit",
+        activeDomain: "buyback",
+        activeTaskIntent: "buyback",
+        activeUserJob: "ask_how_to"
+      }
+    }
+  });
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
+  assert.equal(conversation.reasoningResult.activeDomain, "support_info");
+  assert.equal(conversation.reasoningResult.topicShiftType, "support_to_support_shift");
+  assert.equal(conversation.reasoningResult.sourceContract, "support_only");
+  assert.equal(conversation.supportPlan.route, "zendesk_knowledge");
 });
 
 test("delivery to product topic shift switches to product lookup", () => {

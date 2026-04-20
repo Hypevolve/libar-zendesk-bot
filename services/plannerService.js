@@ -30,6 +30,15 @@ function getEntryTopicPolicy(session = {}) {
         mergeStrategy: "support_only",
         preferredTaskIntent: "delivery"
       };
+    case "support_info":
+      return {
+        route: "zendesk_knowledge",
+        selectedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+        mustNotUseSources: ["product_feed"],
+        mergeStrategy: "support_only",
+        preferredTaskIntent: "support_info"
+      };
     case "order_status":
     case "order_issue":
     case "complaint":
@@ -88,6 +97,14 @@ function buildSourcePlan(primaryIntent, secondaryIntent = null) {
         mergeStrategy: "product_first"
       };
     case "dostava_info":
+      return {
+        route: "zendesk_knowledge",
+        selectedSources: ["zendesk_knowledge", "onedrive_knowledge"],
+        sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+        mustNotUseSources: ["product_feed"],
+        mergeStrategy: "support_only"
+      };
+    case "support_info":
       return {
         route: "zendesk_knowledge",
         selectedSources: ["zendesk_knowledge", "onedrive_knowledge"],
@@ -159,7 +176,14 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
   const secondaryIntent = normalizeIntent(reasoningResult.secondaryIntent);
   const defaultSourcePlan = buildSourcePlan(primaryIntent, secondaryIntent);
   const lockedPolicy = getEntryTopicPolicy(session);
-  const useLockedPolicy = Boolean(lockedPolicy);
+  const currentLock = normalizeIntent(session?.entryTopicLock || session?.workingMemory?.entryTopicLock);
+  const useLockedPolicy = Boolean(
+    lockedPolicy &&
+      !(
+        currentLock === "buyback" &&
+        reasoningResult.taskIntent === "support_info"
+      )
+  );
   const sourcePlan = useLockedPolicy ? lockedPolicy : defaultSourcePlan;
   const missingSlots = Array.isArray(reasoningResult.missingSlots) ? reasoningResult.missingSlots : [];
   const isClosure = primaryIntent === "small_talk_or_closure";
@@ -211,7 +235,7 @@ function buildSupportPlan({ reasoningResult = {}, session = {}, hasAttachments =
       responseMode = "clarify";
       nextBestAction = "disambiguate";
     }
-  } else if (primaryIntent === "narudzba_status" || primaryIntent === "dostava_info" || primaryIntent === "otkup_upit") {
+  } else if (primaryIntent === "narudzba_status" || primaryIntent === "dostava_info" || primaryIntent === "otkup_upit" || primaryIntent === "support_info") {
     responseMode = "procedural_answer";
   } else if (isComplaint) {
     responseMode = "reassurance_then_answer";

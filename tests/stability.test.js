@@ -293,6 +293,15 @@ test("planner enforces buyback entry lock as support-only source policy", () => 
   assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
 });
 
+test("support info intent is treated as support-only source policy", () => {
+  const { conversation, supportPlan } = analyze("Radite li subotom?");
+
+  assert.equal(conversation.reasoningResult.primaryIntent, "support_info");
+  assert.equal(conversation.reasoningResult.sourceContract, "support_only");
+  assert.equal(supportPlan.route, "zendesk_knowledge");
+  assert.ok(supportPlan.mustNotUseSources.includes("product_feed"));
+});
+
 test("knowledge merge respects source blocking and reranks buyback article first", () => {
   const knowledge = knowledgeService.mergeKnowledgeResults(
     {
@@ -332,6 +341,49 @@ test("knowledge merge respects source blocking and reranks buyback article first
   assert.equal(knowledge.articles[0].title, "Otkup knjiga - postupak");
   assert.equal(knowledge.quality.relevanceMatch, true);
   assert.equal(knowledge.quality.jobMatch, true);
+  assert.equal(knowledge.quality.contextConsistency, true);
+});
+
+test("knowledge merge prefers direct support info article for operating hours", () => {
+  const knowledge = knowledgeService.mergeKnowledgeResults(
+    {
+      zendeskKnowledge: {
+        articles: [
+          {
+            title: "Radno vrijeme i kontakt",
+            score: 10,
+            body: "Ponedjeljak - petak 08:00 - 20:00. Subota 08:00 - 13:00. Županijska 17, Osijek.",
+            source: "zendesk"
+          }
+        ]
+      },
+      oneDriveKnowledge: {
+        articles: [
+          {
+            title: "Otkup knjiga - postupak",
+            score: 11,
+            body: "Za otkup pošaljite popis naslova i procjenu.",
+            source: "onedrive"
+          }
+        ]
+      }
+    },
+    {
+      allowedSources: ["onedrive_knowledge", "zendesk_knowledge"],
+      blockedSources: ["product_feed"],
+      sourcePriority: ["zendesk_knowledge", "onedrive_knowledge"],
+      activeDomain: "support_info",
+      taskIntent: "support_info",
+      actionIntent: "ask_general_info",
+      subjectType: "support_info",
+      questionType: "info"
+    }
+  );
+
+  assert.equal(knowledge.primarySource, "zendesk");
+  assert.equal(knowledge.articles[0].title, "Radno vrijeme i kontakt");
+  assert.equal(knowledge.quality.domainMatch, true);
+  assert.equal(knowledge.quality.directAnswerability, true);
   assert.equal(knowledge.quality.contextConsistency, true);
 });
 

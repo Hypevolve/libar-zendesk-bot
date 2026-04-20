@@ -20,6 +20,7 @@ function getFirstName(name = "") {
 function deriveActiveDomain(taskIntent = "") {
   switch (String(taskIntent || "").trim()) {
     case "buyback":
+    case "support_info":
     case "delivery":
     case "product_lookup":
     case "complaint":
@@ -206,6 +207,10 @@ function buildWorkingMemory({
             : "") ||
       previousMemory?.lastAnswerabilityClass ||
       "",
+    lastSupportInfoIntent:
+      conversation?.reasoningResult?.activeDomain === "support_info"
+        ? conversation?.reasoningResult?.primaryIntent || "support_info"
+        : previousMemory?.lastSupportInfoIntent || "",
     topicShiftHistory:
       conversation?.reasoningResult?.topicShiftDetected
         ? [
@@ -213,6 +218,7 @@ function buildWorkingMemory({
             {
               from: previousMemory?.activeDomain || previousMemory?.activeIntent || "",
               to: conversation?.reasoningResult?.activeDomain || conversation?.reasoningResult?.primaryIntent || "",
+              type: conversation?.reasoningResult?.topicShiftType || "",
               at: new Date().toISOString()
             }
           ]
@@ -372,6 +378,7 @@ function normalizeComparableMemory(memory = {}) {
     lastIntentEvidence: Array.isArray(memory.lastIntentEvidence) ? memory.lastIntentEvidence : [],
     lastAnsweredQuestionType: memory.lastAnsweredQuestionType || "",
     lastAnswerabilityClass: memory.lastAnswerabilityClass || "",
+    lastSupportInfoIntent: memory.lastSupportInfoIntent || "",
     topicShiftHistory: Array.isArray(memory.topicShiftHistory) ? memory.topicShiftHistory : [],
     customerProfile: {
       name: normalizeText(memory.customerProfile?.name),

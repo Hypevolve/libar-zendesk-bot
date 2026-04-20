@@ -210,7 +210,7 @@ function buildSystemPrompt(
       ? `Allowed sources: ${supportPlan.selectedSources.join(", ")}`
       : null,
     knowledgeQuality
-      ? `Knowledge quality: top=${knowledgeQuality.topScore || 0}, margin=${knowledgeQuality.scoreMargin || 0}, relevance=${knowledgeQuality.relevanceMatch ? "yes" : "no"}, jobMatch=${knowledgeQuality.jobMatch ? "yes" : "no"}, contextConsistency=${knowledgeQuality.contextConsistency ? "yes" : "no"}`
+      ? `Knowledge quality: top=${knowledgeQuality.topScore || 0}, margin=${knowledgeQuality.scoreMargin || 0}, relevance=${knowledgeQuality.relevanceMatch ? "yes" : "no"}, domainMatch=${knowledgeQuality.domainMatch ? "yes" : "no"}, jobMatch=${knowledgeQuality.jobMatch ? "yes" : "no"}, directAnswerability=${knowledgeQuality.directAnswerability ? "yes" : "no"}, contextConsistency=${knowledgeQuality.contextConsistency ? "yes" : "no"}`
       : null,
     "",
     "FORMAT IZLAZA:",

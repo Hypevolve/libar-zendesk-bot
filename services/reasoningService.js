@@ -124,6 +124,10 @@ function detectPolicyTopic(text = "") {
     return "refund";
   }
 
+  if (/(radno vrijeme|radno vrime|kad radite|radite li|adresa|gdje ste|gdje se nalazite|lokacija|kontakt|telefon|email|e-mail|mail|placanj|plaćanj|kartic|gotovin|osobno preuzimanje|preuzimanje u poslovnici)/.test(normalized)) {
+    return "support_info";
+  }
+
   return "";
 }
 
@@ -247,6 +251,8 @@ function deriveTaskIntent(intent = "") {
   switch (intent) {
     case "otkup_upit":
       return "buyback";
+    case "support_info":
+      return "support_info";
     case "dostava_info":
       return "delivery";
     case "narudzba_status":
@@ -268,6 +274,7 @@ function deriveTaskIntent(intent = "") {
 function deriveActiveDomain(taskIntent = "") {
   switch (taskIntent) {
     case "buyback":
+    case "support_info":
     case "delivery":
     case "product_lookup":
     case "complaint":
@@ -282,6 +289,10 @@ function deriveActiveDomain(taskIntent = "") {
 }
 
 function deriveSubjectType(intent = "", entities = {}, policyTopic = "") {
+  if (intent === "support_info" || policyTopic === "support_info") {
+    return "support_info";
+  }
+
   if (intent === "otkup_upit") {
     return entities.book_title || entities.quantity ? "book" : "buyback_process";
   }
@@ -328,6 +339,10 @@ function deriveActionIntent(intent = "", message = "", entities = {}) {
     return "check_price";
   }
 
+  if (intent === "support_info") {
+    return "ask_general_info";
+  }
+
   if (/(kako|na koji nacin|na koji način|što trebam|sto trebam|kako ide|kako funkcionira)/.test(normalized)) {
     return "ask_how_to";
   }
@@ -352,6 +367,10 @@ function deriveActionIntent(intent = "", message = "", entities = {}) {
 }
 
 function classifyQuestionType(actionIntent = "", message = "") {
+  if (actionIntent === "ask_general_info") {
+    return "info";
+  }
+
   if (actionIntent === "ask_how_to") {
     return "procedural";
   }
@@ -382,6 +401,7 @@ function classifyQuestionType(actionIntent = "", message = "") {
 function buildIntentScores(text = "", contextText = "") {
   const normalized = normalizeComparableText(`${text} ${contextText}`);
   const scores = {
+    support_info: 0,
     dostava_info: 0,
     narudzba_status: 0,
     narudzba_problem: 0,
@@ -400,6 +420,23 @@ function buildIntentScores(text = "", contextText = "") {
 
   if (/(hvala|ok|riješeno|rijeseno|super|odlicno|odlično)/.test(normalized) && normalized.split(" ").length <= 4) {
     scores.small_talk_or_closure += 10;
+  }
+
+  if (/(radno vrijeme|radno vrime|kad radite|radite li|otvoreni|subotom|nedjeljom|blagdani)/.test(normalized)) {
+    scores.support_info += 12;
+    scores.otkup_upit -= 4;
+    scores.product_availability -= 6;
+    scores.product_pricing -= 4;
+  }
+
+  if (/(adresa|gdje ste|gdje se nalazite|lokacija|kontakt|telefon|email|e-mail|mail)/.test(normalized)) {
+    scores.support_info += 11;
+    scores.product_availability -= 5;
+  }
+
+  if (/(placanj|plaćanj|kartic|gotovin|pouzece|pouzeće|osobno preuzimanje|preuzimanje u poslovnici)/.test(normalized)) {
+    scores.support_info += 9;
+    scores.product_pricing -= 2;
   }
 
   if (/(dostav|isporuk|kurir|pošta|posta|rok dostav|cijena dostav|preuzim|slanj|posiljk|pošiljk)/.test(normalized)) {
@@ -521,6 +558,8 @@ function detectMixedIntentOrdering(message = "") {
 
 function deriveCustomerGoal(intent, entities = {}, message = "") {
   switch (intent) {
+    case "support_info":
+      return "Dobiti opću informaciju o poslovnici ili uvjetima";
     case "dostava_info":
       return entities.city
         ? `Saznati uvjete dostave za ${entities.city}`
@@ -554,6 +593,8 @@ function deriveCustomerGoal(intent, entities = {}, message = "") {
 
 function mapLegacyIntent(intent = "") {
   switch (intent) {
+    case "support_info":
+      return "opci_upit";
     case "dostava_info":
       return "dostava";
     case "narudzba_status":
@@ -665,6 +706,10 @@ function buildConversationFacts(reasoningResult = {}) {
     facts.push(`Tema pravila: ${entities.policy_topic}`);
   }
 
+  if (reasoningResult.subjectType === "support_info") {
+    facts.push("Tema: opće informacije");
+  }
+
   return facts;
 }
 
@@ -774,7 +819,8 @@ function buildStandaloneQuery({
   topicAnchor,
   pendingClarification = null,
   session = {},
-  isFollowUp = false
+  isFollowUp = false,
+  topicShiftType = ""
 }) {
   const normalizedMessage = normalizeText(message);
   const facts = buildConversationFacts(reasoningResult);
@@ -784,9 +830,14 @@ function buildStandaloneQuery({
     parts.push(pendingClarification.baseQuery);
   } else if (isFollowUp && topicAnchor?.type === "product" && Array.isArray(topicAnchor.value)) {
     parts.push(`Proizvod: ${topicAnchor.value.join(", ")}`);
-  } else if (isFollowUp && topicAnchor?.value) {
+  } else if (isFollowUp && topicShiftType !== "support_to_support_shift" && topicAnchor?.value) {
     parts.push(`Tema razgovora: ${topicAnchor.value}`);
-  } else if (!isFollowUp && session.lastStandaloneQuery && normalizedMessage.length < 30) {
+  } else if (
+    !isFollowUp &&
+    topicShiftType !== "support_to_support_shift" &&
+    session.lastStandaloneQuery &&
+    normalizedMessage.length < 30
+  ) {
     parts.push(`Tema razgovora: ${session.lastStandaloneQuery}`);
   }
 
@@ -827,6 +878,10 @@ function buildIntentEvidence(message = "", reasoningResult = {}) {
     evidence.push("order_status_keywords");
   }
 
+  if (/(radno vrijeme|kad radite|adresa|gdje ste|kontakt|telefon|email|plaćanj|plaćanje|kartic|gotovin)/.test(normalized)) {
+    evidence.push("support_info_keywords");
+  }
+
   if (reasoningResult.topicShiftDetected) {
     evidence.push("topic_shift_detected");
   }
@@ -847,11 +902,36 @@ function buildSourceContract(taskIntent = "", primaryIntent = "") {
     return "product_allowed";
   }
 
-  if (["buyback", "delivery", "order_status", "order_issue", "complaint"].includes(taskIntent)) {
+  if (["buyback", "delivery", "order_status", "order_issue", "complaint", "support_info"].includes(taskIntent)) {
     return "support_only";
   }
 
   return "knowledge_first";
+}
+
+function deriveTopicShiftType({
+  previousDomain = "",
+  nextDomain = "",
+  isExplicitProductLookup = false,
+  pendingClarification = null
+} = {}) {
+  if (pendingClarification?.slotKey) {
+    return "clarification_answer";
+  }
+
+  if (!previousDomain || !nextDomain || previousDomain === nextDomain) {
+    return "same_domain_continuation";
+  }
+
+  if (previousDomain === "product_lookup" && nextDomain !== "product_lookup") {
+    return "product_to_support_shift";
+  }
+
+  if (previousDomain !== "product_lookup" && nextDomain === "product_lookup" && isExplicitProductLookup) {
+    return "support_to_product_shift";
+  }
+
+  return "support_to_support_shift";
 }
 
 function buildTopicShiftConfidence({
@@ -1011,6 +1091,12 @@ function analyzeConversation({
     }
   );
   const sourceContract = buildSourceContract(taskIntent, primaryIntent);
+  const topicShiftType = deriveTopicShiftType({
+    previousDomain: activeDomainMemory || (previousTaskIntent ? deriveActiveDomain(previousTaskIntent) : ""),
+    nextDomain: activeDomain,
+    isExplicitProductLookup: explicitProductLookup,
+    pendingClarification
+  });
   const topicShiftConfidence = buildTopicShiftConfidence({
     previousIntent,
     primaryIntent,
@@ -1055,6 +1141,7 @@ function analyzeConversation({
     riskLevel,
     missingSlots,
     topicShiftDetected,
+    topicShiftType,
     sourceContract,
     topicShiftConfidence,
     answerabilityClass,
@@ -1065,6 +1152,7 @@ function analyzeConversation({
         (previousTaskIntent ? deriveActiveDomain(previousTaskIntent) : ""),
       userJob: actionIntent,
       questionType,
+      topicShiftType,
       topicShiftConfidence,
       answerabilityClass,
       sourceContract
@@ -1077,7 +1165,8 @@ function analyzeConversation({
     topicAnchor,
     pendingClarification,
     session,
-    isFollowUp
+    isFollowUp,
+    topicShiftType
   });
   const conversationFacts = buildConversationFacts(reasoningResult);
   const clarifyingQuestion =
@@ -1114,6 +1203,7 @@ function analyzeConversation({
       subjectType ? `Subject type: ${subjectType}` : "",
       questionType ? `Question type: ${questionType}` : "",
       answerabilityClass ? `Answerability: ${answerabilityClass}` : "",
+      topicShiftType ? `Topic shift: ${topicShiftType}` : "",
       conversationFacts.length > 0 ? `Facts: ${conversationFacts.join("; ")}` : "",
       topicShiftDetected ? "Detected topic shift." : "",
       riskFlags.length > 0 ? `Risk: ${riskFlags.join(", ")}` : "",
