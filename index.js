@@ -579,7 +579,13 @@ function hasAiReplyMarker(audit = {}) {
       previous_value: event?.previous_value
     }).toLowerCase();
 
-    return haystack.includes("ai_replied") || haystack.includes("webchat_ai");
+    return (
+      haystack.includes("ai_replied") ||
+      haystack.includes("webchat_ai") ||
+      haystack.includes("facebook_ai") ||
+      haystack.includes("email_ai") ||
+      haystack.includes("zendesk_ai")
+    );
   });
 }
 
@@ -626,12 +632,18 @@ function getSupportTaskIntentFromMetadata(audit = {}) {
   return String(customMetadata.libar_task_intent || customMetadata.libarTaskIntent || "").trim();
 }
 
+function isKnownExternalCustomerChannel(channelType = "") {
+  const normalizedChannelType = normalizeChannelType(channelType);
+  return normalizedChannelType === "facebook" || normalizedChannelType === "email";
+}
+
 function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary) {
   const normalizedRequesterId = Number(requesterId);
   const commentAuthorId = Number(commentEvent?.author_id ?? audit?.author_id);
   const sourceChannel = commentEvent?.via?.channel || audit?.via?.channel || null;
   const customMetadata = getZendeskAuditCustomMetadata(audit);
   const taggedRole = customMetadata.libar_message_role || customMetadata.libarMessageRole || null;
+  const taggedOrigin = customMetadata.libar_message_origin || customMetadata.libarMessageOrigin || null;
 
   if (taggedRole === "assistant") {
     return "assistant";
@@ -649,7 +661,12 @@ function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSumma
     return "user";
   }
 
-  if (sourceChannel && sourceChannel !== "api") {
+  if (
+    taggedOrigin === "webchat_ai" ||
+    taggedOrigin === "facebook_ai" ||
+    taggedOrigin === "email_ai" ||
+    taggedOrigin === "zendesk_ai"
+  ) {
     return "assistant";
   }
 
@@ -657,11 +674,19 @@ function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSumma
     return "assistant";
   }
 
+  if (isKnownExternalCustomerChannel(sourceChannel)) {
+    return "user";
+  }
+
   if (
     Number.isFinite(commentAuthorId) &&
     Number.isFinite(normalizedRequesterId) &&
     commentAuthorId !== normalizedRequesterId
   ) {
+    return "assistant";
+  }
+
+  if (sourceChannel && sourceChannel !== "api") {
     return "assistant";
   }
 
