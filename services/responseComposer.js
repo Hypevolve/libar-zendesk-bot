@@ -139,6 +139,61 @@ function collectBuybackKeywords(query = "", actionIntent = "") {
   return ["otkup", "pošaljite", "posaljite", "popis", "fotografije", "procjena", "bonus", "donesite"];
 }
 
+function detectSupportInfoTopicsInText(text = "") {
+  const normalized = normalizeForComparison(text);
+  const topics = new Set();
+
+  if (/(radno vrijeme|kad radite|otvoreni|subotom|nedjeljom|\b\d{1,2}[:.]\d{2}\b|ponedjeljak|petak)/.test(normalized)) {
+    topics.add("hours");
+  }
+
+  if (/(adresa|gdje ste|gdje se nalazite|lokacija|nalazimo se|osijek|zupanijska)/.test(normalized)) {
+    topics.add("location");
+  }
+
+  if (/(kontakt|telefon|email|mail|@)/.test(normalized)) {
+    topics.add("contact");
+  }
+
+  if (/(placanje|plaćanje|kartica|gotovina|pouzece|pouzeće)/.test(normalized)) {
+    topics.add("payment");
+  }
+
+  if (
+    /(otkup|otkupljujemo|otkupljujete|prodati knjige|prodaja knjiga|udzbenike|udžbenike|isplacujemo|isplaćujemo|dostavljacu|dostavljaču|nalog|zapakirati)/.test(normalized)
+  ) {
+    topics.add("buyback");
+  }
+
+  return topics;
+}
+
+function isSupportInfoParagraphCompatible(paragraph = "", requestedTopics = new Set()) {
+  const segmentTopics = detectSupportInfoTopicsInText(paragraph);
+  const requestedNonBuyback = [...requestedTopics].filter((topic) => topic !== "buyback");
+  const normalizedParagraph = normalizeForComparison(paragraph);
+
+  if (segmentTopics.has("buyback") && !requestedTopics.has("buyback")) {
+    return false;
+  }
+
+  if (
+    requestedNonBuyback.length > 0 &&
+    !requestedNonBuyback.some((topic) => segmentTopics.has(topic))
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(otkup|isplacujemo|isplaćujemo|dostavljacu|dostavljaču|zapakirati|predati paket|online otkup|potvrdite online otkupni nalog)\b/.test(normalizedParagraph) &&
+    !requestedTopics.has("buyback")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function buildParagraphCandidates(article = {}, keywords = [], options = {}) {
   const paragraphs = splitParagraphs(article.body || "");
   const candidates = [];
@@ -167,9 +222,18 @@ function buildParagraphCandidates(article = {}, keywords = [], options = {}) {
       }
     }
 
+    if (
+      options.taskIntent === "support_info" &&
+      !isSupportInfoParagraphCompatible(segment, options.requestedTopics)
+    ) {
+      continue;
+    }
+
     candidates.push({
       segment,
-      keywordScore: scoreSentenceKeywords(segment, keywords)
+      keywordScore:
+        scoreSentenceKeywords(segment, keywords) +
+        ([...detectSupportInfoTopicsInText(segment)].filter((topic) => options.requestedTopics?.has(topic)).length * 3)
     });
   }
 
@@ -182,7 +246,9 @@ function selectSentencesFromArticles(articles = [], keywords = [], maxSentences 
 
   for (const article of Array.isArray(articles) ? articles : []) {
     const paragraphCandidates = buildParagraphCandidates(article, keywords, {
-      allowProceduralContinuation: article.taskIntentHint !== "support_info"
+      allowProceduralContinuation: article.taskIntentHint !== "support_info",
+      taskIntent: article.taskIntentHint,
+      requestedTopics: article.requestedTopics || new Set()
     });
 
     if (paragraphCandidates.length > 0) {
@@ -298,7 +364,8 @@ function composeDeterministicReply({ conversation = null, knowledge = null } = {
 
   const articleCandidates = articles.map((article) => ({
     ...article,
-    taskIntentHint: taskIntent
+    taskIntentHint: taskIntent,
+    requestedTopics: taskIntent === "support_info" ? detectSupportInfoTopics(standaloneQuery) : new Set()
   }));
 
   let sentences = selectSentencesFromArticles(articleCandidates, keywords, 2);

@@ -151,3 +151,30 @@ test("composeDeterministicReply skips mixed support-info and buyback question to
 
   assert.equal(reply, null);
 });
+
+test("composeDeterministicReply ignores buyback paragraphs inside mixed OneDrive support document", () => {
+  const reply = composeDeterministicReply({
+    conversation: {
+      standaloneQuery: "Koje vam je radno vrijeme i gdje se nalazite?",
+      reasoningResult: {
+        taskIntent: "support_info",
+        actionIntent: "ask_general_info"
+      }
+    },
+    knowledge: buildKnowledge({
+      source: "onedrive",
+      title: "Libar Help Center",
+      body: [
+        "Otkup knjiga",
+        "Ako se nalazite u Osijeku ili okolici, najbrži i najjednostavniji način otkupa je osobni dolazak u poslovnicu. Knjige pregledavamo odmah i isplaćujemo na licu mjesta.",
+        "Kontakt i radno vrijeme",
+        "Nalazimo se na adresi Županijska 7, Osijek.",
+        "Radno vrijeme je ponedjeljak do petak od 08:00 do 20:00, a subotom od 08:00 do 13:00."
+      ].join("\n")
+    })
+  });
+
+  assert.match(reply, /Županijska 7, Osijek/i);
+  assert.match(reply, /08:00 do 20:00/i);
+  assert.doesNotMatch(reply, /otkup|isplaćujemo|pregledavamo odmah/i);
+});
