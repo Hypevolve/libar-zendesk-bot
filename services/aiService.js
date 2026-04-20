@@ -368,7 +368,6 @@ async function generateGroundedAnswer(message, context, options = {}) {
 
 module.exports = {
   buildGroundedAnswerPrompt,
-  buildFallbackDecision,
   classifySpamCandidate,
   generateGroundedAnswer,
   normalizeChannelType

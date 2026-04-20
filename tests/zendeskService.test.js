@@ -67,50 +67,6 @@ test("zendesk config summary masks secrets and webhook verification uses configu
   }
 });
 
-test("searchHelpCenterDetailed ranks relevant article excerpts from paginated help center", async () => {
-  const client = {
-    get: async (url) => {
-      if (url.includes("/help_center/articles.json")) {
-        return {
-          data: {
-            articles: [
-              {
-                id: 1,
-                title: "Radno vrijeme i kontakt",
-                body: "<p>Radno vrijeme je pon-pet 9-18.</p>",
-                draft: false
-              },
-              {
-                id: 2,
-                title: "Otkup udžbenika",
-                body: "<p>Otkup knjiga u poslovnici.</p>",
-                draft: false
-              }
-            ],
-            next_page: null
-          }
-        };
-      }
-
-      throw new Error(`Unexpected GET ${url}`);
-    },
-    put: async () => ({ data: {} }),
-    post: async () => ({ data: {} })
-  };
-
-  const { service, restore } = loadFreshZendeskService({ client });
-
-  try {
-    const result = await service.searchHelpCenterDetailed("Koje vam je radno vrijeme?");
-
-    assert.equal(result.articles[0].title, "Radno vrijeme i kontakt");
-    assert.match(result.context, /Radno vrijeme i kontakt/);
-    assert.ok(result.topScore > 0);
-  } finally {
-    restore();
-  }
-});
-
 test("getPublicTicketComments keeps only public comments", async () => {
   const client = {
     get: async (url) => {
@@ -142,26 +98,3 @@ test("getPublicTicketComments keeps only public comments", async () => {
   }
 });
 
-test("scoreArticle boosts title and conversation term matches", () => {
-  const { service, restore } = loadFreshZendeskService();
-
-  try {
-    const score = service.scoreArticle(
-      {
-        title: "Radno vrijeme i kontakt",
-        body: "Radimo ponedjeljak do petak od 9 do 18.",
-        label_names: ["faq"],
-        section_name: "Opće informacije",
-        category_name: "Support"
-      },
-      "radno vrijeme",
-      {
-        conversationTerms: ["kontakt", "poslovnica"]
-      }
-    );
-
-    assert.ok(score > 20);
-  } finally {
-    restore();
-  }
-});

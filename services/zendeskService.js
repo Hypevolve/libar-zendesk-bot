@@ -1,13 +1,5 @@
 const axios = require("axios");
-const {
-  findBestExcerpt,
-  normalizeText,
-  preprocessSearchQuery,
-  scoreSearchText,
-  stripHtml,
-  tokenize,
-  truncateText
-} = require("./searchUtils");
+
 
 const {
   ZENDESK_SUBDOMAIN,
@@ -792,14 +784,11 @@ module.exports = {
   getRequesterProfile,
   getTicketAudits,
   getTicketSummary,
-  normalizeText,
   replyToTicket,
-  scoreArticle,
   searchHelpCenter,
-  searchHelpCenterDetailed,
+  
   setTicketTags,
   solveTicket,
-  stripHtml,
   testZendeskTicketAccess,
   updateConversationState,
   uploadAttachments,
