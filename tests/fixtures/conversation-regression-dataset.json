@@ -15,7 +15,7 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "onedrive_knowledge"
+    "expectedRoute": "online_buyback_guidance"
   },
   {
     "channel": "web_chat",
@@ -65,8 +65,8 @@
     "expectedUserJob": "check_availability",
     "expectedTopicShiftType": "support_to_product_shift",
     "expectedSourceContract": "product_allowed",
-    "shouldUseProductFeed": true,
-    "expectedRoute": "product_feed"
+    "shouldUseProductFeed": false,
+    "expectedRoute": "purchase_search_guidance"
   },
   {
     "channel": "facebook",
@@ -116,8 +116,8 @@
     "expectedUserJob": "check_availability",
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "product_allowed",
-    "shouldUseProductFeed": true,
-    "expectedRoute": "product_feed"
+    "shouldUseProductFeed": false,
+    "expectedRoute": "purchase_search_guidance"
   },
   {
     "channel": "email",
@@ -161,7 +161,7 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "clarify"
+    "expectedRoute": "order_issue_clarification"
   },
   {
     "channel": "email",
@@ -173,7 +173,7 @@
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "support_only",
     "shouldUseProductFeed": false,
-    "expectedRoute": "clarify"
+    "expectedRoute": "order_issue_clarification"
   },
   {
     "channel": "web_chat",
@@ -269,8 +269,8 @@
     "expectedUserJob": "check_availability",
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "product_allowed",
-    "shouldUseProductFeed": true,
-    "expectedRoute": "product_feed"
+    "shouldUseProductFeed": false,
+    "expectedRoute": "purchase_search_guidance"
   },
   {
     "channel": "web_chat",
@@ -306,7 +306,7 @@
     "expectedUserJob": "check_availability",
     "expectedTopicShiftType": "same_domain_continuation",
     "expectedSourceContract": "product_allowed",
-    "shouldUseProductFeed": true,
-    "expectedRoute": "product_feed"
+    "shouldUseProductFeed": false,
+    "expectedRoute": "purchase_search_guidance"
   }
 ]

@@ -109,6 +109,31 @@ test("conversation regression keeps product lookup isolated from support routes"
         continue;
       }
 
+      if (scenario.expectedRoute === "purchase_search_guidance") {
+        assert.equal(outcome.reason, "purchase_search_guidance", scenario.message);
+        assert.equal(outcome.source, "website_links", scenario.message);
+        assert.equal(outcome.taskIntent, "product_lookup", scenario.message);
+        assert.equal(Array.isArray(outcome.products) ? outcome.products.length : 0, 0, scenario.message);
+        assert.equal(knowledgeLookupCalled, false, `${scenario.message} -> purchase guidance should short-circuit KB`);
+        continue;
+      }
+
+      if (scenario.expectedRoute === "online_buyback_guidance") {
+        assert.equal(outcome.reason, "online_buyback_guidance", scenario.message);
+        assert.equal(outcome.source, "website_links", scenario.message);
+        assert.equal(outcome.taskIntent, "buyback", scenario.message);
+        assert.equal(knowledgeLookupCalled, false, `${scenario.message} -> online buyback guidance should short-circuit KB`);
+        continue;
+      }
+
+      if (scenario.expectedRoute === "order_issue_clarification") {
+        assert.equal(outcome.reason, "order_issue_clarification", scenario.message);
+        assert.equal(outcome.type, "ask_clarifying_question", scenario.message);
+        assert.equal(outcome.stateTag, "awaiting_customer_detail", scenario.message);
+        assert.equal(knowledgeLookupCalled, false, `${scenario.message} -> order clarification should short-circuit KB`);
+        continue;
+      }
+
       assert.notEqual(outcome.source, "product_feed", scenario.message);
 
       if (scenario.expectedRoute === "onedrive_knowledge") {

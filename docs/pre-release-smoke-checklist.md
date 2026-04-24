@@ -3,9 +3,9 @@
 ## Web
 
 1. Otvori novi widget razgovor i potvrdi da su kontakt podaci obavezni.
-2. `Prodaja knjiga / otkup` -> `Želim prodati knjige`.
+2. `Prodaja knjiga / otkup` -> `Želim prodati knjige` i potvrdi online-first korake s linkom na `/otkup-udzbenika/`.
 3. U istom razgovoru pošalji `Koje vam je radno vrijeme?`.
-4. U istom razgovoru pošalji `Imate li Algebra 1?`.
+4. U istom razgovoru pošalji `Imate li Algebra 1?` i potvrdi da nema product kartica nego link na `/kupi-udzbenike/`.
 5. Pošalji `hvala, riješeno je` i potvrdi resolution prompt.
 6. Potvrdi zatvaranje i provjeri da stari thread više ne prima AI odgovore.
 

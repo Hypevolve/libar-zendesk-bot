@@ -270,3 +270,97 @@ test("webhook processing rebuilds retrieval context from prior conversation for 
     resetRuntimeState();
   }
 });
+
+test("webhook processing moves complaint tickets to awaiting human with complaint tags", async () => {
+  const originalGetTicketSummary = zendeskService.getTicketSummary;
+  const originalGetTicketAudits = zendeskService.getTicketAudits;
+  const originalUpdateConversationState = zendeskService.updateConversationState;
+  const originalAddBotReplyToTicket = zendeskService.addBotReplyToTicket;
+  const originalAddInternalNote = zendeskService.addInternalNote;
+  const originalAddTagAndNote = zendeskService.addTagAndNote;
+  const originalEvaluateIncomingMessage = spamFilterService.evaluateIncomingMessage;
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const stateUpdates = [];
+  const botReplies = [];
+  const escalationNotes = [];
+  let knowledgeCalled = false;
+
+  zendeskService.getTicketSummary = async () => ({
+    id: 88799,
+    status: "open",
+    tags: ["ai_active"],
+    requesterId: 1001,
+    requesterName: "Ana Horvat",
+    requesterEmail: "ana@example.com"
+  });
+  zendeskService.getTicketAudits = async () => [
+    createAudit({
+      id: "audit-complaint-user",
+      channel: "mail",
+      body: "Zaprimila sam paket i poslali ste mi krive knjige. Kako ćemo to riješiti?"
+    })
+  ];
+  zendeskService.updateConversationState = async (ticketId, nextState, extraTags = []) => {
+    stateUpdates.push({ ticketId, nextState, extraTags });
+  };
+  zendeskService.addBotReplyToTicket = async (ticketId, replyText, options = {}) => {
+    botReplies.push({ ticketId, replyText, options });
+  };
+  zendeskService.addInternalNote = async () => {};
+  zendeskService.addTagAndNote = async (ticketId, tag, noteText) => {
+    escalationNotes.push({ ticketId, tag, noteText });
+  };
+  spamFilterService.evaluateIncomingMessage = async () => ({
+    shouldBlock: false,
+    reason: "support_message"
+  });
+  knowledgeService.searchKnowledgeDetailed = async () => {
+    knowledgeCalled = true;
+    return null;
+  };
+  aiService.generateGroundedAnswer = async () => "should not be called";
+
+  try {
+    const result = await __internal.processZendeskWebhookPayload({
+      ticket: {
+        id: 88799,
+        via: {
+          channel: "email"
+        }
+      },
+      ticket_event: {
+        id: 445568,
+        comment: {
+          body: "Zaprimila sam paket i poslali ste mi krive knjige. Kako ćemo to riješiti?"
+        }
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.action, "ai_escalation");
+    assert.equal(result.body.channelType, "email");
+    assert.equal(knowledgeCalled, false);
+    assert.equal(stateUpdates.length, 1);
+    assert.equal(stateUpdates[0].ticketId, 88799);
+    assert.equal(stateUpdates[0].nextState, "awaiting_human");
+    assert.ok(stateUpdates[0].extraTags.includes("reklamacija_problem"));
+    assert.ok(stateUpdates[0].extraTags.includes("wrong_books"));
+    assert.equal(botReplies.length, 1);
+    assert.match(botReplies[0].replyText, /ispričavamo|Žao mi je/i);
+    assert.match(botReplies[0].replyText, /broj narudžbe/i);
+    assert.equal(escalationNotes.length, 1);
+    assert.equal(escalationNotes[0].tag, "ai_eskalacija");
+  } finally {
+    zendeskService.getTicketSummary = originalGetTicketSummary;
+    zendeskService.getTicketAudits = originalGetTicketAudits;
+    zendeskService.updateConversationState = originalUpdateConversationState;
+    zendeskService.addBotReplyToTicket = originalAddBotReplyToTicket;
+    zendeskService.addInternalNote = originalAddInternalNote;
+    zendeskService.addTagAndNote = originalAddTagAndNote;
+    spamFilterService.evaluateIncomingMessage = originalEvaluateIncomingMessage;
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    resetRuntimeState();
+  }
+});

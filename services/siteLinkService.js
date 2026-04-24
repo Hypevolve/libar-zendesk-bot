@@ -8,7 +8,7 @@ const DIRECT_LINKS = {
     label: "Početna"
   },
   buyback: {
-    url: `${BASE_URL}/prodaj-udzbenike/`,
+    url: `${BASE_URL}/otkup-udzbenika/`,
     label: "Otkup udžbenika"
   },
   buybackLoyalty: {

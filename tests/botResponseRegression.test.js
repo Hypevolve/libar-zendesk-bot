@@ -75,11 +75,11 @@ test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when ground
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
   knowledgeService.searchKnowledgeDetailed = async () => ({
-    context: "Izvor 1 (Zendesk Help Center):\nNaslov: Povrat\nSadržaj: Povrat zahtijeva ručnu provjeru.",
+    context: "Izvor 1 (Zendesk Help Center):\nNaslov: Radno vrijeme\nSadržaj: Subotom radimo 08:00 – 13:00.",
     articles: [
       {
-        title: "Povrat",
-        body: "Povrat zahtijeva ručnu provjeru.",
+        title: "Radno vrijeme",
+        body: "Subotom radimo 08:00 – 13:00.",
         score: 18,
         source: "zendesk"
       }
@@ -94,7 +94,7 @@ test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when ground
   try {
     const { knowledge, outcome } = await __internal.resolveAutomatedOutcome(
       {},
-      "Treba mi pomoć oko povrata.",
+      "Koje vam je radno vrijeme subotom?",
       { channelType: "web_chat" }
     );
 
@@ -102,7 +102,7 @@ test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when ground
     assert.equal(knowledge.primarySource, "zendesk");
     assert.equal(outcome.type, "safe_answer");
     assert.equal(outcome.reason, "knowledge_fallback");
-    assert.equal(outcome.customerMessage, "Povrat zahtijeva ručnu provjeru.");
+    assert.equal(outcome.customerMessage, "Subotom radimo 08:00 – 13:00.");
 
     const note = __internal.buildAutopilotNote({
       outcome,
@@ -111,7 +111,7 @@ test("resolveAutomatedOutcome falls back to strong Zendesk knowledge when ground
       channelType: "web_chat"
     });
 
-    assert.match(note, /Korišteni dokument: Povrat/);
+    assert.match(note, /Korišteni dokument: Radno vrijeme/);
     assert.match(note, /Razlog: knowledge_fallback/);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
@@ -179,37 +179,18 @@ test("resolveAutomatedOutcome replies politely to acknowledgement-only messages 
   }
 });
 
-test("resolveAutomatedOutcome returns product cards and links when product feed finds a clear match", async () => {
+test("resolveAutomatedOutcome guides product lookups to webshop search without product cards", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
   const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalled = false;
 
   knowledgeService.searchKnowledgeDetailed = async () => null;
   aiService.generateGroundedAnswer = async () => "";
-  productFeedService.searchProductsDetailed = async () => ({
-    topScore: 220,
-    matchCount: 1,
-    rawProducts: [
-      {
-        title: "SOLUTIONS 3rd ed. INTERMEDIATE",
-        availableForPurchase: true,
-        stockCount: 12,
-        buyPriceEur: 8.55
-      }
-    ],
-    products: [
-      {
-        id: "12",
-        title: "SOLUTIONS 3rd ed. INTERMEDIATE",
-        imageUrl: "https://example.test/solutions.jpg",
-        metaLine: "Engleski jezik • 2. razred • radna bilježnica",
-        priceLabel: "8,55 EUR",
-        buyLink: "https://antikvarijat-libar.com/kupi-udzbenike/?pretraga=SOLUTIONS+3rd+ed.+INTERMEDIATE",
-        sellLink: "https://antikvarijat-libar.com/otkup-udzbenika/?tab=tab-form&pretraga_isbn=9780194563819"
-      }
-    ],
-    zendeskSummary: "1. SOLUTIONS 3rd ed. INTERMEDIATE | dostupno za kupnju"
-  });
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalled = true;
+    return null;
+  };
 
   try {
     const { outcome } = await __internal.resolveAutomatedOutcome(
@@ -219,13 +200,13 @@ test("resolveAutomatedOutcome returns product cards and links when product feed 
     );
 
     assert.equal(outcome.type, "safe_answer");
-    assert.equal(outcome.reason, "product_feed_match");
-    assert.equal(outcome.source, "product_feed");
+    assert.equal(outcome.reason, "purchase_search_guidance");
+    assert.equal(outcome.source, "website_links");
     assert.equal(outcome.taskIntent, "product_lookup");
-    assert.equal(outcome.products.length, 1);
-    assert.match(outcome.customerMessage, /Trenutno je dostupan/i);
-    assert.match(outcome.customerMessage, /8,55 EUR/i);
+    assert.equal(productLookupCalled, false);
+    assert.deepEqual(outcome.products, []);
     assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+    assert.match(outcome.customerMessage, /šifru udžbenika|sifru udzbenika/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
@@ -233,7 +214,7 @@ test("resolveAutomatedOutcome returns product cards and links when product feed 
   }
 });
 
-test("resolveAutomatedOutcome sends website-guided fallback for product lookup when product feed has no match", async () => {
+test("resolveAutomatedOutcome sends webshop search guidance for product lookup when product feed has no match", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
   const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
@@ -250,9 +231,9 @@ test("resolveAutomatedOutcome sends website-guided fallback for product lookup w
     );
 
     assert.equal(outcome.type, "safe_answer");
-    assert.equal(outcome.reason, "product_lookup_fallback");
+    assert.equal(outcome.reason, "purchase_search_guidance");
     assert.equal(outcome.source, "website_links");
-    assert.match(outcome.customerMessage, /provjeriti dostupnost udžbenika na našem webu/i);
+    assert.match(outcome.customerMessage, /šifru udžbenika|sifru udzbenika/i);
     assert.match(outcome.customerMessage, /kupi-udzbenike/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
@@ -281,9 +262,9 @@ test("resolveAutomatedOutcome treats 'Prodajete li [naslov]' as a product lookup
       { channelType: "web_chat" }
     );
 
-    assert.equal(productLookupCalled, true);
+    assert.equal(productLookupCalled, false);
     assert.equal(outcome.type, "safe_answer");
-    assert.equal(outcome.reason, "product_lookup_fallback");
+    assert.equal(outcome.reason, "purchase_search_guidance");
     assert.match(outcome.customerMessage, /kupi-udzbenike/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
@@ -313,8 +294,10 @@ test("resolveAutomatedOutcome does not route generic buyback support questions t
     );
 
     assert.equal(productLookupCalled, false);
-    assert.equal(outcome.type, "ask_clarifying_question");
-    assert.equal(outcome.reason, "buyback_clarification");
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "online_buyback_guidance");
+    assert.match(outcome.customerMessage, /otkup-udzbenika/i);
+    assert.match(outcome.customerMessage, /skenirajte barkod/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
@@ -338,6 +321,7 @@ test("resolveAutomatedOutcome asks for order details instead of escalating when 
 
     assert.equal(outcome.type, "ask_clarifying_question");
     assert.equal(outcome.reason, "order_issue_clarification");
+    assert.equal(outcome.stateTag, "awaiting_customer_detail");
     assert.match(outcome.customerMessage, /broj narudžbe|email/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
@@ -359,10 +343,10 @@ test("resolveAutomatedOutcome asks a clarifying question for generic buyback int
       { channelType: "web_chat" }
     );
 
-    assert.equal(outcome.type, "ask_clarifying_question");
-    assert.equal(outcome.reason, "buyback_clarification");
-    assert.match(outcome.customerMessage, /barkod|fotografije|otkupa/i);
-    assert.match(outcome.customerMessage, /prodaj-udzbenike/i);
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "online_buyback_guidance");
+    assert.match(outcome.customerMessage, /otkup-udzbenika/i);
+    assert.match(outcome.customerMessage, /skenirajte barkod/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
@@ -432,13 +416,153 @@ test("resolveAutomatedOutcome catches natural buyback phrasing without routing i
     });
 
     assert.equal(productLookupCalled, false);
-    assert.equal(outcome.type, "ask_clarifying_question");
-    assert.equal(outcome.reason, "buyback_clarification");
-    assert.match(outcome.customerMessage, /prodaj-udzbenike/i);
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "online_buyback_guidance");
+    assert.match(outcome.customerMessage, /otkup-udzbenika/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
     productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome covers v1 client regression findings", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalls = 0;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalls += 1;
+    return null;
+  };
+
+  const cases = [
+    {
+      message: "Zaprimila sam paket i poslali ste mi krive knjige. Kako ćemo to riješiti?",
+      expectedType: "hard_handoff",
+      expectedState: "awaiting_human",
+      expectedReason: "wrong_books_handoff",
+      patterns: [/Žao mi je|ispričavamo/i, /broj narudžbe/i, /sliku računa/i, /kontakt broj/i]
+    },
+    {
+      message: "Nisam zaprimio novac od prodaje udžbenika. Poslao sam paket prije 2 tjedna.",
+      expectedType: "hard_handoff",
+      expectedState: "awaiting_human",
+      expectedReason: "buyback_payout_handoff",
+      patterns: [/provjerit ćemo uplatu/i, /ime i prezime/i, /otkupnog naloga/i]
+    },
+    {
+      message: "Niste mi platili otkup. Jeste li me prevarili?",
+      expectedType: "hard_handoff",
+      expectedState: "awaiting_human",
+      expectedReason: "aggressive_complaint_handoff",
+      patterns: [/Razumijem frustraciju/i, /riješit ćemo sve/i]
+    },
+    {
+      message: "Zanima me jeste li poslali moju narudžbu?",
+      expectedType: "ask_clarifying_question",
+      expectedState: "awaiting_customer_detail",
+      expectedReason: "order_issue_clarification",
+      patterns: [/ovdje u chatu/i, /broj narudžbe/i]
+    },
+    {
+      message: "Ali ja sam kupio knjige od vas",
+      expectedType: "ask_clarifying_question",
+      expectedState: "awaiting_customer_detail",
+      expectedReason: "order_issue_clarification",
+      patterns: [/broj narudžbe/i]
+    },
+    {
+      message: "Trebaju mi udžbenici za 1. razred gimnazije",
+      expectedType: "safe_answer",
+      expectedState: "ai_active",
+      expectedReason: "purchase_search_guidance",
+      patterns: [/kupi-udzbenike/i, /šifru udžbenika|sifru udzbenika/i]
+    },
+    {
+      message: "Kako mogu naručiti?",
+      expectedType: "safe_answer",
+      expectedState: "ai_active",
+      expectedReason: "purchase_search_guidance",
+      patterns: [/kupi-udzbenike/i, /naslov, autora ili nakladnika/i]
+    },
+    {
+      message: "Želim prodati udžbenike online",
+      expectedType: "safe_answer",
+      expectedState: "ai_active",
+      expectedReason: "online_buyback_guidance",
+      patterns: [/otkup-udzbenika/i, /1\. Otvorite/i, /2\. Mobitelom skenirajte barkod/i, /3\./, /4\./]
+    },
+    {
+      message: "Kako ću potvrditi online otkupni nalog?",
+      expectedType: "hard_handoff",
+      expectedState: "awaiting_human",
+      expectedReason: "buyback_confirmation_handoff",
+      patterns: [/provjeriti ručno/i]
+    }
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const { outcome } = await __internal.resolveAutomatedOutcome({}, testCase.message, {
+        channelType: "web_chat"
+      });
+
+      assert.equal(outcome.type, testCase.expectedType, testCase.message);
+      assert.equal(outcome.stateTag, testCase.expectedState, testCase.message);
+      assert.equal(outcome.reason, testCase.expectedReason, testCase.message);
+
+      for (const pattern of testCase.patterns) {
+        assert.match(outcome.customerMessage, pattern, testCase.message);
+      }
+    }
+
+    assert.equal(productLookupCalls, 0, "v1 regression flows should not call product feed");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome keeps payout complaint outcome stable across session context", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const message = "Nisam zaprimio novac od prodaje udžbenika.";
+    const firstTurn = await __internal.resolveAutomatedOutcome({}, message, {
+      channelType: "web_chat"
+    });
+    const secondTurn = await __internal.resolveAutomatedOutcome(
+      {
+        messages: [
+          { role: "user", content: "Zanima me radno vrijeme." },
+          { role: "assistant", content: "Radimo ponedjeljkom." }
+        ],
+        workingMemory: {
+          activeDomain: "support_info"
+        }
+      },
+      message,
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(firstTurn.outcome.type, "hard_handoff");
+    assert.equal(secondTurn.outcome.type, "hard_handoff");
+    assert.equal(firstTurn.outcome.reason, "buyback_payout_handoff");
+    assert.equal(secondTurn.outcome.reason, "buyback_payout_handoff");
+    assert.equal(firstTurn.outcome.stateTag, "awaiting_human");
+    assert.equal(secondTurn.outcome.stateTag, "awaiting_human");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
   }
 });
 

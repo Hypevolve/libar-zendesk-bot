@@ -6,11 +6,11 @@
 - `delivery_support`: Zendesk Help Center
 - `order_support` / opći order FAQ: Zendesk Help Center
 - `buyback` procedural i procjena: OneDrive
-- `product_lookup`: product feed only
+- `product_lookup`: webshop search guidance only; product feed is not customer-facing
 
 ## Pravila prioriteta
 
-1. Ako je domain `product_lookup`, ne koristiti Zendesk/OneDrive kao primarni odgovor za dostupnost ili cijenu.
+1. Ako je domain `product_lookup`, korisnika voditi na `/kupi-udzbenike/` i upute za pretragu po šifri/naslovu/autoru/nakladniku; ne nuditi artikle iz product feeda.
 2. Ako je domain `buyback`, OneDrive je prvi izvor; Zendesk može biti pomoćni.
 3. Ako je domain `support_info`, `delivery_support` ili opći `order_support`, Zendesk je prvi izvor.
 4. Ako Zendesk i OneDrive daju konfliktan odgovor za support temu, Zendesk ima prednost osim za `buyback`.

@@ -776,6 +776,11 @@ async function testZendeskTicketAccess(ticketId) {
   }
 }
 
+function resetHelpCenterCache() {
+  helpCenterCache.articles = null;
+  helpCenterCache.expiresAt = 0;
+}
+
 module.exports = {
   addInternalNote,
   addTagAndNote,
@@ -789,6 +794,7 @@ module.exports = {
   getTicketAudits,
   getTicketSummary,
   replyToTicket,
+  resetHelpCenterCache,
   searchHelpCenter,
   searchHelpCenterDetailed,
   

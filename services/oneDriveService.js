@@ -575,10 +575,16 @@ async function searchOneDrive(query) {
   return result?.context || null;
 }
 
+function resetOneDriveCache() {
+  oneDriveCache.documents = null;
+  oneDriveCache.expiresAt = 0;
+}
+
 module.exports = {
   fetchFolderDocuments,
   getOneDriveConfigSummary,
   isConfigured,
+  resetOneDriveCache,
   searchOneDrive,
   searchOneDriveDetailed
 };

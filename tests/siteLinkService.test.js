@@ -15,7 +15,7 @@ test("buildDirectWebsiteLinks returns buyback and faq pages for sell-books quest
     }
   });
 
-  assert.equal(result[0].url, "https://antikvarijat-libar.com/prodaj-udzbenike/");
+  assert.equal(result[0].url, "https://antikvarijat-libar.com/otkup-udzbenika/");
   assert.equal(result[1].url, "https://antikvarijat-libar.com/najcesca-pitanja/");
 });
 

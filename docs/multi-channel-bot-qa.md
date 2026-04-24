@@ -19,14 +19,14 @@
 5. Vrati se na `A gdje se nalazite?`.
 6. Refresh stranice i potvrdi da su poruke, aktivna tema i stanje razgovora vraćeni ispravno.
 7. Pošalji privitak i potvrdi da flow ne puca i da ide očekivana eskalacija.
-8. Provjeri da se product kartice prikazuju samo u `product_lookup` porukama.
+8. Provjeri da `product_lookup` ne prikazuje product kartice nego link na `/kupi-udzbenike/` i upute za pretragu po šifri, naslovu, autoru ili nakladniku.
 
 ### Facebook
 
 1. Pošalji `Htio bih prodati knjige`.
 2. Nastavi s `A koje vam je radno vrijeme?`.
 3. Nastavi s `A gdje ste?`.
-4. Pošalji `Imate li knjigu X?`.
+4. Pošalji `Imate li knjigu X?` i potvrdi da odgovor vodi na webshop pretragu bez preporuke artikla.
 5. Ponovi isti webhook event i potvrdi da nema duplog odgovora.
 6. Testiraj poruku sa slikom i potvrdi sigurnu eskalaciju ili ručnu obradu.
 
