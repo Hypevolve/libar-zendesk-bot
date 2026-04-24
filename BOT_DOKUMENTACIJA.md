@@ -159,7 +159,7 @@ Kontekst koji se šalje AI sloju uključuje:
 
 ## AI Decision Layer
 
-AI sloj koristi OpenRouter model preko OpenAI SDK klijenta.
+AI sloj koristi OpenRouter preko OpenAI SDK klijenta. Zadani primarni model je `openai/gpt-5`, a fallback model je `google/gemini-2.5-pro`.
 
 Bot koristi channel-aware promptove za:
 
@@ -340,7 +340,7 @@ Glavne značajke widgeta:
 Sustav koristi environment-driven konfiguraciju za:
 
 - Zendesk pristup
-- OpenRouter model i autentikaciju
+- OpenRouter primarni/fallback model i autentikaciju
 - OneDrive / SharePoint pristup
 - retrieval tuning
 - spam filter tuning
