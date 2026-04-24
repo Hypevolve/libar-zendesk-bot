@@ -177,14 +177,15 @@ function formatTime(dateIso) {
   });
 }
 
-function createMessage(role, content, createdAt = new Date().toISOString(), products = []) {
+function createMessage(role, content, createdAt = new Date().toISOString(), products = [], suggestedReplies = []) {
   return {
     id: crypto.randomUUID(),
     role,
     content,
     createdAt,
     attachments: [],
-    products
+    products,
+    suggestedReplies
   };
 }
 
@@ -204,37 +205,49 @@ function applySessionMessages(sessionMessages) {
 
 function mergeProductDataIntoMessages(nextMessages = [], ...messageSources) {
   const productsByMessageId = new Map();
+  const suggestedRepliesByMessageId = new Map();
 
   for (const source of messageSources) {
     for (const message of Array.isArray(source) ? source : []) {
       if (message?.id && Array.isArray(message.products) && message.products.length > 0) {
         productsByMessageId.set(String(message.id), message.products);
       }
+
+      if (message?.id && Array.isArray(message.suggestedReplies) && message.suggestedReplies.length > 0) {
+        suggestedRepliesByMessageId.set(String(message.id), message.suggestedReplies);
+      }
     }
   }
 
   return nextMessages.map((message) => {
     const supportTaskIntent = String(message?.supportTaskIntent || "").trim();
+    const preservedSuggestedReplies = suggestedRepliesByMessageId.get(String(message.id));
+    const nextMessage = {
+      ...message,
+      suggestedReplies: Array.isArray(message.suggestedReplies) && message.suggestedReplies.length > 0
+        ? message.suggestedReplies
+        : preservedSuggestedReplies || []
+    };
 
     if (supportTaskIntent && supportTaskIntent !== "product_lookup") {
       return {
-        ...message,
+        ...nextMessage,
         products: []
       };
     }
 
-    if (Array.isArray(message.products) && message.products.length > 0) {
-      return message;
+    if (Array.isArray(nextMessage.products) && nextMessage.products.length > 0) {
+      return nextMessage;
     }
 
     const preservedProducts = productsByMessageId.get(String(message.id));
 
     if (!preservedProducts || preservedProducts.length === 0) {
-      return message;
+      return nextMessage;
     }
 
     return {
-      ...message,
+      ...nextMessage,
       products: preservedProducts
     };
   });
@@ -645,7 +658,7 @@ function getMessagesSignature(messages) {
           (product) =>
             `${product.id || product.title}:${product.title}:${product.priceLabel || ""}:${product.metaLine || ""}:${product.buyLink || ""}:${product.sellLink || ""}:${product.imageUrl || ""}`
         )
-        .join(",")}:${(message.attachments || [])
+        .join(",")}:${(message.suggestedReplies || []).join(",")}:${(message.attachments || [])
         .map((attachment) => `${attachment.id || attachment.name}:${attachment.name}`)
         .join(",")}`
     )
@@ -769,6 +782,26 @@ function createMessageElement(message) {
     });
 
     wrapper.appendChild(productsEl);
+  }
+
+  const suggestedReplies = Array.isArray(message.suggestedReplies)
+    ? message.suggestedReplies.filter(Boolean).slice(0, 4)
+    : [];
+
+  if (message.role === "assistant" && suggestedReplies.length > 0) {
+    const suggestionsEl = document.createElement("div");
+    suggestionsEl.className = "message-suggestions";
+
+    suggestedReplies.forEach((reply) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "message-suggestion";
+      button.dataset.suggestedReply = reply;
+      button.textContent = reply;
+      suggestionsEl.appendChild(button);
+    });
+
+    wrapper.appendChild(suggestionsEl);
   }
 
   const meta = document.createElement("div");
@@ -1580,6 +1613,21 @@ entryStartForm?.addEventListener("submit", (event) => {
 });
 
 messagesEl.addEventListener("click", async (event) => {
+  const suggestedReplyButton = event.target.closest("[data-suggested-reply]");
+
+  if (suggestedReplyButton) {
+    const suggestedReply = suggestedReplyButton.dataset.suggestedReply || "";
+
+    if (!messageInput.disabled && suggestedReply) {
+      messageInput.value = suggestedReply;
+      messageInput.style.height = "auto";
+      messageInput.style.height = `${Math.min(messageInput.scrollHeight, 132)}px`;
+      messageInput.focus();
+    }
+
+    return;
+  }
+
   const actionButton = event.target.closest("[data-resolve-action]");
 
   if (!actionButton) {

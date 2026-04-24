@@ -214,6 +214,42 @@ test("resolveAutomatedOutcome guides product lookups to webshop search without p
   }
 });
 
+test("resolveAutomatedOutcome routes title-heavy real queries to webshop guidance instead of hard handoff", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalled = false;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalled = true;
+    return null;
+  };
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "Focus5 nd edition : with extra online practice. Sue Key, Vaughan Jones, Monica Berlis, Heather Jones",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "purchase_search_guidance");
+    assert.equal(outcome.taskIntent, "product_lookup");
+    assert.equal(productLookupCalled, false);
+    assert.deepEqual(outcome.products, []);
+    assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+    assert.match(outcome.customerMessage, /najprepoznatljiviji dio naslova|autora/i);
+    assert.deepEqual(outcome.suggestedReplies, ["Imam ISBN", "Imam školski popis", "Ne znam točan naslov"]);
+    assert.equal(outcome.relevance.finalIntent, "product_lookup");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
 test("resolveAutomatedOutcome sends webshop search guidance for product lookup when product feed has no match", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
@@ -370,6 +406,49 @@ test("resolveAutomatedOutcome asks for a fuller title on short ambiguous product
     assert.equal(outcome.type, "ask_clarifying_question");
     assert.equal(outcome.reason, "short_query_clarification");
     assert.match(outcome.customerMessage, /puni naslov|ISBN/i);
+    assert.deepEqual(outcome.suggestedReplies, ["Imam ISBN", "Znam autora", "Ne znam točan naslov"]);
+    assert.equal(outcome.relevance.clarificationReason, "short_query_clarification");
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome records topic-shift relevance diagnostics", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {
+        workingMemory: {
+          activeDomain: "product_lookup",
+          activeTaskIntent: "product_lookup"
+        },
+        messages: [
+          { role: "assistant", content: "Udžbenike možete pretražiti na webshopu.", supportTaskIntent: "product_lookup" }
+        ]
+      },
+      "Koje vam je radno vrijeme?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.taskIntent, "support_info");
+    assert.equal(outcome.relevance.topicShift, "product_to_support_shift");
+
+    const note = __internal.buildAutopilotNote({
+      outcome,
+      userMessage: "Koje vam je radno vrijeme?",
+      knowledge: null,
+      channelType: "web_chat"
+    });
+
+    assert.match(note, /Final intent: support_info/);
+    assert.match(note, /Topic shift type: product_to_support_shift/);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

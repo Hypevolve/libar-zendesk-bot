@@ -772,6 +772,44 @@ function getMessageProductsFromMetadata(audit = {}) {
   return [];
 }
 
+function parseMetadataArray(value) {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function normalizeSuggestedReplies(replies = []) {
+  return [...new Set(
+    parseMetadataArray(replies)
+      .map((reply) => String(reply || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+  )]
+    .filter((reply) => reply.length <= 80)
+    .slice(0, 4);
+}
+
+function getSuggestedRepliesFromMetadata(audit = {}) {
+  const customMetadata = getZendeskAuditCustomMetadata(audit);
+  return normalizeSuggestedReplies(
+    customMetadata.libar_suggested_replies || customMetadata.libarSuggestedReplies
+  );
+}
+
 function getSupportTaskIntentFromMetadata(audit = {}) {
   const customMetadata = getZendeskAuditCustomMetadata(audit);
   return String(customMetadata.libar_task_intent || customMetadata.libarTaskIntent || "").trim();
@@ -870,6 +908,7 @@ function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
           authoredByHuman: role === "assistant" && sourceChannel !== "api",
           supportTaskIntent: role === "assistant" ? getSupportTaskIntentFromMetadata(audit) : "",
           products: role === "assistant" ? getMessageProductsFromMetadata(audit) : [],
+          suggestedReplies: role === "assistant" ? getSuggestedRepliesFromMetadata(audit) : [],
           attachments: Array.isArray(commentEvent.attachments)
             ? commentEvent.attachments.map((attachment) => ({
                 id: attachment.id,
@@ -1063,6 +1102,7 @@ function appendLocalAssistantOutcome(session, outcome = {}) {
     authoredByHuman: false,
     supportTaskIntent: outcome.taskIntent || "",
     products: Array.isArray(outcome.products) ? outcome.products : [],
+    suggestedReplies: normalizeSuggestedReplies(outcome.suggestedReplies),
     attachments: []
   });
   session.conversationState = buildConversationStateFromOutcome(outcome);
@@ -1320,7 +1360,12 @@ function buildAutopilotNote({
     summaryLine,
     `Korisnik: ${userMessage}`,
     knowledgeLine,
-    outcome?.reason ? `Razlog: ${outcome.reason}` : null
+    outcome?.reason ? `Razlog: ${outcome.reason}` : null,
+    outcome?.relevance?.finalIntent ? `Final intent: ${outcome.relevance.finalIntent}` : null,
+    outcome?.relevance?.sourceDecision ? `Source decision: ${outcome.relevance.sourceDecision}` : null,
+    outcome?.relevance?.fallbackReason ? `Fallback reason: ${outcome.relevance.fallbackReason}` : null,
+    outcome?.relevance?.clarificationReason ? `Clarification reason: ${outcome.relevance.clarificationReason}` : null,
+    outcome?.relevance?.topicShift ? `Topic shift type: ${outcome.relevance.topicShift}` : null
   ]
     .filter(Boolean)
     .join("\n");
@@ -1921,6 +1966,126 @@ function looksLikeBuybackParcelQuestion(message = "", session = {}) {
   return hasBuybackContext && hasParcelSignal && hasPackageAction;
 }
 
+function getRelevanceQueryFeatures(message = "", session = {}) {
+  const rawMessage = String(message || "");
+  const normalizedMessage = normalizeForComparison(rawMessage).trim();
+  const tokens = normalizedMessage.split(/\s+/).filter(Boolean);
+  const wordCount = tokens.length;
+  const commaCount = (rawMessage.match(/,/g) || []).length;
+  const titleCaseCount = (rawMessage.match(/\b[A-ZČĆŠĐŽ][a-zčćšđž]{3,}\b/g) || []).length;
+  const activeDomain = getSessionActiveDomain(session);
+
+  const hasUnsafeOrInternalRequest =
+    /(ignore all previous|administrator|admin\b|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prošli mjesec|previous month|osobni podaci|private data)/.test(
+      normalizedMessage
+    );
+  const hasOrderIssue =
+    /(narudzb|narudžb|reklamacij|povrat|refund|r1|racun|račun|problem|gdje mi je|nisam .*dobi|niste odgovorili|otkazat|otkaziv|ostecen|oštećen|kriva knjiga|krive knjige)/.test(
+      normalizedMessage
+    );
+  const hasBuybackIntent =
+    /\b(otkup\w*|prodati|prodat\w*|prodajem|prodala|prodao|prodaja knjiga|prodaja udzbenika|prodaja udžbenika|procjen\w*|vrednovanj\w*|otkupn\w*\s+nalog)\b/.test(
+      normalizedMessage
+    );
+  const hasDeliverySignal =
+    /(dostav|isporuk|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|kucn\w*\s+adres|kućn\w*\s+adres)/.test(
+      normalizedMessage
+    );
+  const hasSupportInfoSignal =
+    /(radno vrijeme|adresa|lokacija|kontakt|telefon|email|mail|placanj|plaćanj|pouzec|pouzeć|gdje se nalaz)/.test(
+      normalizedMessage
+    );
+  const hasBookSearchVerb =
+    /\b(imate li|prodajete li|treba mi|trebam|trazim|tražim|zanima me|potrebna mi je|potrebno mi je|mogu li naruciti|mogu li naručiti|da li se mogu.*naruciti|da li se mogu.*naručiti|dali ima|ima li jos|ima li još|dostupn|kupiti|kupi|kupnja)\b/.test(
+      normalizedMessage
+    );
+  const hasIsbn =
+    /\b(?:97[89][-\s]?)?\d(?:[-\s]?\d){8,12}[\dXx]\b/.test(rawMessage) ||
+    /\bisbn\b/.test(normalizedMessage);
+  const hasBookTerm =
+    /(knjig|ud[zž]ben|radn\w*\s+bilje|workbook|textbook|pravopis|atlas|prirucnik|priručnik|zbirka|svezak|izdanje|edition|online practice|skripta)/.test(
+      normalizedMessage
+    );
+  const hasSchoolContext =
+    /(razred|gimnazij|strukovn|obrtni[cč]k|osnovn|srednj|skol|škol|komercijalist|ekonomsk|trogodišnj|cetverogodišnj|četverogodišnj)/.test(
+      normalizedMessage
+    );
+  const hasSubjectNumber =
+    /\b(matematika|fizika|kemija|biologija|hrvatski|engleski|geografija|povijest|informatika|priroda)\s*\d\b/.test(
+      normalizedMessage
+    ) || /\b\d+\.\s*r\b/.test(normalizedMessage);
+  const hasEditionSignal =
+    /(edition|izdanje|svezak|dio|nd edition|rd edition|th edition|workbook|online practice|prirucnik|priručnik|zbirka|putokazi|profil klet|algoritam)/.test(
+      normalizedMessage
+    );
+  const hasCollectionSearch =
+    /(koje\s+knjige\s+o|knjige\s+o\s+|slicne\s+tematike|slične\s+tematike|slicna\s+tematika|slična\s+tematika|sto imate slicno|što imate slično)/.test(
+      normalizedMessage
+    );
+  const hasAuthorCitation =
+    commaCount >= 2 ||
+    titleCaseCount >= 3 ||
+    /\b[a-zčćšđž]\.\s*,?\s*[a-zčćšđž]\./i.test(rawMessage);
+  const hasMixedSupportAndProductIntent =
+    (hasDeliverySignal || hasSupportInfoSignal) &&
+    (hasBookSearchVerb || hasBookTerm || hasSchoolContext);
+  const hasContextualSupportFollowup =
+    activeDomain &&
+    activeDomain !== "product_lookup" &&
+    /^(a|i)\s+(za|koliko|kako|gdje|kada|sto|što|što je|sto je)\b/.test(normalizedMessage);
+  const isSupportOnly =
+    hasUnsafeOrInternalRequest ||
+    hasOrderIssue ||
+    hasBuybackIntent ||
+    hasMixedSupportAndProductIntent ||
+    hasContextualSupportFollowup ||
+    (hasDeliverySignal && !hasBookSearchVerb && !hasBookTerm) ||
+    (hasSupportInfoSignal && !hasBookSearchVerb && !hasBookTerm);
+  const isTitleHeavyProductCandidate =
+    !isSupportOnly &&
+    wordCount >= 2 &&
+    (
+      hasIsbn ||
+      hasBookSearchVerb ||
+      (hasBookTerm && (wordCount >= 3 || hasSchoolContext || hasEditionSignal)) ||
+      (hasSchoolContext && (hasBookTerm || hasSubjectNumber)) ||
+      (hasEditionSignal && wordCount >= 2) ||
+      (hasCollectionSearch && wordCount >= 3) ||
+      (hasAuthorCitation && wordCount >= 4)
+    );
+  const isVagueProductQuery =
+    !isSupportOnly &&
+    (
+      (wordCount > 0 && wordCount <= 3 &&
+        /(engleski|matematika|fizika|kemija|biologija|sobotta|atlas|pravopis|geografija|povijest|lektira)/.test(
+          normalizedMessage
+        )) ||
+      (wordCount <= 4 && activeDomain === "product_lookup" && !hasBookSearchVerb && !hasIsbn)
+    );
+
+  return {
+    activeDomain,
+    wordCount,
+    hasUnsafeOrInternalRequest,
+    hasOrderIssue,
+    hasBuybackIntent,
+    hasDeliverySignal,
+    hasSupportInfoSignal,
+    hasBookSearchVerb,
+    hasIsbn,
+    hasBookTerm,
+    hasSchoolContext,
+    hasSubjectNumber,
+    hasEditionSignal,
+    hasCollectionSearch,
+    hasAuthorCitation,
+    hasMixedSupportAndProductIntent,
+    hasContextualSupportFollowup,
+    isTitleHeavyProductCandidate,
+    isVagueProductQuery
+  };
+}
+
 function looksLikeProductLookupMessage(message = "", session = {}) {
   const normalizedMessage = normalizeForComparison(message).trim();
 
@@ -1933,6 +2098,12 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   if (looksLikeProductContinuationMessage(message, session)) {
+    return true;
+  }
+
+  const queryFeatures = getRelevanceQueryFeatures(message, session);
+
+  if (queryFeatures.isTitleHeavyProductCandidate) {
     return true;
   }
 
@@ -1974,6 +2145,165 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
       !questionLeadPattern.test(tokens.join(" ")));
 
   return tokens.length >= 1 && tokens.length <= 10 && hasTitleLikeSignal && !hasGenericOnlyVocabulary;
+}
+
+function getAllowedSourcesForIntent(taskIntent = "") {
+  switch (taskIntent) {
+    case "product_lookup":
+      return ["website_links"];
+    case "buyback":
+      return ["onedrive_knowledge", "zendesk_knowledge", "website_links"];
+    case "delivery":
+    case "support_info":
+    case "order":
+      return ["zendesk_knowledge", "onedrive_knowledge", "website_links"];
+    case "complaint":
+    case "buyback_payout_issue":
+      return ["policy_guard"];
+    default:
+      return ["zendesk_knowledge", "onedrive_knowledge", "website_links", "policy_guard"];
+  }
+}
+
+function getTopicShiftType(previousDomain = "", nextDomain = "") {
+  if (!previousDomain || !nextDomain || previousDomain === nextDomain) {
+    return "";
+  }
+
+  if (previousDomain === "product_lookup") {
+    return "product_to_support_shift";
+  }
+
+  if (nextDomain === "product_lookup") {
+    return "support_to_product_shift";
+  }
+
+  return `${previousDomain}_to_${nextDomain}_shift`;
+}
+
+function inferMissingDetail(taskIntent = "", queryFeatures = {}) {
+  if (taskIntent === "product_lookup" && queryFeatures.isVagueProductQuery) {
+    return "book_identifier";
+  }
+
+  if (taskIntent === "order" && !/\b\d{4,}\b|#\s*\d+/.test(String(queryFeatures.rawMessage || ""))) {
+    return "order_identifier";
+  }
+
+  return "";
+}
+
+function buildRelevanceTurnContext(session = {}, userMessage = "", knowledgeSearchOptions = {}) {
+  const queryFeatures = {
+    rawMessage: String(userMessage || ""),
+    ...getRelevanceQueryFeatures(userMessage, session)
+  };
+  const previousDomain = getSessionActiveDomain(session);
+  const inferredTaskIntent = knowledgeSearchOptions.taskIntent || inferTaskIntentFromMessage(userMessage, session);
+  const taskIntent = queryFeatures.isTitleHeavyProductCandidate
+    ? "product_lookup"
+    : inferredTaskIntent;
+  const activeTopic = taskIntent || knowledgeSearchOptions.activeDomain || previousDomain || "";
+  const recentUserMessages = Array.isArray(session?.messages)
+    ? session.messages
+        .filter((message) => message?.role === "user" && normalizeWhitespace(message?.content || ""))
+        .slice(-3)
+        .map((message) => normalizeWhitespace(message.content))
+    : [];
+  const topicShiftType = getTopicShiftType(previousDomain, activeTopic);
+
+  return {
+    activeTopic,
+    allowedSources: getAllowedSourcesForIntent(activeTopic),
+    entryFlow: {
+      intent: session?.entryIntent || "",
+      label: ENTRY_INTENT_LABELS[session?.entryIntent] || "",
+      promptAnswer: session?.entryPromptAnswer || "",
+      skipped: Boolean(session?.entryFlowSkipped)
+    },
+    missingDetail: inferMissingDetail(activeTopic, queryFeatures),
+    previousDomain,
+    queryFeatures,
+    recentUserMessages,
+    taskIntent: activeTopic,
+    topicShiftDetected: Boolean(topicShiftType),
+    topicShiftType
+  };
+}
+
+function getSuggestedRepliesForOutcome(outcome = {}, relevanceContext = {}, channelType = "web_chat") {
+  if (normalizeChannelType(channelType) !== "web_chat") {
+    return [];
+  }
+
+  if (Array.isArray(outcome.suggestedReplies) && outcome.suggestedReplies.length > 0) {
+    return normalizeSuggestedReplies(outcome.suggestedReplies);
+  }
+
+  if (outcome.type === "ask_clarifying_question" && outcome.reason === "order_issue_clarification") {
+    return ["Imam broj narudžbe", "Nemam broj narudžbe", "Problem je s dostavom"];
+  }
+
+  if (outcome.type === "ask_clarifying_question" && outcome.reason === "short_query_clarification") {
+    return ["Imam ISBN", "Znam autora", "Ne znam točan naslov"];
+  }
+
+  if (outcome.taskIntent === "product_lookup" && outcome.reason === "purchase_search_guidance") {
+    if (relevanceContext.queryFeatures?.hasSchoolContext) {
+      return ["Imam šifru s popisa", "Imam samo naslov", "Trebam pomoć s narudžbom"];
+    }
+
+    return ["Imam ISBN", "Imam školski popis", "Ne znam točan naslov"];
+  }
+
+  return [];
+}
+
+function buildRelevanceDiagnostic(outcome = {}, relevanceContext = {}) {
+  return {
+    finalIntent: outcome.taskIntent || relevanceContext.taskIntent || "",
+    sourceDecision: outcome.source || "",
+    fallbackReason: outcome.reason || "",
+    clarificationReason: outcome.type === "ask_clarifying_question" ? outcome.reason || "" : "",
+    topicShift: relevanceContext.topicShiftType || ""
+  };
+}
+
+function decorateOutcomeWithRelevance(outcome = {}, relevanceContext = {}, { channelType = "web_chat" } = {}) {
+  if (!outcome || typeof outcome !== "object") {
+    return outcome;
+  }
+
+  const relevance = buildRelevanceDiagnostic(outcome, relevanceContext);
+
+  return {
+    ...outcome,
+    relevance,
+    suggestedReplies: getSuggestedRepliesForOutcome(outcome, relevanceContext, channelType)
+  };
+}
+
+function sanitizeMetricPart(value = "") {
+  return String(value || "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "unknown";
+}
+
+function recordRelevanceMetrics(outcome = {}, relevanceContext = {}) {
+  metricsService.increment(`outcome_${sanitizeMetricPart(outcome.type)}_total`);
+  metricsService.increment(`outcome_reason_${sanitizeMetricPart(outcome.reason)}_total`);
+  metricsService.increment(`intent_${sanitizeMetricPart(outcome.taskIntent || relevanceContext.taskIntent)}_total`);
+  metricsService.increment(`source_${sanitizeMetricPart(outcome.source)}_total`);
+
+  if (outcome.type === "ask_clarifying_question") {
+    metricsService.increment(`clarification_${sanitizeMetricPart(outcome.reason)}_total`);
+  }
+
+  if (relevanceContext.topicShiftDetected) {
+    metricsService.increment("topic_shift_total");
+    metricsService.increment(`topic_shift_${sanitizeMetricPart(relevanceContext.topicShiftType)}_total`);
+  }
 }
 
 function uniqueOutcomeTags(tags = []) {
@@ -2201,10 +2531,25 @@ function looksLikePurchaseSearchGuidanceMessage(userMessage = "", session = {}) 
   );
 }
 
-function buildPurchaseSearchGuidanceOutcome() {
+function buildPurchaseSearchGuidanceOutcome(relevanceContext = {}) {
+  const queryFeatures = relevanceContext.queryFeatures || {};
+  let searchInstruction =
+    "U tražilicu upišite šifru udžbenika sa školskog popisa, naslov, autora ili nakladnika.";
+
+  if (queryFeatures.hasIsbn) {
+    searchInstruction =
+      "Ako imate ISBN, upišite ga bez razmaka ili crtica; to je najprecizniji način pretrage.";
+  } else if (queryFeatures.hasSchoolContext) {
+    searchInstruction =
+      "Za školski popis najbrže je pretražiti šifru udžbenika, a zatim naslov ili nakladnika ako šifra nije dostupna.";
+  } else if (queryFeatures.hasAuthorCitation || queryFeatures.hasEditionSignal) {
+    searchInstruction =
+      "Kod dužih naslova prvo pretražite najprepoznatljiviji dio naslova, zatim autora ili izdanje ako rezultat nije jasan.";
+  }
+
   const customerMessage =
-    `Udžbenike je najbolje pretražiti direktno na webshopu: ${BASE_URL}/kupi-udzbenike/.\n` +
-    "U tražilicu upišite šifru udžbenika sa školskog popisa, naslov, autora ili nakladnika. Ako zapnete s narudžbom, nemate popis ili niste sigurni koji je udžbenik pravi, napišite to ovdje pa će se podrška uključiti.";
+    `Udžbenike i knjige je najbolje pretražiti direktno na webshopu: ${BASE_URL}/kupi-udzbenike/.\n` +
+    `${searchInstruction} Ako imate šifru udžbenika sa školskog popisa, pretražite nju prvu. Ako zapnete s narudžbom, nemate popis ili niste sigurni koji je rezultat pravi, napišite to ovdje pa će se podrška uključiti.`;
 
   return {
     type: "safe_answer",
@@ -2240,11 +2585,17 @@ function buildBuybackParcelGuidanceOutcome(userMessage = "") {
 }
 
 function buildPolicyOutcome(userMessage = "", { session = {}, channelType = "web_chat" } = {}) {
+  const relevanceContext = buildRelevanceTurnContext(
+    session,
+    userMessage,
+    buildKnowledgeSearchOptions(session, userMessage)
+  );
+
   return (
     buildCriticalComplaintOutcome(userMessage) ||
     buildOrderIssueClarificationOutcome(userMessage, { channelType }) ||
     (looksLikeOnlineBuybackOpening(userMessage) ? buildOnlineBuybackGuidanceOutcome() : null) ||
-    (looksLikePurchaseSearchGuidanceMessage(userMessage, session) ? buildPurchaseSearchGuidanceOutcome() : null)
+    (looksLikePurchaseSearchGuidanceMessage(userMessage, session) ? buildPurchaseSearchGuidanceOutcome(relevanceContext) : null)
   );
 }
 
@@ -2389,16 +2740,9 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
   }
 
   if (looksLikeProductLookupMessage(userMessage, session)) {
-    return {
-      type: "safe_answer",
-      stateTag: "ai_active",
-      reason: "purchase_search_guidance",
-      source: "website_links",
-      taskIntent: "product_lookup",
-      customerMessage:
-        `Udžbenike je najbolje pretražiti direktno na webshopu: ${BASE_URL}/kupi-udzbenike/.\n` +
-        "U tražilicu upišite šifru udžbenika sa školskog popisa, naslov, autora ili nakladnika. Ako zapnete s narudžbom, nemate popis ili niste sigurni koji je udžbenik pravi, napišite to ovdje pa će se podrška uključiti."
-    };
+    return buildPurchaseSearchGuidanceOutcome(
+      buildRelevanceTurnContext(session, userMessage, buildKnowledgeSearchOptions(session, userMessage))
+    );
   }
 
   return null;
@@ -2474,21 +2818,41 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
   hydrateSessionRoutingContext(session);
   const channelMessages = getChannelMessages(channelType);
   const knowledgeSearchOptions = buildKnowledgeSearchOptions(session, userMessage);
+  const relevanceContext = buildRelevanceTurnContext(session, userMessage, knowledgeSearchOptions);
+
+  function finishOutcome(outcome, knowledgeValue = null) {
+    const decoratedOutcome = decorateOutcomeWithRelevance(outcome, relevanceContext, { channelType });
+    updateSessionRouteMemory(session, userMessage, decoratedOutcome);
+    recordRelevanceMetrics(decoratedOutcome, relevanceContext);
+    return { outcome: decoratedOutcome, knowledge: knowledgeValue, relevanceContext };
+  }
 
   if (hasAttachments) {
+    const outcome = decorateOutcomeWithRelevance({
+      type: "hard_handoff",
+      stateTag: "awaiting_human",
+      reason: "attachments_present",
+      source: "policy_guard",
+      taskIntent: relevanceContext.taskIntent || "",
+      customerMessage: channelMessages.attachmentHandoff,
+      zendeskMessage: channelMessages.attachmentHandoff
+    }, relevanceContext, { channelType });
+    recordRelevanceMetrics(outcome, relevanceContext);
+
     return {
       type: "hard_handoff",
       stateTag: "awaiting_human",
       reason: "attachments_present",
-      outcome: { type: "hard_handoff", stateTag: "awaiting_human", customerMessage: channelMessages.attachmentHandoff }
+      outcome,
+      knowledge: null,
+      relevanceContext
     };
   }
 
   const policyOutcome = buildPolicyOutcome(userMessage, { session, channelType });
 
   if (policyOutcome) {
-    updateSessionRouteMemory(session, userMessage, policyOutcome);
-    return { outcome: policyOutcome, knowledge: null };
+    return finishOutcome(policyOutcome, null);
   }
 
   let knowledge = null;
@@ -2503,8 +2867,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     !hasExplicitBuybackConfirmationKnowledge(knowledge)
   ) {
     const outcome = buildBuybackConfirmationHandoffOutcome(channelType);
-    updateSessionRouteMemory(session, userMessage, outcome);
-    return { outcome, knowledge };
+    return finishOutcome(outcome, knowledge);
   }
 
   let customerMessage = null;
@@ -2529,8 +2892,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
 
     if (outcome?.type === "safe_answer") {
-      updateSessionRouteMemory(session, userMessage, outcome);
-      return { outcome, knowledge };
+      return finishOutcome(outcome, knowledge);
     }
   }
 
@@ -2550,8 +2912,7 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     });
 
     if (outcome?.type === "safe_answer") {
-      updateSessionRouteMemory(session, userMessage, outcome);
-      return { outcome, knowledge };
+      return finishOutcome(outcome, knowledge);
     }
   }
 
@@ -2565,22 +2926,22 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       knowledge,
       channelType
     });
-    updateSessionRouteMemory(session, userMessage, outcome);
-    return { outcome, knowledge };
+    return finishOutcome(outcome, knowledge);
   }
 
   const outcome = {
     type: "hard_handoff",
     stateTag: "awaiting_human",
     reason: "no_answer_found",
+    source: "policy_guard",
+    taskIntent: relevanceContext.taskIntent || "",
     customerMessage: channelMessages.hardHandoff
   };
-  updateSessionRouteMemory(session, userMessage, outcome);
-  return { outcome, knowledge };
+  return finishOutcome(outcome, knowledge);
 }
 
-function attachProductsToLatestAssistantMessage(session, products = [], expectedContent = "") {
-  if (!session || !Array.isArray(session.messages) || products.length === 0) {
+function attachOutcomeDetailsToLatestAssistantMessage(session, outcome = {}) {
+  if (!session || !Array.isArray(session.messages) || !outcome?.customerMessage) {
     return;
   }
 
@@ -2588,15 +2949,33 @@ function attachProductsToLatestAssistantMessage(session, products = [], expected
     .reverse()
     .find((message) => message.role === "assistant" && !message.authoredByHuman);
 
-  if (!latestAssistantMessage) {
+  if (!latestAssistantMessage || latestAssistantMessage.content !== outcome.customerMessage) {
     return;
   }
 
-  if (expectedContent && latestAssistantMessage.content !== expectedContent) {
-    return;
-  }
+  latestAssistantMessage.supportTaskIntent = outcome.taskIntent || latestAssistantMessage.supportTaskIntent || "";
+  latestAssistantMessage.products = Array.isArray(outcome.products)
+    ? outcome.products
+    : latestAssistantMessage.products || [];
+  latestAssistantMessage.suggestedReplies = normalizeSuggestedReplies(outcome.suggestedReplies);
+}
 
-  latestAssistantMessage.products = products;
+function buildBotReplyMetadata(outcome = {}) {
+  return {
+    ...(Array.isArray(outcome.products) && outcome.products.length > 0
+      ? {
+          libar_products: JSON.stringify(outcome.products)
+        }
+      : {}),
+    ...(normalizeSuggestedReplies(outcome.suggestedReplies).length > 0
+      ? {
+          libar_suggested_replies: JSON.stringify(normalizeSuggestedReplies(outcome.suggestedReplies))
+        }
+      : {}),
+    libar_task_intent: outcome.taskIntent || "",
+    libar_relevance_reason: outcome.relevance?.fallbackReason || outcome.reason || "",
+    libar_topic_shift: outcome.relevance?.topicShift || ""
+  };
 }
 
 async function persistEscalation(ticketId, escalationType, { channelType = "web_chat" } = {}) {
@@ -2920,9 +3299,7 @@ async function processZendeskWebhookPayload(payload = {}) {
       await zendeskService.updateConversationState(ticketId, outcome.stateTag, outcome.extraTags || []);
       await zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
         channelType,
-        metadata: {
-          libar_task_intent: outcome.taskIntent || ""
-        }
+        metadata: buildBotReplyMetadata(outcome)
       });
             await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
@@ -2951,7 +3328,10 @@ async function processZendeskWebhookPayload(payload = {}) {
       await Promise.all([
         zendeskService.updateConversationState(ticketId, outcome.stateTag, outcome.extraTags || []),
         outcome.customerMessage
-          ? zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, { channelType })
+          ? zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
+              channelType,
+              metadata: buildBotReplyMetadata(outcome)
+            })
           : Promise.resolve(),
         zendeskService.addInternalNote(ticketId, buildAutopilotNote({
           outcome,
@@ -2979,14 +3359,7 @@ async function processZendeskWebhookPayload(payload = {}) {
       zendeskService.addBotReplyToTicket(ticketId, outcome.customerMessage, {
         channelType,
         additionalTags: outcome.source === "product_feed" ? ["product_feed_match"] : [],
-        metadata: {
-          ...(outcome.products?.length
-            ? {
-                libar_products: JSON.stringify(outcome.products)
-              }
-            : {}),
-          libar_task_intent: outcome.taskIntent || ""
-        }
+        metadata: buildBotReplyMetadata(outcome)
       }),
       zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
@@ -3162,14 +3535,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       await zendeskService.updateConversationState(ticketId, outcome.stateTag, outcome.extraTags || []);
       await zendeskService.addBotReplyToTicket(ticketId, outcome.zendeskMessage || outcome.customerMessage, {
         channelType: "web_chat",
-        metadata: {
-          ...(outcome.products?.length
-            ? {
-                libar_products: JSON.stringify(outcome.products)
-              }
-            : {}),
-          libar_task_intent: outcome.taskIntent || ""
-        }
+        metadata: buildBotReplyMetadata(outcome)
       });
       await zendeskService.addInternalNote(ticketId, buildAutopilotNote({
         outcome,
@@ -3198,7 +3564,7 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
       appendLocalAssistantOutcome(session, outcome);
     }
     const startSync = await syncSessionMessagesWithFallback(session, "chat_start_final_sync");
-    attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
+    attachOutcomeDetailsToLatestAssistantMessage(session, outcome);
     registerRecentChatStart({
       name,
       email,
@@ -3494,14 +3860,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
         outcome.zendeskMessage || outcome.customerMessage,
         {
           channelType: "web_chat",
-          metadata: {
-            ...(outcome.products?.length
-              ? {
-                  libar_products: JSON.stringify(outcome.products)
-                }
-              : {}),
-            libar_task_intent: outcome.taskIntent || ""
-          }
+          metadata: buildBotReplyMetadata(outcome)
         }
       );
       await zendeskService.addInternalNote(session.ticketId, buildAutopilotNote({
@@ -3531,7 +3890,7 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       appendLocalAssistantOutcome(session, outcome);
     }
     const messageSync = await syncSessionMessagesWithFallback(session, "chat_message_final_sync");
-    attachProductsToLatestAssistantMessage(session, outcome.products, outcome.customerMessage);
+    attachOutcomeDetailsToLatestAssistantMessage(session, outcome);
     broadcastSessionUpdate(session);
 
     return res.status(200).json({

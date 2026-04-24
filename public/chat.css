@@ -968,6 +968,45 @@ textarea:focus {
   margin-top: var(--space-2);
 }
 
+.message-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.message-suggestion {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(240, 100, 49, 0.14);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-primary-700);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-soft),
+    border-color var(--duration-fast) var(--ease-soft),
+    box-shadow var(--duration-fast) var(--ease-soft),
+    transform var(--duration-fast) var(--ease-soft);
+}
+
+.message-suggestion:hover {
+  background: var(--button-surface-bg-hover);
+  border-color: rgba(240, 100, 49, 0.2);
+  box-shadow: var(--shadow-xs);
+}
+
+.message-suggestion:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.message-suggestion:active {
+  transform: var(--press-scale);
+}
+
 .product-card {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
@@ -1634,6 +1673,11 @@ textarea:focus {
 
   .resolution-prompt {
     max-width: 100%;
+  }
+
+  .message-suggestions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .resolution-prompt__actions {
