@@ -1778,6 +1778,20 @@ function getSessionActiveTaskIntent(session = {}) {
   return "";
 }
 
+function looksLikeBuyerSearchDespiteSellWords(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    /\b(imate li|imate|da li imate|dali imate|ima li|prodajete li)\b.{0,80}\bza prodati\b/.test(normalizedMessage) ||
+    /\bza prodati\b.{0,100}\b(trazim|tražim|treba|trebam|kcer|kćer|dijete|kupiti|kupujem)\b/.test(normalizedMessage) ||
+    /\b(nemam|nemamo)\b.{0,100}\b(trazim|tražim|treba|trebam|kcer|kćer|dijete|kupiti|kupujem)\b/.test(normalizedMessage)
+  );
+}
+
 function hydrateSessionRoutingContext(session = {}) {
   if (!session || typeof session !== "object") {
     return session;
@@ -1842,7 +1856,7 @@ function inferTaskIntentFromMessage(userMessage = "", session = {}) {
     return "product_lookup";
   }
 
-  if (/(dostav|isporuk|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|dostavne opcije|opcije dostave)/.test(normalizedMessage)) {
+  if (/(dostav|isporuk|postarin|poštarin|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|dostavne opcije|opcije dostave)/.test(normalizedMessage)) {
     return "delivery";
   }
 
@@ -1983,17 +1997,14 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     /(narudzb|narudžb|reklamacij|povrat|refund|r1|racun|račun|problem|gdje mi je|nisam .*dobi|niste odgovorili|otkazat|otkaziv|ostecen|oštećen|kriva knjiga|krive knjige)/.test(
       normalizedMessage
     );
-  const hasBuyerForSalePhrase =
-    /\b(imate li|imate|da li imate|dali imate|ima li|prodajete li)\b.{0,60}\bza prodati\b|\bza prodati\b.{0,60}\b(knjig|ud[zž]ben|atlas|radn\w*\s+bilje|pravopis|prirucnik|priručnik|zbirka)/.test(
-      normalizedMessage
-    );
+  const hasBuyerForSalePhrase = looksLikeBuyerSearchDespiteSellWords(rawMessage);
   const hasBuybackIntent =
     !hasBuyerForSalePhrase &&
     /\b(otkup\w*|prodati|prodat\w*|prodajem|prodala|prodao|prodaja knjiga|prodaja udzbenika|prodaja udžbenika|procjen\w*|vrednovanj\w*|otkupn\w*\s+nalog)\b/.test(
       normalizedMessage
     );
   const hasDeliverySignal =
-    /(dostav|isporuk|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|kucn\w*\s+adres|kućn\w*\s+adres)/.test(
+    /(dostav|isporuk|postarin|poštarin|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|kucn\w*\s+adres|kućn\w*\s+adres)/.test(
       normalizedMessage
     );
   const hasSupportInfoSignal =
@@ -2001,14 +2012,14 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
       normalizedMessage
     );
   const hasBookSearchVerb =
-    /\b(imate li|prodajete li|treba mi|trebam|trazim|tražim|zanima me|potrebna mi je|potrebno mi je|mogu li naruciti|mogu li naručiti|da li se mogu.*naruciti|da li se mogu.*naručiti|dali ima|ima li jos|ima li još|dostupn|kupiti|kupi|kupnja)\b/.test(
+    /\b(imate li|prodajete li|treba mi|trebam|trebala bi|trebao bih|trazim|tražim|zanima me|potrebna mi je|potrebno mi je|mogu li naruciti|mogu li naručiti|da li se mogu.*naruciti|da li se mogu.*naručiti|dali ima|ima li jos|ima li još|dostupn|kupiti|kupi|kupnja|uzeti|uzet cemo|uzet ćemo)\b/.test(
       normalizedMessage
     );
   const hasIsbn =
     /\b(?:97[89][-\s]?)?\d(?:[-\s]?\d){8,12}[\dXx]\b/.test(rawMessage) ||
     /\bisbn\b/.test(normalizedMessage);
   const hasBookTerm =
-    /(knjig|ud[zž]ben|radn\w*\s+bilje|workbook|textbook|pravopis|atlas|prirucnik|priručnik|zbirka|svezak|izdanje|edition|online practice|skripta)/.test(
+    /(knjig|ud[zž]ben|us[zž]ben|radn\w*\s+bilje|workbook|textbook|pravopis|atlas|citank|čitank|prirucnik|priručnik|zbirka|svezak|izdanje|edition|online practice|skripta|focus|fokus|putokazi|dodi i vidi|dođi i vidi|fon fon|tragom teksta)/.test(
       normalizedMessage
     );
   const hasSchoolContext =
@@ -2019,6 +2030,10 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     /\b(matematika|fizika|kemija|biologija|hrvatski|engleski|geografija|povijest|informatika|priroda)\s*\d\b/.test(
       normalizedMessage
     ) || /\b\d+\.\s*r\b/.test(normalizedMessage);
+  const hasSubjectOrProgramSignal =
+    /\b(matematika|fizika|kemija|biologija|hrvatski|engleski|geografija|povijest|informatika|priroda|vjeronauk|ugostitelj|komercijalist|hotelijer|turisticki|turistički)\b/.test(
+      normalizedMessage
+    );
   const hasEditionSignal =
     /(edition|izdanje|svezak|dio|nd edition|rd edition|th edition|workbook|online practice|prirucnik|priručnik|zbirka|putokazi|profil klet|algoritam)/.test(
       normalizedMessage
@@ -2053,7 +2068,7 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
       hasIsbn ||
       hasBookSearchVerb ||
       (hasBookTerm && (wordCount >= 3 || hasSchoolContext || hasEditionSignal)) ||
-      (hasSchoolContext && (hasBookTerm || hasSubjectNumber)) ||
+      (hasSchoolContext && (hasBookTerm || hasSubjectNumber || hasSubjectOrProgramSignal)) ||
       (hasEditionSignal && wordCount >= 2) ||
       (hasCollectionSearch && wordCount >= 3) ||
       (hasAuthorCitation && wordCount >= 4)
@@ -2106,6 +2121,10 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
     return true;
   }
 
+  if (looksLikeBuyerSearchDespiteSellWords(message)) {
+    return true;
+  }
+
   const queryFeatures = getRelevanceQueryFeatures(message, session);
 
   if (queryFeatures.isTitleHeavyProductCandidate) {
@@ -2113,7 +2132,7 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   if (
-    /(refund|reklamacij|povrat|dostav|isporuk|paket|paketomat|gls|boxnow|box now|kurir|dostavljac|dostavljač|naljepnic|preda|predati|predam|odnijeti|odnes|zapakir|spakir|\botkup\b|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
+    /(refund|reklamacij|povrat|dostav|isporuk|postarin|poštarin|paket|paketomat|gls|boxnow|box now|kurir|dostavljac|dostavljač|naljepnic|preda|predati|predam|odnijeti|odnes|zapakir|spakir|\botkup\w*|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
       normalizedMessage
     )
   ) {
@@ -2335,7 +2354,12 @@ function buildCriticalComplaintOutcome(userMessage = "") {
   const isBuybackPayoutIssue =
     hasPayoutProblemSignal &&
     /(otkup|prodaj|prodao|prodala|udzben|knjig|paket)/.test(normalizedMessage);
+  const isReturnPolicyQuestion =
+    /\bpovrat\w*\b/.test(normalizedMessage) &&
+    /(mogu[cć]|moze|može|dal|da li|dali|kako|rok|uvjet|moze li|može li)/.test(normalizedMessage) &&
+    !/(reklamacij|refund|ostecen|oštećen|kriva|krivi|pogresn|pogrešn|problem|kupio|kupila|narucio|naručio|narucila|naručila|broj narudzbe|broj narudžbe|nisam|niste)/.test(normalizedMessage);
   const isComplaintOrReturnIssue =
+    !isReturnPolicyQuestion &&
     /\b(reklamacij\w*|povrat\w*|refund\w*|ostecen\w*|krivi\s+udzbenik|kriva\s+knjiga)\b/.test(
       normalizedMessage
     );
@@ -2515,6 +2539,72 @@ function buildOnlineBuybackGuidanceOutcome() {
   };
 }
 
+function looksLikeBuybackAcceptedBooksQuestion(userMessage = "") {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+
+  return /(koje\s+sve\s+knjige|koje\s+knjige|sto\s+otkupljujete|što\s+otkupljujete|otkupljujete li|radne\s+biljeznice|radne\s+bilježnice|osnovn\w*\s+skol|osnovn\w*\s+škol|osnovnoskol\w*|osnovnoškol\w*|fakultet|beletristik|roman)/.test(normalizedMessage) &&
+    /(otkup|otkupljuj|prodati|prodajem|prodaja)/.test(normalizedMessage);
+}
+
+function buildBuybackAcceptedBooksOutcome() {
+  const customerMessage =
+    "Otkupljujemo rabljene udžbenike za srednju školu. Udžbenike za osnovnu školu, knjige za fakultete, romane, beletristiku i ostalu literaturu ne otkupljujemo i ne prodajemo. Ako niste sigurni za konkretan naslov, pošaljite fotografiju ili naslov pa možemo provjeriti.";
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_accepted_books_guidance",
+    source: "conversation_fallback",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
+function looksLikeBuybackBonusQuestion(userMessage = "") {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+
+  return /(kupon\w*|bonus\w*|popust\w*|kampanj\w*)/.test(normalizedMessage) &&
+    /(otkup|otkupu|prodaj|prodati)/.test(normalizedMessage);
+}
+
+function buildBuybackBonusOutcome() {
+  const customerMessage =
+    "Povremeno organiziramo otkupne kampanje s dodatnim bonusom na standardnu otkupnu cijenu. Aktivne kampanje objavljujemo na webu i webshopu, Facebooku, Instagramu i email newsletteru. Ako kampanja trenutno nije prikazana na webu, računajte na standardnu otkupnu cijenu koju sustav prikaže nakon skeniranja ili unosa barkoda.";
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_bonus_guidance",
+    source: "conversation_fallback",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
+function looksLikeBuybackPriceQuestion(userMessage = "") {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+
+  return /(cijen\w*|cujene|cijene|koliko\s+(dobijem|vrijedi|kosta|košta)|vrijednost)/.test(normalizedMessage) &&
+    /(otkup|otkupa|prodaj|prodati|knjig|udzben)/.test(normalizedMessage);
+}
+
+function buildBuybackPriceOutcome() {
+  const customerMessage =
+    `Točnu otkupnu cijenu najbrže dobijete na stranici ${BASE_URL}/otkup-udzbenika/: skenirajte barkod mobitelom ili ga ručno upišite i sustav će prikazati cijenu bez obveze. Cijena ovisi o naslovu, razredu, stanju knjige i potražnji; knjiga mora biti upotrebljiva.`;
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_price_guidance",
+    source: "website_links",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
 function looksLikePurchaseSearchGuidanceMessage(userMessage = "", session = {}) {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
 
@@ -2597,6 +2687,9 @@ function buildPolicyOutcome(userMessage = "", { session = {}, channelType = "web
   );
 
   return (
+    (looksLikeBuybackAcceptedBooksQuestion(userMessage) ? buildBuybackAcceptedBooksOutcome() : null) ||
+    (looksLikeBuybackBonusQuestion(userMessage) ? buildBuybackBonusOutcome() : null) ||
+    (looksLikeBuybackPriceQuestion(userMessage) ? buildBuybackPriceOutcome() : null) ||
     buildCriticalComplaintOutcome(userMessage) ||
     buildOrderIssueClarificationOutcome(userMessage, { channelType }) ||
     (looksLikeOnlineBuybackOpening(userMessage) ? buildOnlineBuybackGuidanceOutcome() : null) ||
@@ -2652,6 +2745,30 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
     };
   }
 
+  if (/(^a\s+za\s+osnovn\w*\s+skol|^a\s+za\s+osnovn\w*\s+škol)/.test(normalizedMessage)) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "primary_school_context_clarification",
+      source: "conversation_fallback",
+      taskIntent: "product_lookup",
+      customerMessage:
+        "Mislite li na kupnju ili otkup knjiga za osnovnu školu? Za kupnju naslov možete potražiti na webshopu, a za otkup nam napišite da pitate za otkup pa ćemo odgovoriti prema pravilima otkupa."
+    };
+  }
+
+  if (/(sve sam to napravila|jos prosli tjedan|još prošli tjedan|nitko se nije javio|ne nalazim|ne snalazim|gdje je taj odjeljak)/.test(normalizedMessage)) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "awaiting_customer_detail",
+      reason: "continuation_clarification",
+      source: "conversation_fallback",
+      taskIntent: "",
+      customerMessage:
+        "Napišite molim vas na koji postupak mislite i što ste već pokušali, na primjer kupnju, otkup, košaricu, dostavu ili postojeću narudžbu. Tada vas mogu usmjeriti na točan sljedeći korak."
+    };
+  }
+
   if (
     /(narudzb|otkazat|otkaziv|nisam .*dobi|niste odgovorili|reklamacij|povrat)/.test(normalizedMessage)
   ) {
@@ -2688,7 +2805,7 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
   }
 
   if (
-    /(troskovi dostave|cijena dostave|dostava|dostavn\w*|isporuka|paketomat|gls|boxnow|box now|pouzecem|pouzece)/.test(
+    /(troskovi dostave|cijena dostave|postarina|poštarina|dostava|dostavn\w*|isporuka|paketomat|gls|boxnow|box now|pouzecem|pouzece)/.test(
       normalizedMessage
     )
   ) {

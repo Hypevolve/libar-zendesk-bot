@@ -8,7 +8,7 @@ test("normalizeWhitespace collapses spacing without changing case", () => {
 });
 
 test("normalizeLowercase removes diacritics", () => {
-  assert.equal(textUtils.normalizeLowercase("ČćŽšĐ"), "cczsđ");
+  assert.equal(textUtils.normalizeLowercase("ČćŽšĐ"), "cczsd");
 });
 
 test("normalizeForSearch strips html punctuation and lowercases", () => {

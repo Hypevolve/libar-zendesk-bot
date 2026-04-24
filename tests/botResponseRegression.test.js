@@ -313,6 +313,16 @@ test("resolveAutomatedOutcome treats 'Prodajete li [naslov]' as a product lookup
     assert.equal(atlasResult.outcome.reason, "purchase_search_guidance");
     assert.equal(atlasResult.outcome.taskIntent, "product_lookup");
     assert.match(atlasResult.outcome.customerMessage, /kupi-udzbenike/i);
+
+    const buyerCorrection = await __internal.resolveAutomatedOutcome(
+      {},
+      "Nemam taj za prodati zato ga i tražim jer mi treba za kcer",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(buyerCorrection.outcome.type, "safe_answer");
+    assert.equal(buyerCorrection.outcome.reason, "purchase_search_guidance");
+    assert.equal(buyerCorrection.outcome.taskIntent, "product_lookup");
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
@@ -376,7 +386,43 @@ test("resolveAutomatedOutcome asks for order details instead of escalating when 
   }
 });
 
-test("resolveAutomatedOutcome asks a clarifying question for generic buyback intent instead of escalating", async () => {
+test("resolveAutomatedOutcome answers general return-policy questions from KB instead of complaint handoff", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => ({
+    context: "Povrat ili zamjena mogući su unutar 2 tjedna od primitka knjige uz predočenje računa.",
+    articles: [
+      {
+        title: "Povrat i zamjena",
+        body: "Povrat ili zamjena mogući su unutar 2 tjedna od primitka knjige uz predočenje računa.",
+        score: 90,
+        source: "onedrive"
+      }
+    ],
+    topScore: 90,
+    primarySource: "onedrive"
+  });
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {},
+      "dal je moguc povrat udzbenika",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "safe_answer");
+    assert.equal(outcome.reason, "knowledge_fallback");
+    assert.equal(outcome.source, "onedrive_knowledge");
+    assert.match(outcome.customerMessage, /2 tjedna|računa/i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
+test("resolveAutomatedOutcome answers common buyback FAQ intents without product bleed", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
@@ -391,9 +437,30 @@ test("resolveAutomatedOutcome asks a clarifying question for generic buyback int
     );
 
     assert.equal(outcome.type, "safe_answer");
-    assert.equal(outcome.reason, "online_buyback_guidance");
-    assert.match(outcome.customerMessage, /otkup-udzbenika/i);
-    assert.match(outcome.customerMessage, /skenirajte barkod/i);
+    assert.equal(outcome.reason, "buyback_accepted_books_guidance");
+    assert.match(outcome.customerMessage, /rabljene udžbenike za srednju školu/i);
+    assert.match(outcome.customerMessage, /romane|beletristiku/i);
+
+    const bonusResult = await __internal.resolveAutomatedOutcome(
+      {},
+      "Imaš li nekih kupona za bonus na otkupu?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(bonusResult.outcome.type, "safe_answer");
+    assert.equal(bonusResult.outcome.reason, "buyback_bonus_guidance");
+    assert.equal(bonusResult.outcome.taskIntent, "buyback");
+    assert.match(bonusResult.outcome.customerMessage, /otkupne kampanje|newsletter/i);
+
+    const priceResult = await __internal.resolveAutomatedOutcome(
+      {},
+      "Koje su cujene otkupa?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(priceResult.outcome.type, "safe_answer");
+    assert.equal(priceResult.outcome.reason, "buyback_price_guidance");
+    assert.match(priceResult.outcome.customerMessage, /skenirajte barkod|otkupnu cijenu/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

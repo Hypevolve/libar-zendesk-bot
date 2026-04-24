@@ -77,7 +77,7 @@ test("searchOneDriveDetailed returns exact KB facts across the full Help Center 
     },
     {
       query: "Otkupljujete li knjige za osnovnu školu?",
-      patterns: [/osnovn\w*\s+škol/i, /ne otkupljujemo/i]
+      patterns: [/(osnovu|osnovn\w*)\s+škol/i, /ne otkupljujemo/i]
     },
     {
       query: "Koliko košta dostava kod online otkupa ako šaljem 3 knjige?",
@@ -178,6 +178,26 @@ test("searchOneDriveDetailed retrieves buyer workflow guidance for real product-
     {
       query: "Kako da vam ubacim sliku što mi treba",
       patterns: [/fotografiju|info@antikvarijat-libar\.com|Messenger|chata/i]
+    },
+    {
+      query: "Focus5 nd edition : with extra online practice. Sue Key, Vaughan Jones, Monica Berlis, Heather Jones",
+      patterns: [/Kako naručiti udžbenike|pretraživanje|ISBN|naziv knjige/i]
+    },
+    {
+      query: "978-953-197-789-0",
+      patterns: [/Kako naručiti udžbenike|ISBN|šifra artikla|sifra artikla/i]
+    },
+    {
+      query: "Koliko košta poštarina?",
+      patterns: [/5,97 EUR|3,50 EUR|GLS|BOXNOW/i]
+    },
+    {
+      query: "Koje sve knjige, osim udžbenika, mogu otkupiti kod vas?",
+      patterns: [/rabljene udžbenike za srednju školu|osnovu školu ne otkupljujemo|romane/i]
+    },
+    {
+      query: "imaš li nekih kupona za bonus na otkupu?",
+      patterns: [/otkupne kampanje|dodatnim bonusom|newsletter/i]
     }
   ];
 

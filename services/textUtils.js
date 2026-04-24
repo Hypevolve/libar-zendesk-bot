@@ -15,13 +15,17 @@ function normalizeWhitespace(value = "") {
     .trim();
 }
 
+function foldCroatianDiacritics(value = "") {
+  return String(value || "").replace(/[Đđ]/g, "d");
+}
+
 /**
  * Diacritic-aware lowercase normalization suitable for fuzzy
  * comparisons (spam filtering, simple matching).
  * Removes combining diacritical marks via NFD decomposition.
  */
 function normalizeLowercase(value = "") {
-  return String(value)
+  return foldCroatianDiacritics(value)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -36,7 +40,7 @@ function normalizeLowercase(value = "") {
 function normalizeForSearch(text = "", { stripHtmlContent = true } = {}) {
   const base = stripHtmlContent ? stripHtml(text) : String(text);
 
-  return base
+  return foldCroatianDiacritics(base)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -51,7 +55,7 @@ function normalizeForSearch(text = "", { stripHtmlContent = true } = {}) {
  * Used by the reasoning service for intent detection regexes.
  */
 function normalizeForComparison(value = "") {
-  return normalizeWhitespace(value)
+  return foldCroatianDiacritics(normalizeWhitespace(value))
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
