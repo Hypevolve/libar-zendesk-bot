@@ -69,12 +69,14 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_EMBEDDING_MODEL
-        value: text-embedding-3-small
-      - key: OPENAI_EMBEDDING_DIMENSIONS
+      - key: EMBEDDING_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: EMBEDDING_DIMENSIONS
         value: 1536
+      - key: EMBEDDING_BATCH_SIZE
+        value: 64
       - key: VECTOR_MATCH_COUNT
         value: 8
       - key: VECTOR_MIN_SCORE

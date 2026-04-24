@@ -348,12 +348,25 @@ Sustav koristi environment-driven konfiguraciju za:
 
 - Zendesk pristup
 - OpenRouter primarni/fallback model i autentikaciju
-- OpenAI embedding model za Supabase vector knowledge
+- OpenRouter embedding model za Supabase vector knowledge
 - Supabase `pgvector` knowledge bazu
 - OneDrive / SharePoint pristup
 - retrieval tuning
 - spam filter tuning
 - WordPress embed allowed origins
+
+### Supabase vector embeddings
+
+Vector knowledge koristi OpenRouter embeddings po defaultu. Za produkciju su potrebne varijable:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENROUTER_API_KEY`
+- `EMBEDDING_PROVIDER=openrouter`
+- `OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small`
+- `EMBEDDING_DIMENSIONS=1536`
+
+`OPENAI_API_KEY` nije potreban za defaultni setup. Direct OpenAI embeddings su opcionalni samo ako je `EMBEDDING_PROVIDER=openai`.
 
 ## Operativni rezultat sustava
 
