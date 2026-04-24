@@ -146,8 +146,9 @@ Knowledge sloj trenutno radi:
 
 - čišćenje korisničkog upita prije pretrage
 - lokalni lexical scoring
+- opcionalni Supabase `pgvector` semantic search preko OneDrive chunkova
 - izdvajanje najrelevantnijih odlomaka umjesto generičkog početka dokumenta
-- objedinjeni rerank između OneDrive i Zendesk izvora
+- objedinjeni rerank između Supabase vector, OneDrive lexical i Zendesk izvora
 - blagu prednost OneDrive dokumentima pri jednakim scoreovima
 
 Kontekst koji se šalje AI sloju uključuje:
@@ -331,9 +332,15 @@ Glavne značajke widgeta:
 - `POST /webhook/zendesk`
 - `POST /webhook/zendesk/events`
 
-### Debug ruta
+### Admin i debug rute
 
+- `POST /admin/cache/knowledge/refresh`
+- `POST /admin/vector/knowledge/sync`
 - `GET /debug/zendesk/:ticketId`
+
+Vector sync se može pokrenuti i lokalno/cron naredbom:
+
+- `npm run sync:vector`
 
 ## Konfiguracija
 
@@ -341,6 +348,8 @@ Sustav koristi environment-driven konfiguraciju za:
 
 - Zendesk pristup
 - OpenRouter primarni/fallback model i autentikaciju
+- OpenAI embedding model za Supabase vector knowledge
+- Supabase `pgvector` knowledge bazu
 - OneDrive / SharePoint pristup
 - retrieval tuning
 - spam filter tuning

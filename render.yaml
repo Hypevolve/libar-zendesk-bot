@@ -65,3 +65,27 @@ services:
         value: 3
       - key: ONEDRIVE_MAX_FILE_SIZE_BYTES
         value: 2097152
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_EMBEDDING_DIMENSIONS
+        value: 1536
+      - key: VECTOR_MATCH_COUNT
+        value: 8
+      - key: VECTOR_MIN_SCORE
+        value: 0.68
+      - key: VECTOR_CONTEXT_ITEMS
+        value: 5
+      - key: VECTOR_CHUNK_MAX_CHARS
+        value: 1200
+      - key: VECTOR_CHUNK_OVERLAP_CHARS
+        value: 180
+      - key: VECTOR_AUTO_SYNC_ENABLED
+        value: false
+      - key: VECTOR_AUTO_SYNC_INTERVAL_MS
+        value: 86400000

@@ -21,12 +21,16 @@ const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
 const chatSessions = new Map();
 const processedWebhookAudits = new Map();
 const recentChatStarts = new Map();
+let vectorKnowledgeSyncPromise = null;
 const WEBHOOK_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const CHAT_START_DEDUPLICATION_TTL_MS =
   Number(process.env.CHAT_START_DEDUPLICATION_TTL_MS) || 10 * 60 * 1000;
 const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
 const chatStreams = new Map();
 const KNOWLEDGE_MIN_TOP_SCORE = Number(process.env.KNOWLEDGE_MIN_TOP_SCORE) || 8;
+const VECTOR_AUTO_SYNC_ENABLED = String(process.env.VECTOR_AUTO_SYNC_ENABLED || "false").toLowerCase() === "true";
+const VECTOR_AUTO_SYNC_INTERVAL_MS = Number(process.env.VECTOR_AUTO_SYNC_INTERVAL_MS) || 24 * 60 * 60 * 1000;
+const VECTOR_AUTO_SYNC_INITIAL_DELAY_MS = Number(process.env.VECTOR_AUTO_SYNC_INITIAL_DELAY_MS) || 60 * 1000;
 const BLOCKED_AUTOPILOT_TAGS = new Set(["resolved"]);
 const ENTRY_FLOW_VERSION = "v1";
 const ENTRY_INTENT_LABELS = {
@@ -63,8 +67,26 @@ function logError(...args) {
   }
 }
 
+async function runVectorKnowledgeSync(options = {}) {
+  if (vectorKnowledgeSyncPromise) {
+    return {
+      success: false,
+      inProgress: true,
+      reason: "vector_sync_already_running"
+    };
+  }
+
+  vectorKnowledgeSyncPromise = knowledgeService.syncVectorKnowledgeFromOneDrive(options)
+    .finally(() => {
+      vectorKnowledgeSyncPromise = null;
+    });
+
+  return vectorKnowledgeSyncPromise;
+}
+
 logInfo("Loaded Zendesk config:", zendeskService.getZendeskConfigSummary());
 logInfo("Loaded OneDrive config:", oneDriveService.getOneDriveConfigSummary());
+logInfo("Loaded vector knowledge config:", knowledgeService.getVectorConfigSummary?.());
 hydrateRuntimeState();
 process.on("SIGINT", persistRuntimeState);
 process.on("SIGTERM", persistRuntimeState);
@@ -129,6 +151,23 @@ const recentChatStartCleanupInterval = setInterval(() => {
   }
 }, CHAT_START_DEDUPLICATION_TTL_MS);
 recentChatStartCleanupInterval.unref?.();
+
+if (VECTOR_AUTO_SYNC_ENABLED && !IS_TEST_ENV) {
+  const runScheduledVectorSync = async () => {
+    try {
+      const result = await runVectorKnowledgeSync({ force: false, deleteMissing: true });
+      logInfo("Scheduled vector knowledge sync finished:", result);
+    } catch (error) {
+      logError("Scheduled vector knowledge sync failed:", { message: error.message });
+    }
+  };
+
+  const vectorInitialSyncTimeout = setTimeout(runScheduledVectorSync, VECTOR_AUTO_SYNC_INITIAL_DELAY_MS);
+  vectorInitialSyncTimeout.unref?.();
+
+  const vectorSyncInterval = setInterval(runScheduledVectorSync, VECTOR_AUTO_SYNC_INTERVAL_MS);
+  vectorSyncInterval.unref?.();
+}
 
 // --- CORS ---
 const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "")
@@ -3761,9 +3800,11 @@ app.post("/webhook/zendesk/events", async (req, res) => {
 
 // Fix #20: Health-check that verifies external dependencies.
 app.get("/health", async (req, res) => {
+  const vectorConfig = knowledgeService.getVectorConfigSummary?.();
   const checks = {
     zendesk: false,
-    onedrive: oneDriveService.isConfigured() ? false : "not_configured"
+    onedrive: oneDriveService.isConfigured() ? false : "not_configured",
+    vectorKnowledge: vectorConfig?.enabled ? true : "not_configured"
   };
 
   try {
@@ -3808,6 +3849,22 @@ app.post("/admin/cache/knowledge/refresh", (req, res) => {
     success: true,
     refreshed: ["onedrive", "zendesk_help_center"]
   });
+});
+
+app.post("/admin/vector/knowledge/sync", async (req, res) => {
+  if (!ADMIN_TOKEN || req.query.token !== ADMIN_TOKEN) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized. Provide ?token=<ADMIN_TOKEN> to access this endpoint."
+    });
+  }
+
+  const force = String(req.query.force || req.body?.force || "false").toLowerCase() === "true";
+  const deleteMissing = String(req.query.deleteMissing || req.body?.deleteMissing || "true").toLowerCase() !== "false";
+  const result = await runVectorKnowledgeSync({ force, deleteMissing });
+  const statusCode = result.inProgress ? 409 : result.configured === false ? 400 : result.success ? 200 : 207;
+
+  return res.status(statusCode).json(result);
 });
 
 app.get("/chat", (req, res) => {

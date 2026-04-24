@@ -1,4 +1,5 @@
 const oneDriveService = require("./oneDriveService");
+const vectorKnowledgeService = require("./vectorKnowledgeService");
 const zendeskService = require("./zendeskService");
 
 const KNOWLEDGE_CONTEXT_ITEMS = Number(process.env.KNOWLEDGE_CONTEXT_ITEMS) || 5;
@@ -54,12 +55,14 @@ function mergeKnowledgeResults(results = []) {
 }
 
 async function searchKnowledgeDetailed(query, options = {}) {
-  const [oneDriveKnowledge, zendeskKnowledge] = await Promise.all([
+  const [vectorKnowledge, oneDriveKnowledge, zendeskKnowledge] = await Promise.all([
+    vectorKnowledgeService.searchVectorKnowledgeDetailed(query, options),
     oneDriveService.searchOneDriveDetailed(query, options),
     zendeskService.searchHelpCenterDetailed(query, options)
   ]);
 
   return mergeKnowledgeResults([
+    { result: vectorKnowledge, source: "onedrive" },
     { result: oneDriveKnowledge, source: "onedrive" },
     { result: zendeskKnowledge, source: "zendesk" }
   ]);
@@ -71,6 +74,8 @@ async function searchKnowledge(query, options = {}) {
 }
 
 module.exports = {
+  getVectorConfigSummary: vectorKnowledgeService.getVectorConfigSummary,
   searchKnowledgeDetailed,
-  searchKnowledge
+  searchKnowledge,
+  syncVectorKnowledgeFromOneDrive: vectorKnowledgeService.syncOneDriveKnowledge
 };
