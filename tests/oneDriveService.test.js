@@ -145,6 +145,61 @@ test("searchOneDriveDetailed retrieves delivery options for paraphrased 'dostavn
   }
 });
 
+test("searchOneDriveDetailed retrieves buyer workflow guidance for real product-support phrasing", async () => {
+  const { service, restore } = loadFreshOneDriveService({
+    items: [
+      createDocItem("Libar_HelpCenter_Top6.docx"),
+      createDocItem("Libar_HelpCenter_Clanci7-15.docx"),
+      createDocItem("Libar_HelpCenter_Clanci16-18.docx")
+    ]
+  });
+
+  const cases = [
+    {
+      query: "Kako provjeriti dostupnost po trgovinama?",
+      patterns: [/knjiga nije dostupna|provjerite dostupnost na webu|stanje zaliha/i]
+    },
+    {
+      query: "Pozdrav. Kako završiti kupnju.",
+      patterns: [/Kako naručiti udžbenike|dodajte ga u košaricu|pretraživanje/i]
+    },
+    {
+      query: "Odradila sam točke 1 i 2 i ne znam šta da stisnem da ubacim u ko@aricu jer ju ne vidim.",
+      patterns: [/Kako naručiti udžbenike|dodajte ga u košaricu|pretraživanje/i]
+    },
+    {
+      query: "Jel mogu naručiti knjigu i da mi dođe dostavom na kućnu adresu",
+      patterns: [/Kako naručiti udžbenike|Dostava|GLS|MBE/i]
+    },
+    {
+      query: "Ja sam upisala bar kod i pise mi nedostupno, ne mogu dodati u košaru.. zašto",
+      patterns: [/knjiga nije dostupna|stanje zaliha|provjerite dostupnost/i]
+    },
+    {
+      query: "Kako da vam ubacim sliku što mi treba",
+      patterns: [/fotografiju|info@antikvarijat-libar\.com|Messenger|chata/i]
+    }
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const result = await service.searchOneDriveDetailed(testCase.query);
+
+      assert.ok(result?.context, `expected context for query: ${testCase.query}`);
+
+      for (const pattern of testCase.patterns) {
+        assert.match(
+          result.context,
+          pattern,
+          `expected ${pattern} in context for query: ${testCase.query}`
+        );
+      }
+    }
+  } finally {
+    restore();
+  }
+});
+
 test("searchOneDriveDetailed resolves 1000 user-question regressions against the KB export set", async () => {
   const { service, restore } = loadFreshOneDriveService({
     items: [

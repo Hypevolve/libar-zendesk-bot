@@ -1983,7 +1983,12 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     /(narudzb|narudžb|reklamacij|povrat|refund|r1|racun|račun|problem|gdje mi je|nisam .*dobi|niste odgovorili|otkazat|otkaziv|ostecen|oštećen|kriva knjiga|krive knjige)/.test(
       normalizedMessage
     );
+  const hasBuyerForSalePhrase =
+    /\b(imate li|imate|da li imate|dali imate|ima li|prodajete li)\b.{0,60}\bza prodati\b|\bza prodati\b.{0,60}\b(knjig|ud[zž]ben|atlas|radn\w*\s+bilje|pravopis|prirucnik|priručnik|zbirka)/.test(
+      normalizedMessage
+    );
   const hasBuybackIntent =
+    !hasBuyerForSalePhrase &&
     /\b(otkup\w*|prodati|prodat\w*|prodajem|prodala|prodao|prodaja knjiga|prodaja udzbenika|prodaja udžbenika|procjen\w*|vrednovanj\w*|otkupn\w*\s+nalog)\b/.test(
       normalizedMessage
     );

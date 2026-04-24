@@ -8,6 +8,7 @@ const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const VECTOR_MATCH_COUNT = Number(process.env.VECTOR_MATCH_COUNT) || 8;
 const VECTOR_MIN_SCORE = Number(process.env.VECTOR_MIN_SCORE) || 0.68;
+const VECTOR_FALLBACK_MIN_SCORE = Number(process.env.VECTOR_FALLBACK_MIN_SCORE) || 0.55;
 const VECTOR_CONTEXT_ITEMS = Number(process.env.VECTOR_CONTEXT_ITEMS) || 5;
 const VECTOR_CHUNK_MAX_CHARS = Number(process.env.VECTOR_CHUNK_MAX_CHARS) || 1200;
 const VECTOR_CHUNK_OVERLAP_CHARS = Number(process.env.VECTOR_CHUNK_OVERLAP_CHARS) || 180;
@@ -52,6 +53,7 @@ function getVectorConfigSummary() {
     embeddings: embeddingService.getEmbeddingConfigSummary(),
     matchCount: VECTOR_MATCH_COUNT,
     minScore: VECTOR_MIN_SCORE,
+    fallbackMinScore: VECTOR_FALLBACK_MIN_SCORE,
     contextItems: VECTOR_CONTEXT_ITEMS,
     chunkMaxChars: VECTOR_CHUNK_MAX_CHARS,
     chunkOverlapChars: VECTOR_CHUNK_OVERLAP_CHARS
@@ -417,6 +419,48 @@ function normalizeDomainFilter(options = {}) {
   return null;
 }
 
+function buildVectorMatchAttempts(options = {}) {
+  const domainFilter = normalizeDomainFilter(options);
+  const fallbackThreshold = Math.min(VECTOR_MIN_SCORE, VECTOR_FALLBACK_MIN_SCORE);
+  const attempts = [
+    {
+      threshold: VECTOR_MIN_SCORE,
+      domainFilter,
+      reason: domainFilter ? "domain_filtered" : "default"
+    }
+  ];
+
+  if (domainFilter) {
+    attempts.push({
+      threshold: VECTOR_MIN_SCORE,
+      domainFilter: null,
+      reason: "no_domain_filter"
+    });
+  }
+
+  if (fallbackThreshold < VECTOR_MIN_SCORE) {
+    attempts.push({
+      threshold: fallbackThreshold,
+      domainFilter: null,
+      reason: "lower_threshold"
+    });
+  }
+
+  return attempts;
+}
+
+async function matchKnowledgeChunks(embedding, attempt) {
+  const response = await getSupabaseClient().post("/rest/v1/rpc/match_knowledge_chunks", {
+    query_embedding: embedding,
+    match_count: VECTOR_MATCH_COUNT,
+    match_threshold: attempt.threshold,
+    filter_source: "onedrive",
+    filter_domain: attempt.domainFilter
+  });
+
+  return Array.isArray(response.data) ? response.data : [];
+}
+
 async function searchVectorKnowledgeDetailed(query, options = {}) {
   if (!isConfigured()) {
     return null;
@@ -430,14 +474,17 @@ async function searchVectorKnowledgeDetailed(query, options = {}) {
       return null;
     }
 
-    const response = await getSupabaseClient().post("/rest/v1/rpc/match_knowledge_chunks", {
-      query_embedding: embedding,
-      match_count: VECTOR_MATCH_COUNT,
-      match_threshold: VECTOR_MIN_SCORE,
-      filter_source: "onedrive",
-      filter_domain: normalizeDomainFilter(options)
-    });
-    const rows = Array.isArray(response.data) ? response.data : [];
+    let rows = [];
+    let matchedAttempt = null;
+
+    for (const attempt of buildVectorMatchAttempts(options)) {
+      rows = await matchKnowledgeChunks(embedding, attempt);
+
+      if (rows.length > 0) {
+        matchedAttempt = attempt;
+        break;
+      }
+    }
 
     if (rows.length === 0) {
       return null;
@@ -451,6 +498,7 @@ async function searchVectorKnowledgeDetailed(query, options = {}) {
       source: "onedrive",
       url: row.url || null,
       retrieval: "vector",
+      retrievalTier: matchedAttempt?.reason || "default",
       domain: row.domain || null,
       documentId: row.document_id || null
     }));
@@ -469,7 +517,8 @@ async function searchVectorKnowledgeDetailed(query, options = {}) {
       articles,
       topScore: articles[0]?.score || 0,
       totalMatches: articles.length,
-      primarySource: "onedrive"
+      primarySource: "onedrive",
+      retrievalTier: matchedAttempt?.reason || "default"
     };
   } catch (error) {
     logError("Vector knowledge retrieval failed:", {
@@ -492,6 +541,7 @@ module.exports = {
     chunkText,
     inferDomain,
     buildVectorQuery,
+    buildVectorMatchAttempts,
     normalizeDomainFilter,
     hashText
   }

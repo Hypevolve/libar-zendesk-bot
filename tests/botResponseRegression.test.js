@@ -302,6 +302,17 @@ test("resolveAutomatedOutcome treats 'Prodajete li [naslov]' as a product lookup
     assert.equal(outcome.type, "safe_answer");
     assert.equal(outcome.reason, "purchase_search_guidance");
     assert.match(outcome.customerMessage, /kupi-udzbenike/i);
+
+    const atlasResult = await __internal.resolveAutomatedOutcome(
+      {},
+      "Lijep pozdrav! Imate li možda za prodati geografski atlas za srednju školu?",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(atlasResult.outcome.type, "safe_answer");
+    assert.equal(atlasResult.outcome.reason, "purchase_search_guidance");
+    assert.equal(atlasResult.outcome.taskIntent, "product_lookup");
+    assert.match(atlasResult.outcome.customerMessage, /kupi-udzbenike/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

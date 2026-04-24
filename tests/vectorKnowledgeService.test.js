@@ -128,3 +128,36 @@ test("vector query builder includes retrieval hints and recent conversation term
     restore();
   }
 });
+
+test("vector match attempts fall back from domain-filtered search to broader OneDrive search", () => {
+  const { service, restore } = loadFreshVectorService({
+    VECTOR_MIN_SCORE: "0.68",
+    VECTOR_FALLBACK_MIN_SCORE: "0.55"
+  });
+
+  try {
+    const attempts = service.__internal.buildVectorMatchAttempts({
+      taskIntent: "delivery"
+    });
+
+    assert.deepEqual(attempts, [
+      {
+        threshold: 0.68,
+        domainFilter: "delivery",
+        reason: "domain_filtered"
+      },
+      {
+        threshold: 0.68,
+        domainFilter: null,
+        reason: "no_domain_filter"
+      },
+      {
+        threshold: 0.55,
+        domainFilter: null,
+        reason: "lower_threshold"
+      }
+    ]);
+  } finally {
+    restore();
+  }
+});

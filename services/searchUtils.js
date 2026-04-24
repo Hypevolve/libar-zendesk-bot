@@ -61,6 +61,63 @@ const QUERY_ALIASES = [
     terms: ["dostava", "isporuka", "pošiljka", "rok dostave", "kurir"]
   },
   {
+    pattern: /\b(naru[cč]iti|naruciti|kupiti|kupovina|kupnja|kupi).*\b(knjig\w*|udzben\w*|udžben\w*)\b|\b(knjig\w*|udzben\w*|udžben\w*)\b.*\b(naru[cč]iti|naruciti|kupiti|kupovina|kupnja|kupi)\b/u,
+    terms: [
+      "kako naruciti udzbenike",
+      "udzbenike mozete kupiti putem webshopa",
+      "kupi udzbenike",
+      "pretrazivanje po sifri artikla",
+      "pretrazivanje po nazivu knjige",
+      "dodajte ga u kosaricu",
+      "dostava rokovi troskovi pracenje"
+    ]
+  },
+  {
+    pattern: /\b(stanje zaliha|na stanju|po trgovin\w*|u trgovin\w*)\b|\b(knjig\w*|udzben\w*|udžben\w*|artikal|artikl\w*|naslov)\b.{0,50}\b(dostupnost|dostupn\w*|nedostup\w*)\b|\b(dostupnost|dostupn\w*|nedostup\w*)\b.{0,50}\b(knjig\w*|udzben\w*|udžben\w*|artikal|artikl\w*|naslov)\b/u,
+    terms: [
+      "knjiga nije dostupna sto napraviti",
+      "provjerite dostupnost na webu",
+      "pretraga na webu prikazuje stanje zaliha",
+      "stanje zaliha u stvarnom vremenu",
+      "ako knjiga nije dostupna",
+      "zalihe se mijenjaju"
+    ]
+  },
+  {
+    pattern: /\b(zavr[sš]iti kupnju|kako zavr[sš]iti|dodati u ko(?:[sš]|\s*)aricu|ubacim u ko(?:[sš]|\s*)aricu|ubaciti u ko(?:[sš]|\s*)aricu|ne vidim ko(?:[sš]|\s*)aricu|ko(?:[sš]|\s*)aric\w*|kosaric\w*)\b/u,
+    terms: [
+      "kako naruciti udzbenike",
+      "iz rezultata odaberite zeljeni naslov",
+      "dodajte ga u kosaricu",
+      "pretrazivanje funkcionira",
+      "sifra artikla",
+      "naziv knjige",
+      "isbn"
+    ]
+  },
+  {
+    pattern: /\b(bar\s*kod|barkod|isbn).*\b(nedostup\w*|ne mogu dodati|ko[sš]ar\w*|kupiti|naruciti|naru[cč]iti)\b|\b(nedostup\w*|ne mogu dodati|ko[sš]ar\w*|kupiti|naruciti|naru[cč]iti)\b.*\b(bar\s*kod|barkod|isbn)\b/u,
+    terms: [
+      "knjiga nije dostupna sto napraviti",
+      "provjerite dostupnost na webu",
+      "pretraga na webu prikazuje stanje zaliha",
+      "kako naruciti udzbenike",
+      "sifra artikla",
+      "isbn"
+    ]
+  },
+  {
+    pattern: /\b(fotografij\w*|slik\w*|privitak|privitku|upload|ubacim sliku|poslati sliku|posaljem sliku)\b/u,
+    terms: [
+      "posaljite fotografiju",
+      "fotografiju racuna",
+      "fotografiju sporne knjige",
+      "info antikvarijat libar",
+      "fb messenger",
+      "putem chata"
+    ]
+  },
+  {
     pattern: /\b(dostavn\w*\s+opcij\w*|opcij\w*\s+dostav\w*)\b/u,
     terms: [
       "dostava",
@@ -205,6 +262,13 @@ const QUERY_ALIASES = [
   }
 ];
 
+function isAircashPayoutQuery(normalized = "") {
+  return /\baircash\b/.test(normalized) && (
+    /\b(otkup|isplat\w*|novac|dobiti|uplat\w*|racun|račun)\b/.test(normalized) ||
+    /\bne vrsimo isplatu\b/.test(normalized)
+  );
+}
+
 function uniqueNormalizedTerms(values = []) {
   return [...new Set((Array.isArray(values) ? values : [])
     .map((value) => normalizeText(value))
@@ -220,8 +284,13 @@ function tokenize(text = "") {
 function expandQueryTerms(text = "") {
   const normalized = normalizeText(text);
   const expansions = [];
+  const aircashPayoutQuery = isAircashPayoutQuery(normalized);
 
   for (const alias of QUERY_ALIASES) {
+    if (aircashPayoutQuery && alias.terms.includes("knjiga nije dostupna sto napraviti")) {
+      continue;
+    }
+
     if (alias.pattern.test(normalized)) {
       expansions.push(...alias.terms);
     }
@@ -329,9 +398,38 @@ function scoreSearchText(text = "", query = "") {
     score += 18;
   }
 
+  if (isAircashPayoutQuery(normalizedQuery) && /\baircash\b/.test(searchableText)) {
+    score += 36;
+
+    if (/(isplata na aircash nije dostupna|ne vrsimo isplatu|isplata|isplate|hp uplatnic|revolut|iban)/.test(searchableText)) {
+      score += 18;
+    }
+  }
+
   if (/(gdje mi je paket|pratiti posiljku|tracking|link za pracenje)/.test(normalizedQuery) &&
       /(tracking broj|link za pracenje)/.test(searchableText)) {
     score += 18;
+  }
+
+  if (/(kako naruciti|naru[cč]iti|kupiti|kupnja|kupovina|kupi udzbenike|dodati u kosaricu|dodati u košaricu|dodati u ko\s*aricu|zavrsiti kupnju|završiti kupnju|ko\s*aric\w*)/.test(normalizedQuery) &&
+      /(kako naruciti udzbenike|udžbenike mozete kupiti putem webshopa|udzbenike mozete kupiti putem webshopa|dodajte ga u kosaricu|dodajte ga u košaricu|pretrazivanje funkcionira|pretraživanje funkcionira)/.test(searchableText)) {
+    score += 20;
+  }
+
+  if (!isAircashPayoutQuery(normalizedQuery) &&
+      /(stanje zaliha|na stanju|po trgovin|u trgovin|knjig.{0,50}(dostup|nedostup)|udzben.{0,50}(dostup|nedostup)|artikal.{0,50}(dostup|nedostup)|artikl.{0,50}(dostup|nedostup)|naslov.{0,50}(dostup|nedostup)|(dostup|nedostup).{0,50}(knjig|udzben|artikal|artikl|naslov))/.test(normalizedQuery) &&
+      /(knjiga nije dostupna|provjerite dostupnost na webu|pretraga na webu prikazuje stanje zaliha|stanje zaliha u stvarnom vremenu|zalihe se mijenjaju)/.test(searchableText)) {
+    score += 20;
+  }
+
+  if (/(bar kod|barkod|isbn).*(nedostup|kosar|košar|kupiti|naruciti|naručiti)|(?:nedostup|kosar|košar|kupiti|naruciti|naručiti).*(bar kod|barkod|isbn)/.test(normalizedQuery) &&
+      /(knjiga nije dostupna|provjerite dostupnost na webu|stanje zaliha|sifra artikla|šifra artikla|isbn)/.test(searchableText)) {
+    score += 18;
+  }
+
+  if (/(slik|fotograf|privitak|upload|ubacim sliku|poslati sliku|posaljem sliku)/.test(normalizedQuery) &&
+      /(posaljite fotografiju|pošaljite fotografiju|fotografiju racuna|fotografiju sporne knjige|info@antikvarijat-libar\.com|fb messenger|putem chata)/.test(searchableText)) {
+    score += 16;
   }
 
   if (/naljepnic/.test(normalizedQuery) && /naljepnic/.test(searchableText)) {
