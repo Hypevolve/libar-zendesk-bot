@@ -1750,6 +1750,10 @@ function inferTaskIntentFromMessage(userMessage = "", session = {}) {
     return getSessionActiveTaskIntent(session) || activeDomain || "";
   }
 
+  if (looksLikeBuybackParcelQuestion(userMessage, session)) {
+    return "buyback";
+  }
+
   if (looksLikeProductLookupMessage(userMessage, session)) {
     return "product_lookup";
   }
@@ -1762,7 +1766,7 @@ function inferTaskIntentFromMessage(userMessage = "", session = {}) {
     return "support_info";
   }
 
-  if (/(otkup|prodati|prodajem|procjen|vrednovanj|knjige za otkup|donijeti knjige|poslati knjige)/.test(normalizedMessage)) {
+  if (/(otkup|prodati|prodajem|procjen|vrednovanj|knjige za otkup|donijeti knjige|poslati knjige|predati paket|predam paket|odnijeti paket|zapakirati paket|zapakiram paket)/.test(normalizedMessage)) {
     return "buyback";
   }
 
@@ -1798,6 +1802,9 @@ function buildKnowledgeSearchOptions(session = {}, userMessage = "") {
     retrievalHints.push("kontakt", "radno vrijeme", "adresa", "telefon", "email");
   } else if (taskIntent === "buyback") {
     retrievalHints.push("otkup", "prodaja knjiga", "fizicki otkup", "online otkup");
+    if (looksLikeBuybackParcelQuestion(userMessage, session)) {
+      retrievalHints.push("paket", "dostavljac", "kurir", "gls", "boxnow", "naljepnica", "prikup");
+    }
   } else if (taskIntent === "order") {
     retrievalHints.push("narudzba", "reklamacija", "povrat", "racun");
   }
@@ -1852,10 +1859,37 @@ function looksLikeProductContinuationMessage(message = "", session = {}) {
   );
 }
 
+function looksLikeBuybackParcelQuestion(message = "", session = {}) {
+  const normalizedMessage = normalizeForComparison(message).trim();
+  const activeDomain = getSessionActiveDomain(session);
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  const hasBuybackContext =
+    activeDomain === "buyback" ||
+    /(otkup|online otkup|prodaj|prodati|prodajem|knjig|udzben)/.test(normalizedMessage);
+  const hasParcelSignal =
+    /(paket|posilj|pošilj|kutij|vrecic|vrećic|naljepnic|gls|boxnow|box now|paketomat|kurir|dostavljac|dostavljač|prikup|preuzim)/.test(
+      normalizedMessage
+    );
+  const hasPackageAction =
+    /(zapakir|spakir|pakir|preda|predati|predam|odnijeti|odnes|donijeti|poslati|saljem|šaljem|preuzme|pokupi|prikup|naljepnic|sam odn|sama odn|sami odn|ubaciti)/.test(
+      normalizedMessage
+    );
+
+  return hasBuybackContext && hasParcelSignal && hasPackageAction;
+}
+
 function looksLikeProductLookupMessage(message = "", session = {}) {
   const normalizedMessage = normalizeForComparison(message).trim();
 
   if (!normalizedMessage) {
+    return false;
+  }
+
+  if (looksLikeBuybackParcelQuestion(message, session)) {
     return false;
   }
 
@@ -1864,7 +1898,7 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   if (
-    /(refund|reklamacij|povrat|dostav|isporuk|\botkup\b|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
+    /(refund|reklamacij|povrat|dostav|isporuk|paket|paketomat|gls|boxnow|box now|kurir|dostavljac|dostavljač|naljepnic|preda|predati|predam|odnijeti|odnes|zapakir|spakir|\botkup\b|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
       normalizedMessage
     )
   ) {
@@ -2114,7 +2148,8 @@ function looksLikePurchaseSearchGuidanceMessage(userMessage = "", session = {}) 
     !normalizedMessage ||
     isResolutionCandidateMessage(userMessage) ||
     isGreetingOnlyMessage(userMessage) ||
-    looksLikeOrderStatusOrExistingBuyerIssue(userMessage)
+    looksLikeOrderStatusOrExistingBuyerIssue(userMessage) ||
+    looksLikeBuybackParcelQuestion(userMessage, session)
   ) {
     return false;
   }
@@ -2141,6 +2176,27 @@ function buildPurchaseSearchGuidanceOutcome() {
     customerMessage,
     zendeskMessage: customerMessage,
     products: []
+  };
+}
+
+function buildBuybackParcelGuidanceOutcome(userMessage = "") {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+  const asksAboutSelfDropoff =
+    /(sam|sama|sami|odnijeti|odnes|ubaciti).{0,80}(gls|boxnow|box now|paketomat|paket)|\b(gls|boxnow|box now|paketomat)\b/.test(
+      normalizedMessage
+    );
+  const customerMessage = asksAboutSelfDropoff
+    ? "Kod online otkupa paket ne nosite samostalno u GLS ili BOXNOW paketomat. Paket predajete dostavljaču prema dogovorenom prikupu; dostavljač donosi naljepnicu, a vi ništa ne pišete na paket."
+    : "Kod online otkupa paket zapakirajte čvrsto i predajte dostavljaču prema dogovorenom prikupu. Dostavljač donosi naljepnicu, a vi ništa ne pišete na paket.";
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_package_guidance",
+    source: "conversation_fallback",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
   };
 }
 
@@ -2214,6 +2270,10 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
           ? "Možemo provjeriti narudžbu. Pošaljite broj narudžbe; ako ga nemate, napišite ime i prezime te email ili telefon koji su uneseni pri naručivanju."
           : "Možemo provjeriti narudžbu ovdje u chatu. Pošaljite broj narudžbe; ako ga nemate, napišite ime i prezime te email ili telefon koji su uneseni pri naručivanju."
     };
+  }
+
+  if (looksLikeBuybackParcelQuestion(userMessage, session)) {
+    return buildBuybackParcelGuidanceOutcome(userMessage);
   }
 
   if (
@@ -2331,7 +2391,12 @@ function updateSessionRouteMemory(session, userMessage, outcome = {}) {
     return;
   }
 
-  if (outcome.reason === "buyback_clarification" || outcome.reason === "online_buyback_guidance") {
+  if (
+    outcome.taskIntent === "buyback" ||
+    outcome.reason === "buyback_clarification" ||
+    outcome.reason === "online_buyback_guidance" ||
+    outcome.reason === "buyback_package_guidance"
+  ) {
     session.workingMemory.activeDomain = "buyback";
     session.workingMemory.activeTaskIntent = "buyback";
     return;
@@ -2416,6 +2481,8 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       type: "safe_answer",
       stateTag: "ai_active",
       reason: "grounded_answer",
+      source: knowledge?.primarySource === "zendesk" ? "zendesk_knowledge" : "onedrive_knowledge",
+      taskIntent: knowledgeSearchOptions.taskIntent || knowledgeSearchOptions.activeDomain || "",
       customerMessage
     }, {
       channelType,
@@ -2435,6 +2502,8 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
       type: "safe_answer",
       stateTag: "ai_active",
       reason: "knowledge_fallback",
+      source: knowledge?.primarySource === "zendesk" ? "zendesk_knowledge" : "onedrive_knowledge",
+      taskIntent: knowledgeSearchOptions.taskIntent || knowledgeSearchOptions.activeDomain || "",
       customerMessage: fallbackAnswer
     }, {
       channelType,

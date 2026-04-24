@@ -426,6 +426,102 @@ test("resolveAutomatedOutcome catches natural buyback phrasing without routing i
   }
 });
 
+test("resolveAutomatedOutcome keeps online buyback package follow-ups out of product search", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  const knowledgeCalls = [];
+  let productLookupCalls = 0;
+
+  knowledgeService.searchKnowledgeDetailed = async (query, options = {}) => {
+    knowledgeCalls.push({ query, options });
+
+    if (/zapakiram/i.test(query)) {
+      return {
+        context: "Izvor 1 (OneDrive):\nNaslov: Pakiranje za online otkup\nSadržaj: Knjige složite jednu na drugu, stavite ih u čvrstu kutiju i zalijepite paket selotejpom.",
+        articles: [{
+          title: "Pakiranje za online otkup",
+          body: "Knjige složite jednu na drugu, stavite ih u čvrstu kutiju i zalijepite paket selotejpom.",
+          score: 38,
+          source: "onedrive"
+        }],
+        topScore: 38,
+        primarySource: "onedrive"
+      };
+    }
+
+    return {
+      context: "Izvor 1 (OneDrive):\nNaslov: Predaja paketa za online otkup\nSadržaj: Paket predajete dostavljaču prema dogovorenom prikupu. Nemamo opciju da sami odnesete paket u GLS ili BOXNOW paketomat.",
+      articles: [{
+        title: "Predaja paketa za online otkup",
+        body: "Paket predajete dostavljaču prema dogovorenom prikupu. Nemamo opciju da sami odnesete paket u GLS ili BOXNOW paketomat.",
+        score: 42,
+        source: "onedrive"
+      }],
+      topScore: 42,
+      primarySource: "onedrive"
+    };
+  };
+
+  aiService.generateGroundedAnswer = async (message) => {
+    if (/zapakiram/i.test(message)) {
+      return "Knjige složite jednu na drugu, stavite ih u čvrstu kutiju i zalijepite paket selotejpom.";
+    }
+
+    if (/sam odnijeti|GLS/i.test(message)) {
+      return "Nemamo opciju da sami odnesete paket u GLS ili BOXNOW paketomat.";
+    }
+
+    return "Paket predajete dostavljaču prema dogovorenom prikupu.";
+  };
+
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalls += 1;
+    return null;
+  };
+
+  const session = {};
+
+  try {
+    const firstTurn = await __internal.resolveAutomatedOutcome(
+      session,
+      "Kako da zapakiram knjige za otkup?",
+      { channelType: "web_chat" }
+    );
+    assert.equal(firstTurn.outcome.type, "safe_answer");
+    assert.equal(firstTurn.outcome.taskIntent, "buyback");
+    assert.equal(session.workingMemory.activeDomain, "buyback");
+
+    const secondTurn = await __internal.resolveAutomatedOutcome(
+      session,
+      "A kako da predam paket?",
+      { channelType: "web_chat" }
+    );
+    assert.equal(secondTurn.outcome.type, "safe_answer");
+    assert.equal(secondTurn.outcome.reason, "grounded_answer");
+    assert.match(secondTurn.outcome.customerMessage, /dostavljaču/i);
+
+    const thirdTurn = await __internal.resolveAutomatedOutcome(
+      session,
+      "Mogu li sam odnijeti paket u GLS?",
+      { channelType: "web_chat" }
+    );
+    assert.equal(thirdTurn.outcome.type, "safe_answer");
+    assert.notEqual(thirdTurn.outcome.reason, "purchase_search_guidance");
+    assert.match(thirdTurn.outcome.customerMessage, /Nemamo opciju/i);
+
+    assert.equal(productLookupCalls, 0);
+    assert.deepEqual(
+      knowledgeCalls.map((call) => call.options.taskIntent),
+      ["buyback", "buyback", "buyback"]
+    );
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
 test("resolveAutomatedOutcome covers v1 client regression findings", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
