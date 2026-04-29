@@ -852,6 +852,26 @@ textarea:focus {
   font-size: 0.8rem;
 }
 
+.message-content__link {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+
+.message.assistant .message-content__link,
+.message.system .message-content__link {
+  color: var(--color-primary-700);
+}
+
+.message.user .message-content__link {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.message-content__link:hover {
+  opacity: 0.86;
+}
+
 .message.typing-host {
   padding: 0;
   background: transparent;

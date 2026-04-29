@@ -98,6 +98,7 @@ let currentResolutionPrompt = null;
 let currentConversationTone = "ai-active";
 let canonicalMessages = [];
 let optimisticMessages = [];
+const MESSAGE_LINK_PATTERN = /\b((?:https?:\/\/|www\.)[^\s<>"']+)/gi;
 
 function postEmbedMessage(payload) {
   if (!isEmbedMode || window.parent === window) {
@@ -708,6 +709,56 @@ function createResolutionPromptElement(prompt) {
   return wrapper;
 }
 
+function splitTrailingUrlPunctuation(token) {
+  let cleanToken = token;
+  let trailing = "";
+
+  while (cleanToken && /[),.!?;:]/.test(cleanToken.slice(-1))) {
+    trailing = cleanToken.slice(-1) + trailing;
+    cleanToken = cleanToken.slice(0, -1);
+  }
+
+  return { cleanToken, trailing };
+}
+
+function renderMessageContent(container, content) {
+  const text = String(content || "");
+  let lastIndex = 0;
+  MESSAGE_LINK_PATTERN.lastIndex = 0;
+  let match = MESSAGE_LINK_PATTERN.exec(text);
+
+  while (match) {
+    const fullMatch = match[0];
+    const offset = match.index;
+    const { cleanToken, trailing } = splitTrailingUrlPunctuation(fullMatch);
+
+    if (offset > lastIndex) {
+      container.appendChild(document.createTextNode(text.slice(lastIndex, offset)));
+    }
+
+    if (cleanToken) {
+      const link = document.createElement("a");
+      link.className = "message-content__link";
+      link.href = /^https?:\/\//i.test(cleanToken) ? cleanToken : `https://${cleanToken}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = cleanToken;
+      container.appendChild(link);
+    }
+
+    if (trailing) {
+      container.appendChild(document.createTextNode(trailing));
+    }
+
+    lastIndex = offset + fullMatch.length;
+    match = MESSAGE_LINK_PATTERN.exec(text);
+  }
+
+  if (lastIndex < text.length) {
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+}
+
 function createMessageElement(message) {
   const wrapper = document.createElement("article");
   wrapper.className = `message ${message.role}`;
@@ -715,7 +766,7 @@ function createMessageElement(message) {
 
   const content = document.createElement("div");
   content.className = "message-content";
-  content.textContent = message.content;
+  renderMessageContent(content, message.content);
   wrapper.appendChild(content);
 
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
@@ -1355,13 +1406,7 @@ async function submitEntryStartForm() {
     return;
   }
 
-  if (!name) {
-    showError("Upišite ime i prezime.");
-    entryStartName?.focus();
-    return;
-  }
-
-  if (!isValidEmail(email)) {
+  if (email && !isValidEmail(email)) {
     showError("Molim upišite ispravnu email adresu, npr. ime@domena.com.");
     entryStartEmail?.focus();
     return;

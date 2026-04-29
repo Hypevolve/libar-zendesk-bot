@@ -819,6 +819,108 @@ test("resolveAutomatedOutcome keeps payout complaint outcome stable across sessi
   }
 });
 
+test("resolveAutomatedOutcome handles report-specific edge cases without product-lookup bleed", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalls = 0;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalls += 1;
+    return null;
+  };
+
+  try {
+    const followup = await __internal.resolveAutomatedOutcome({}, "zanima me samo jel se može", {
+      channelType: "web_chat"
+    });
+    assert.equal(followup.outcome.type, "ask_clarifying_question");
+    assert.equal(followup.outcome.reason, "followup_without_context");
+
+    const contactOnly = await __internal.resolveAutomatedOutcome(
+      {},
+      "Vanesa Vukas 091 123 4567 vanesa@example.com",
+      { channelType: "web_chat" }
+    );
+    assert.equal(contactOnly.outcome.type, "ask_clarifying_question");
+    assert.equal(contactOnly.outcome.reason, "contact_details_without_intent");
+
+    const positiveFeedback = await __internal.resolveAutomatedOutcome({}, "Jako sam zadovoljna vašom uslugom", {
+      channelType: "web_chat"
+    });
+    assert.equal(positiveFeedback.outcome.type, "safe_answer");
+    assert.equal(positiveFeedback.outcome.reason, "positive_feedback_acknowledgement");
+
+    const orderMerge = await __internal.resolveAutomatedOutcome({}, "Možete li spojiti dvije narudžbe u jedan paket?", {
+      channelType: "web_chat"
+    });
+    assert.equal(orderMerge.outcome.type, "safe_answer");
+    assert.equal(orderMerge.outcome.reason, "order_merge_guidance");
+    assert.equal(orderMerge.outcome.taskIntent, "order");
+
+    const deliveryExchange = await __internal.resolveAutomatedOutcome(
+      {},
+      "Kad mi dođe kurir s narudžbom, mogu li mu predati knjige za otkup?",
+      { channelType: "web_chat" }
+    );
+    assert.equal(deliveryExchange.outcome.type, "safe_answer");
+    assert.equal(deliveryExchange.outcome.reason, "buyback_delivery_exchange_guidance");
+    assert.equal(deliveryExchange.outcome.taskIntent, "buyback");
+
+    const explicitCorrection = await __internal.resolveAutomatedOutcome(
+      {},
+      "ne radi se o otkupu nego o krivo poslanim knjigama",
+      { channelType: "web_chat" }
+    );
+    assert.equal(explicitCorrection.outcome.taskIntent, "order");
+    assert.notEqual(explicitCorrection.outcome.reason, "purchase_search_guidance");
+
+    assert.equal(productLookupCalls, 0);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
+test("resolveAutomatedOutcome treats contact-details-only messages as order follow-up when order context exists", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const originalSearchProductsDetailed = productFeedService.searchProductsDetailed;
+  let productLookupCalls = 0;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+  productFeedService.searchProductsDetailed = async () => {
+    productLookupCalls += 1;
+    return null;
+  };
+
+  try {
+    const { outcome } = await __internal.resolveAutomatedOutcome(
+      {
+        workingMemory: {
+          activeDomain: "order",
+          activeTaskIntent: "order"
+        }
+      },
+      "091 123 4567 ivana@example.com",
+      { channelType: "web_chat" }
+    );
+
+    assert.equal(outcome.type, "ask_clarifying_question");
+    assert.equal(outcome.reason, "order_issue_clarification");
+    assert.equal(outcome.taskIntent, "order");
+    assert.equal(productLookupCalls, 0);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    productFeedService.searchProductsDetailed = originalSearchProductsDetailed;
+  }
+});
+
 test("appendLocalAssistantOutcome keeps the chat usable when Zendesk write is rate-limited", () => {
   const session = {
     messages: [

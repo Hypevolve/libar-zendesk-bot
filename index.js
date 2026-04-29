@@ -500,7 +500,19 @@ function normalizeRequesterFingerprint(name = "", email = "") {
   return `${String(name || "").trim().toLowerCase()}::${String(email || "").trim().toLowerCase()}`;
 }
 
+function hasRequesterIdentity(name = "", email = "") {
+  return Boolean(String(name || "").trim() || String(email || "").trim());
+}
+
+function isValidEmailAddress(value = "") {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
 function buildChatStartDeduplicationKey({ name = "", email = "", message = "" } = {}) {
+  if (!hasRequesterIdentity(name, email)) {
+    return "";
+  }
+
   return [
     normalizeRequesterFingerprint(name, email),
     normalizeMessage(message).toLowerCase()
@@ -529,6 +541,11 @@ function isSessionClosed(session = null) {
 
 function findReusableChatStart({ name = "", email = "", message = "" } = {}) {
   const dedupeKey = buildChatStartDeduplicationKey({ name, email, message });
+
+  if (!dedupeKey) {
+    return null;
+  }
+
   const recentMatch = recentChatStarts.get(dedupeKey);
 
   if (recentMatch && Date.now() - recentMatch.createdAt <= CHAT_START_DEDUPLICATION_TTL_MS) {
@@ -540,6 +557,10 @@ function findReusableChatStart({ name = "", email = "", message = "" } = {}) {
   }
 
   const requesterFingerprint = normalizeRequesterFingerprint(name, email);
+
+  if (!requesterFingerprint || requesterFingerprint === "::") {
+    return null;
+  }
 
   for (const session of chatSessions.values()) {
     if (isSessionClosed(session)) {
@@ -1161,7 +1182,8 @@ function buildClosedSessionPayload({ ticketSummary, requesterName, requesterEmai
       email: requesterEmail || "",
       requesterId: ticketSummary?.requesterId || null
     },
-    messages,State: {
+    messages,
+    conversationState: {
       tone: "resolved",
       badge: "Prethodni razgovor je završen",
       subtitle: "Možete pregledati raniji odgovor ili otvoriti novi razgovor."
@@ -1792,6 +1814,145 @@ function looksLikeBuyerSearchDespiteSellWords(message = "") {
   );
 }
 
+function looksLikePositiveFeedbackMessage(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage || normalizedMessage.includes("?")) {
+    return false;
+  }
+
+  return (
+    /(jako|bas|baš)?\s*(sam\s+)?(zadovoljn|prezadovoljn|odusevljen|oduševljen|sretan).{0,40}(uslug|pomoc|pomoć|suradnj)/.test(
+      normalizedMessage
+    ) ||
+    /(svaka cast|svaka čast|odlican posao|odličan posao|top ste|super ste|hvala vam puno|hvala puno)/.test(
+      normalizedMessage
+    )
+  );
+}
+
+function looksLikeContactDetailsOnlyMessage(message = "") {
+  const rawMessage = String(message || "").trim();
+  const normalizedMessage = normalizeForComparison(rawMessage).trim();
+
+  if (!normalizedMessage || normalizedMessage.includes("?")) {
+    return false;
+  }
+
+  const hasEmail = /[^\s@]+@[^\s@]+\.[^\s@]+/.test(rawMessage);
+  const hasPhone = /(?:\+?\d[\d\s/()-]{6,}\d)/.test(rawMessage);
+  const hasNameLike = /(?:^|[\s,])[A-ZČĆŠĐŽ][a-zčćšđž]+(?:\s+[A-ZČĆŠĐŽ][a-zčćšđž]+){1,2}(?:$|[\s,])/.test(
+    rawMessage
+  );
+  const tokenCount = normalizedMessage.split(/\s+/).filter(Boolean).length;
+  const hasIntentKeyword =
+    /(narudzb|reklamacij|povrat|otkup|prodati|dostav|radno vrijeme|kontakt|adresa|knjig|udzben|isbn|autor|status|problem|paket|spaj|isplat|placanj|plaćanj)/.test(
+      normalizedMessage
+    );
+
+  if (hasIntentKeyword) {
+    return false;
+  }
+
+  return (hasEmail || hasPhone) && (hasNameLike || tokenCount <= 8);
+}
+
+function looksLikeFeasibilityFollowupMessage(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    /^(zanima me\s+)?(samo\s+)?(jel|je li|dal|da li)\s+se\s+moze/.test(normalizedMessage) ||
+    /^(a|i)\s+(jel|je li|dal|da li)\s+se\s+moze/.test(normalizedMessage) ||
+    /^moze li se/.test(normalizedMessage)
+  );
+}
+
+function looksLikeOrderMergeRequest(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    /(spojit|spajanj|spojene|zajedno).{0,80}(narudzb|narudzb)/.test(normalizedMessage) ||
+    /(dvije|dve|2).{0,80}(narudzb|narudzb).{0,80}(jedan paket|zajedno|jednom paketu|jedan trosak dostave|jednu dostavu)/.test(
+      normalizedMessage
+    )
+  );
+}
+
+function looksLikeBuybackDeliveryExchangeQuestion(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  const hasCourierSignal =
+    /(dostavljac|dostavljač|kurir|gls|boxnow|paketomat)/.test(normalizedMessage);
+  const hasDeliveryOfOrderSignal =
+    /(donosi|donese|kad dode|kad dođe|dolazi).{0,80}(narudzb|narudzb|paket)/.test(
+      normalizedMessage
+    );
+  const hasBuybackHandOverSignal =
+    /(predati|dati|predam|ubaciti|predam).{0,80}(knjig|udzben).{0,60}(otkup|prodati)/.test(
+      normalizedMessage
+    ) ||
+    /(knjig|udzben).{0,80}(otkup|prodati).{0,80}(istom dostavljacu|istom dostavljaču|dostavljacu koji)/.test(
+      normalizedMessage
+    );
+
+  return hasCourierSignal && (hasDeliveryOfOrderSignal || hasBuybackHandOverSignal);
+}
+
+function extractExplicitDomainCorrection(message = "") {
+  const normalizedMessage = normalizeForComparison(message).trim();
+
+  if (
+    !normalizedMessage ||
+    !/(ne radi se o|nije .*nego|ne mislim na|ne govorim o|ne pitam za)/.test(normalizedMessage)
+  ) {
+    return "";
+  }
+
+  const pointsToOrder =
+    /(kriv\w*(\s+\w+){0,3}\s+(knjig|udzben)|pogresn\w*(\s+\w+){0,3}\s+(knjig|udzben|paket)|krivo\s+poslan\w*(\s+\w+){0,3}\s+(knjig|udzben|paket)|reklamacij|narudzb|povrat|zamjen|racun|račun)/.test(
+      normalizedMessage
+    );
+  const pointsToBuyback =
+    /(otkup|prodati|prodajem|otkupn\w*\s+nalog|isplata)/.test(normalizedMessage);
+  const pointsToDelivery =
+    /(dostav|isporuk|kurir|dostavljac|dostavljač|gls|boxnow|paketomat)/.test(normalizedMessage);
+  const pointsToProduct =
+    /(knjig|udzben|isbn|autor|naslov|kupiti|naruciti|naručiti)/.test(normalizedMessage) &&
+    !pointsToOrder &&
+    !pointsToBuyback &&
+    !pointsToDelivery;
+
+  if (pointsToOrder) {
+    return "order";
+  }
+
+  if (pointsToBuyback) {
+    return "buyback";
+  }
+
+  if (pointsToDelivery) {
+    return "delivery";
+  }
+
+  if (pointsToProduct) {
+    return "product_lookup";
+  }
+
+  return "";
+}
+
 function hydrateSessionRoutingContext(session = {}) {
   if (!session || typeof session !== "object") {
     return session;
@@ -1843,17 +2004,44 @@ function hydrateSessionRoutingContext(session = {}) {
 function inferTaskIntentFromMessage(userMessage = "", session = {}) {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
   const activeDomain = getSessionActiveDomain(session);
+  const activeTaskIntent = getSessionActiveTaskIntent(session);
 
   if (!normalizedMessage) {
-    return getSessionActiveTaskIntent(session) || activeDomain || "";
+    return activeTaskIntent || activeDomain || "";
+  }
+
+  const correctedDomain = extractExplicitDomainCorrection(userMessage);
+
+  if (correctedDomain) {
+    return correctedDomain;
+  }
+
+  if (looksLikeFeasibilityFollowupMessage(userMessage) && (activeTaskIntent || activeDomain)) {
+    return activeTaskIntent || activeDomain;
+  }
+
+  if (looksLikeContactDetailsOnlyMessage(userMessage)) {
+    if (activeTaskIntent || activeDomain) {
+      return activeTaskIntent || activeDomain;
+    }
+
+    return "support_info";
+  }
+
+  if (looksLikeOrderMergeRequest(userMessage)) {
+    return "order";
+  }
+
+  if (looksLikeBuybackDeliveryExchangeQuestion(userMessage)) {
+    return "buyback";
+  }
+
+  if (/(narudzb|reklamacij|povrat|refund|r1|racun|račun|problem s narudzb|problem s narudžb|gdje mi je|ostecen|oštećen|kriva knjiga|krive knjige)/.test(normalizedMessage)) {
+    return "order";
   }
 
   if (looksLikeBuybackParcelQuestion(userMessage, session)) {
     return "buyback";
-  }
-
-  if (looksLikeProductLookupMessage(userMessage, session)) {
-    return "product_lookup";
   }
 
   if (/(dostav|isporuk|postarin|poštarin|paketomat|gls|boxnow|box now|kurir|preuzimanj|rok dostave|dostavne opcije|opcije dostave)/.test(normalizedMessage)) {
@@ -1868,15 +2056,15 @@ function inferTaskIntentFromMessage(userMessage = "", session = {}) {
     return "buyback";
   }
 
-  if (/(narudzb|reklamacij|povrat|refund|r1|racun|račun|problem s narudzb|problem s narudžb|gdje mi je|ostecen|oštećen|kriva knjiga)/.test(normalizedMessage)) {
-    return "order";
+  if (looksLikeProductLookupMessage(userMessage, session)) {
+    return "product_lookup";
   }
 
   if (/^(a|i)\s+/.test(normalizedMessage) && activeDomain) {
     return activeDomain;
   }
 
-  return getSessionActiveTaskIntent(session) || activeDomain || "";
+  return activeTaskIntent || activeDomain || "";
 }
 
 function buildKnowledgeSearchOptions(session = {}, userMessage = "") {
@@ -2053,10 +2241,14 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     activeDomain &&
     activeDomain !== "product_lookup" &&
     /^(a|i)\s+(za|koliko|kako|gdje|kada|sto|što|što je|sto je)\b/.test(normalizedMessage);
+  const hasContactDetailsOnly = looksLikeContactDetailsOnlyMessage(rawMessage);
+  const hasPositiveFeedbackSignal = looksLikePositiveFeedbackMessage(rawMessage);
   const isSupportOnly =
     hasUnsafeOrInternalRequest ||
     hasOrderIssue ||
     hasBuybackIntent ||
+    hasContactDetailsOnly ||
+    hasPositiveFeedbackSignal ||
     hasMixedSupportAndProductIntent ||
     hasContextualSupportFollowup ||
     (hasDeliverySignal && !hasBookSearchVerb && !hasBookTerm) ||
@@ -2096,9 +2288,12 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     hasBookTerm,
     hasSchoolContext,
     hasSubjectNumber,
+    hasSubjectOrProgramSignal,
     hasEditionSignal,
     hasCollectionSearch,
     hasAuthorCitation,
+    hasContactDetailsOnly,
+    hasPositiveFeedbackSignal,
     hasMixedSupportAndProductIntent,
     hasContextualSupportFollowup,
     isTitleHeavyProductCandidate,
@@ -2114,6 +2309,14 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   if (looksLikeBuybackParcelQuestion(message, session)) {
+    return false;
+  }
+
+  if (
+    looksLikeContactDetailsOnlyMessage(message) ||
+    looksLikePositiveFeedbackMessage(message) ||
+    looksLikeFeasibilityFollowupMessage(message)
+  ) {
     return false;
   }
 
@@ -2167,8 +2370,22 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
     (tokens.length >= 2 &&
       tokens.some((token) => token.length >= 5) &&
       !questionLeadPattern.test(tokens.join(" ")));
+  const hasStrongProductSignal =
+    queryFeatures.hasBookSearchVerb ||
+    queryFeatures.hasBookTerm ||
+    queryFeatures.hasSchoolContext ||
+    queryFeatures.hasSubjectOrProgramSignal ||
+    queryFeatures.hasEditionSignal ||
+    queryFeatures.hasAuthorCitation ||
+    queryFeatures.hasIsbn;
 
-  return tokens.length >= 1 && tokens.length <= 10 && hasTitleLikeSignal && !hasGenericOnlyVocabulary;
+  return (
+    tokens.length >= 1 &&
+    tokens.length <= 10 &&
+    hasTitleLikeSignal &&
+    hasStrongProductSignal &&
+    !hasGenericOnlyVocabulary
+  );
 }
 
 function getAllowedSourcesForIntent(taskIntent = "") {
@@ -2451,6 +2668,58 @@ function buildOrderIssueClarificationOutcome(userMessage = "", { channelType = "
   };
 }
 
+function buildOrderMergeGuidanceOutcome() {
+  const customerMessage = [
+    "Da, možemo pokušati spojiti narudžbe u jedan paket ako još nisu poslane.",
+    "Pošaljite brojeve obje narudžbe te ime i prezime s narudžbe.",
+    "Provjerit ćemo status i javiti može li ići jedna dostava."
+  ].join(" ");
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "order_merge_guidance",
+    source: "conversation_fallback",
+    taskIntent: "order",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
+function buildBuybackDeliveryExchangeGuidanceOutcome() {
+  const customerMessage = [
+    "Da, knjige za otkup možete predati dostavljaču koji donosi vašu narudžbu.",
+    `Prije dolaska dostavljača otvorite online otkupni nalog na ${BASE_URL}/otkup-udzbenika/.`,
+    "Knjige za otkup zapakirajte odvojeno i predajte ih dostavljaču; on donosi naljepnicu, vi ništa ne pišete na paket.",
+    "Isplata ide nakon pregleda zaprimljenih knjiga."
+  ].join(" ");
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_delivery_exchange_guidance",
+    source: "website_links",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
+function buildPositiveFeedbackOutcome() {
+  const customerMessage =
+    "Hvala vam na povratnoj informaciji. Drago nam je da ste zadovoljni uslugom. Ako trebate još nešto, slobodno napišite.";
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "positive_feedback_acknowledgement",
+    source: "conversation_fallback",
+    taskIntent: "support_info",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
 function looksLikeBuybackConfirmationQuestion(userMessage = "") {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
 
@@ -2691,8 +2960,11 @@ function buildPolicyOutcome(userMessage = "", { session = {}, channelType = "web
     (looksLikeBuybackBonusQuestion(userMessage) ? buildBuybackBonusOutcome() : null) ||
     (looksLikeBuybackPriceQuestion(userMessage) ? buildBuybackPriceOutcome() : null) ||
     buildCriticalComplaintOutcome(userMessage) ||
+    (looksLikeOrderMergeRequest(userMessage) ? buildOrderMergeGuidanceOutcome() : null) ||
+    (looksLikeBuybackDeliveryExchangeQuestion(userMessage) ? buildBuybackDeliveryExchangeGuidanceOutcome() : null) ||
     buildOrderIssueClarificationOutcome(userMessage, { channelType }) ||
     (looksLikeOnlineBuybackOpening(userMessage) ? buildOnlineBuybackGuidanceOutcome() : null) ||
+    (looksLikePositiveFeedbackMessage(userMessage) ? buildPositiveFeedbackOutcome() : null) ||
     (looksLikePurchaseSearchGuidanceMessage(userMessage, session) ? buildPurchaseSearchGuidanceOutcome(relevanceContext) : null)
   );
 }
@@ -2766,6 +3038,44 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
       taskIntent: "",
       customerMessage:
         "Napišite molim vas na koji postupak mislite i što ste već pokušali, na primjer kupnju, otkup, košaricu, dostavu ili postojeću narudžbu. Tada vas mogu usmjeriti na točan sljedeći korak."
+    };
+  }
+
+  if (looksLikeFeasibilityFollowupMessage(userMessage)) {
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "followup_without_context",
+      source: "conversation_fallback",
+      customerMessage:
+        "Može. Napišite samo na što točno mislite: narudžba, dostava, otkup ili kupnja knjiga."
+    };
+  }
+
+  if (looksLikeContactDetailsOnlyMessage(userMessage)) {
+    const activeDomain = getSessionActiveDomain(session);
+
+    if (activeDomain === "order") {
+      return {
+        type: "ask_clarifying_question",
+        stateTag: "awaiting_customer_detail",
+        reason: "order_issue_clarification",
+        source: "conversation_fallback",
+        taskIntent: "order",
+        customerMessage:
+          channelType === "email"
+            ? "Hvala na podacima. Ako imate broj narudžbe, pošaljite ga; ako ga nemate, napišite što točno trebamo provjeriti na narudžbi."
+            : "Hvala na podacima. Ako imate broj narudžbe, pošaljite ga; ako ga nemate, napišite što točno trebamo provjeriti na narudžbi."
+      };
+    }
+
+    return {
+      type: "ask_clarifying_question",
+      stateTag: "ai_active",
+      reason: "contact_details_without_intent",
+      source: "conversation_fallback",
+      customerMessage:
+        "Hvala na podacima. Napišite još što točno trebate: status narudžbe, reklamaciju, dostavu, otkup ili pomoć oko kupnje."
     };
   }
 
@@ -2900,14 +3210,18 @@ function updateSessionRouteMemory(session, userMessage, outcome = {}) {
     outcome.taskIntent === "buyback" ||
     outcome.reason === "buyback_clarification" ||
     outcome.reason === "online_buyback_guidance" ||
-    outcome.reason === "buyback_package_guidance"
+    outcome.reason === "buyback_package_guidance" ||
+    outcome.reason === "buyback_delivery_exchange_guidance"
   ) {
     session.workingMemory.activeDomain = "buyback";
     session.workingMemory.activeTaskIntent = "buyback";
     return;
   }
 
-  if (outcome.reason === "order_issue_clarification") {
+  if (
+    outcome.reason === "order_issue_clarification" ||
+    outcome.reason === "order_merge_guidance"
+  ) {
     session.workingMemory.activeDomain = "order";
     session.workingMemory.activeTaskIntent = "order";
     return;
@@ -3238,11 +3552,13 @@ async function buildExistingSessionStartResponse(session, res, { duplicateStartP
       entryPromptAnswer: session.entryPromptAnswer,
       entryFlowVersion: session.entryFlowVersion,
       entryFlowSkipped: session.entryFlowSkipped,
-      entryTopicLock: session.entryTopicLock,State: session.conversationState,
+      entryTopicLock: session.entryTopicLock,
+      conversationState: session.conversationState,
       resolutionPrompt: session.resolutionPrompt || null
     },
     ticketId: session.ticketId,
-    messages: getSession(session.sessionId)?.messages || session.messages || [],State: session.conversationState,
+    messages: getSession(session.sessionId)?.messages || session.messages || [],
+    conversationState: session.conversationState,
     resolutionPrompt: session.resolutionPrompt || null
   });
 }
@@ -3540,21 +3856,34 @@ app.post("/webhook/zendesk", async (req, res) => {
  */
 app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), async (req, res) => {
   const { name, email } = req.body || {};
+  const requesterNameInput = normalizeWhitespace(name || "");
+  const requesterEmailInput = normalizeWhitespace(email || "");
   const message = normalizeMessage(req.body?.message);
   const entryIntent = normalizeEntryIntent(req.body?.entryIntent);
   const entryPromptAnswer = normalizeEntryPromptAnswer(req.body?.entryPromptAnswer);
   const entryFlowVersion = normalizeEntryFlowVersion(req.body?.entryFlowVersion);
   const files = getUploadedFiles(req);
 
-  if (!name || !email || !message) {
+  if (!message) {
     return res.status(400).json({
       success: false,
-      error: "Name, email, and message are required."
+      error: "Message is required."
+    });
+  }
+
+  if (requesterEmailInput && !isValidEmailAddress(requesterEmailInput)) {
+    return res.status(400).json({
+      success: false,
+      error: "A valid email address is required when email is provided."
     });
   }
 
   try {
-    const reusableSession = findReusableChatStart({ name, email, message });
+    const reusableSession = findReusableChatStart({
+      name: requesterNameInput,
+      email: requesterEmailInput,
+      message
+    });
 
     if (reusableSession) {
       return buildExistingSessionStartResponse(reusableSession, res, {
@@ -3563,6 +3892,8 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     }
 
     const initialSessionKey = randomUUID();
+    const requesterName = requesterNameInput || "Web kupac";
+    const requesterEmail = requesterEmailInput || `chat-${initialSessionKey}@antikvarijat-libar-chat.local`;
     const entryContextMessage = buildEntryContextMessage({
       message,
       entryIntent,
@@ -3593,10 +3924,10 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     }
     const uploadTokens = uploadedAttachments.map((item) => item.token).filter(Boolean);
     const { ticketId, requesterId } = await zendeskService.createChatTicket({
-      requesterName: name,
-      requesterEmail: email,
+      requesterName,
+      requesterEmail,
       initialMessage: message,
-      subject: buildChatSubject(name),
+      subject: buildChatSubject(requesterName),
       uploadTokens,
       externalId: initialSessionKey,
       additionalTags: entryFlowTags
@@ -3609,8 +3940,8 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     const session = createSession({
       ticketId,
       requesterId,
-      requesterName: name,
-      requesterEmail: email,
+      requesterName,
+      requesterEmail,
       messages: [],
       entryIntent: entryIntent || null,
       entryPromptAnswer: entryPromptAnswer || "",
@@ -3620,9 +3951,9 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     });
     session.workingMemory = {
       customerProfile: {
-        name,
-        firstName: name,
-        email,
+        name: requesterName,
+        firstName: requesterName,
+        email: requesterEmail,
         source: "zendesk_requester"
       }
     };
@@ -3688,8 +4019,8 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
     const startSync = await syncSessionMessagesWithFallback(session, "chat_start_final_sync");
     attachOutcomeDetailsToLatestAssistantMessage(session, outcome);
     registerRecentChatStart({
-      name,
-      email,
+      name: requesterNameInput,
+      email: requesterEmailInput,
       message,
       sessionId: session.sessionId,
       ticketId: session.ticketId
@@ -3710,11 +4041,13 @@ app.post("/api/chat/start", rateLimiter, chatUpload.array("attachments", 5), asy
         entryPromptAnswer: session.entryPromptAnswer,
         entryFlowVersion: session.entryFlowVersion,
         entryFlowSkipped: session.entryFlowSkipped,
-        entryTopicLock: session.entryTopicLock,State: session.conversationState,
+        entryTopicLock: session.entryTopicLock,
+        conversationState: session.conversationState,
         resolutionPrompt: session.resolutionPrompt || null
       },
       ticketId,
-      messages: getSession(session.sessionId).messages,State: session.conversationState,
+      messages: getSession(session.sessionId).messages,
+      conversationState: session.conversationState,
       resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
@@ -3876,13 +4209,14 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       });
       return res.status(409).json({
         success: false,
-      error: "Prethodni razgovor je završen. Za novo pitanje pokrenite novi razgovor.",State: {
-        tone: "resolved",
-        badge: "Prethodni razgovor je završen",
-        subtitle: "Možete pregledati raniji odgovor ili otvoriti novi razgovor."
-      }
-    });
-  }
+        error: "Prethodni razgovor je završen. Za novo pitanje pokrenite novi razgovor.",
+        conversationState: {
+          tone: "resolved",
+          badge: "Prethodni razgovor je završen",
+          subtitle: "Možete pregledati raniji odgovor ili otvoriti novi razgovor."
+        }
+      });
+    }
 
     let uploadedAttachments = [];
     try {
@@ -3926,7 +4260,8 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       return res.status(200).json({
         success: true,
         ticketId: session.ticketId,
-        messages: session.messages,State: session.conversationState,
+        messages: session.messages,
+        conversationState: session.conversationState,
         resolutionPrompt: null
       });
     }
@@ -3937,7 +4272,8 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       return res.status(200).json({
         success: true,
         ticketId: session.ticketId,
-        messages: session.messages,State: session.conversationState,
+        messages: session.messages,
+        conversationState: session.conversationState,
         resolutionPrompt: session.resolutionPrompt || null
       });
     }
@@ -4019,7 +4355,8 @@ app.post("/api/chat/message", rateLimiter, chatUpload.array("attachments", 5), a
       success: true,
       degraded: messageSync.degraded || zendeskWriteDegraded,
       ticketId: session.ticketId,
-      messages: session.messages,State: session.conversationState,
+      messages: session.messages,
+      conversationState: session.conversationState,
       resolutionPrompt: session.resolutionPrompt || null
     });
   } catch (error) {
@@ -4064,7 +4401,8 @@ app.post("/api/chat/resolve", async (req, res) => {
       return res.status(200).json({
         success: true,
         action: "ticket_already_resolved",
-        session,State: session.conversationState,
+        session,
+        conversationState: session.conversationState,
         resolutionPrompt: null
       });
     }
@@ -4077,7 +4415,8 @@ app.post("/api/chat/resolve", async (req, res) => {
       return res.status(200).json({
         success: true,
         action: "resolution_cancelled",
-        session,State: session.conversationState,
+        session,
+        conversationState: session.conversationState,
         resolutionPrompt: null
       });
     }
@@ -4098,7 +4437,8 @@ app.post("/api/chat/resolve", async (req, res) => {
       return res.status(200).json({
         success: true,
         action: "resolution_not_available",
-        session,State: session.conversationState,
+        session,
+        conversationState: session.conversationState,
         resolutionPrompt: null
       });
     }
@@ -4127,13 +4467,14 @@ app.post("/api/chat/resolve", async (req, res) => {
         });
       }
     }
-        session.resolutionPrompt = null;
+    session.resolutionPrompt = null;
     broadcastSessionUpdate(session);
 
     return res.status(200).json({
       success: true,
       action: "ticket_solved",
-      session,State: session.conversationState,
+      session,
+      conversationState: session.conversationState,
       resolutionPrompt: null
     });
   } catch (error) {
