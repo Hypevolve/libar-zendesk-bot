@@ -1,38 +1,40 @@
 # Pre-Release Smoke Checklist
 
+Datum uskladjenja: 29.04.2026
+
 ## Web
 
-1. Otvori novi widget razgovor i potvrdi da su kontakt podaci obavezni.
-2. `Prodaja knjiga / otkup` -> `Želim prodati knjige` i potvrdi online-first korake s linkom na `/otkup-udzbenika/`.
-3. U istom razgovoru pošalji `Koje vam je radno vrijeme?`.
-4. U istom razgovoru pošalji `Imate li Algebra 1?` i potvrdi da nema product kartica nego link na `/kupi-udzbenike/`.
-5. Pošalji `hvala, riješeno je` i potvrdi resolution prompt.
-6. Potvrdi zatvaranje i provjeri da stari thread više ne prima AI odgovore.
+1. Pokreni novi chat i potvrdi da je obavezna samo poruka.
+2. Potvrdi da su `name` i `email` opcionalni na startu.
+3. Upisi neispravan email i potvrdi da backend vraca 400.
+4. Posalji poruku s URL-om i potvrdi klikabilan link u bubbleu.
+5. `zanima me samo jel se moze` bez konteksta -> clarifying (`followup_without_context`).
+6. `Jako sam zadovoljna vasom uslugom` -> positive feedback ack.
+7. `Mozete li spojiti dvije narudzbe u jedan paket?` -> `order_merge_guidance`.
+8. `Kad mi dode kurir s narudzbom, mogu li mu predati knjige za otkup?` -> `buyback_delivery_exchange_guidance`.
+9. Posalji privitak -> `attachments_present` handoff.
 
 ## Facebook
 
-1. Buyback opening.
-2. Support-info follow-up.
-3. Explicit product lookup.
-4. Attachment/image escalation.
-5. Ponovljeni webhook event ne smije dati dupli reply.
+1. Buyback opening poruka.
+2. Support-info follow-up u istoj niti.
+3. Ponovljeni webhook event ne smije dati dupli reply.
 
-## E-mail
+## Email
 
 1. Support-info mail.
-2. Buyback -> support-info follow-up.
-3. Order status bez broja -> jedno kratko potpitanje.
-4. Quoted reply chain.
-5. Spam sample.
+2. Order status bez broja narudzbe -> clarifying.
+3. Spam sample -> bez customer AI odgovora.
+4. Quoted mail chain -> ispravno parsiran latest user message.
 
 ## Lifecycle
 
-1. Human reply u Zendesk-u prebacuje thread u `human_active`.
-2. Solved ticket prebacuje thread u `resolved`.
-3. Reopen ili novo pitanje ne smije oživjeti stari resolved AI flow.
+1. Human reply u Zendesku mora prebaciti web stanje u `human-active`.
+2. Solved ticket mora prebaciti web stanje u `resolved`.
+3. Closed session restore mora vratiti mode `closed_session`.
 
 ## Failure paths
 
-1. Knowledge source failure završava na stabilnom handoffu.
-2. Upload failure vraća korisniku jasan retryable error.
-3. AI output failure ne ruši route i ne vraća 500 bez fallbacka.
+1. Zendesk dependency fail na restoreu vraca `degraded` kad postoji lokalna session kopija.
+2. Upload failure vraca jasan retryable error.
+3. Niski knowledge confidence ne smije zavrsiti halucinacijom, vec policy fallbackom ili handoffom.

@@ -1,38 +1,51 @@
 # Knowledge Source of Truth
 
-## Kanonski izvori
+Datum uskladjenja: 29.04.2026
 
-- `support_info`: Zendesk Help Center
-- `delivery_support`: Zendesk Help Center
-- `order_support` / opći order FAQ: Zendesk Help Center
-- `buyback` procedural i procjena: OneDrive
-- `product_lookup`: webshop search guidance only; product feed is not customer-facing
+## Kanonski izvori po domeni
 
-## Pravila prioriteta
+- `product_lookup`: webshop guidance (`/kupi-udzbenike/`) + link fallback
+- `buyback`: OneDrive + vector (ako je konfigurirano), Zendesk pomocni izvor
+- `support_info` i `delivery`: Zendesk Help Center prioritet
+- `order` i reklamacijski support: Zendesk Help Center prioritet
 
-1. Ako je domain `product_lookup`, korisnika voditi na `/kupi-udzbenike/` i upute za pretragu po šifri/naslovu/autoru/nakladniku; ne nuditi artikle iz product feeda.
-2. Ako je domain `buyback`, OneDrive je prvi izvor; Zendesk može biti pomoćni.
-3. Ako je domain `support_info`, `delivery_support` ili opći `order_support`, Zendesk je prvi izvor.
-4. Ako Zendesk i OneDrive daju konfliktan odgovor za support temu, Zendesk ima prednost osim za `buyback`.
+## Merge i prioritet pravila
 
-## KB audit checklist
+`knowledgeService` mergea rezultate iz tri izvora:
+- vector
+- OneDrive lexical
+- Zendesk Help Center
 
-Za svaki topic provjeriti:
+Pravila:
+1. Kandidati se sortiraju po scoreu.
+2. Kod tie-breaka OneDrive entry ima prednost.
+3. U kontekst ulazi top `KNOWLEDGE_CONTEXT_ITEMS` kandidata.
+4. Ako AI grounded odgovor nije kvalitetan, koristi se deterministic knowledge fallback.
 
-- postoji li barem jedan jasan članak ili dokument
-- odgovara li članak izravno na tipično korisničko pitanje
-- je li sadržaj aktualan i usklađen s web stranicom
-- postoji li kontradikcija između Zendesk, OneDrive i weba
-- treba li topic dodatni redirect ili canonical source override
+## Policy override pravila
+
+Sljedeca pravila imaju prednost nad retrieval odgovorom:
+- `attachments_present` -> handoff
+- kriticni complaint signali -> handoff
+- `order_issue_clarification` kad nedostaju identifikatori narudzbe
+- buyback specific guidance (`online_buyback_guidance`, `buyback_package_guidance`, itd.)
+- product lookup guidance (`purchase_search_guidance`) umjesto direktnog product card odgovora
 
 ## Obavezni audit topicovi
 
 - radno vrijeme
 - adresa i kontakt
-- dostava
-- status narudžbe i opći order FAQ
-- buyback / otkup
+- dostava i rokovi
+- status narudzbe i opci order FAQ
 - reklamacije i povrati
-- plaćanje
-- osobno preuzimanje
-- stanje knjiga i dostupnost
+- buyback / otkup proces
+- placanje
+
+## Kada prijaviti knowledge conflict
+
+Prijavi conflict ako se razlikuju cinjenice koje utjecu na customer odgovor:
+- cijene
+- rokovi
+- uvjeti povrata
+- kontakt podaci
+- operativni koraci buybacka

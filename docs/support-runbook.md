@@ -1,63 +1,59 @@
 # Support Bot Runbook
 
+Datum uskladjenja: 29.04.2026
+
 ## Kad bot izgleda zaglavljeno
 
-1. Provjeri zadnji internal note.
-2. Provjeri `Final outcome`, `Source contract`, `Topic shift type` i `Knowledge quality`.
-3. Ako je thread u `awaiting_human`, ne vraćati AI dok tim ne završi obradu.
+1. Provjeri zadnji internal note na ticketu.
+2. Provjeri `Final outcome`, `reason`, `taskIntent` i `source`.
+3. Ako je stanje `awaiting_human`, ne vracaj AI dok tim ne zavrsi obradu.
 
-## Kad treba isključiti AI na ticketu
+## Kad treba iskljuciti AI na ticketu
 
-1. Prebaci ticket u `human_active` ili `awaiting_human`.
-2. Odgovori ručno iz Zendeska.
-3. Potvrdi da web session pokazuje `Podrška uživo`.
+1. Odradi ljudski odgovor iz Zendeska.
+2. Potvrdi da web session prikazuje `human-active` tone (`Podrska uzivo`).
+3. Ne salji paralelni AI odgovor u istoj fazi.
 
 ## Kad treba resetirati conversation state
 
-1. Provjeri je li ticket zapravo `resolved`, `human_active` ili `ai_active`.
-2. Ukloni krive lifecycle tagove i postavi ispravan state kroz Zendesk state update.
-3. Osvježi web session preko event webhooka.
+1. Provjeri ticket status (`new/open/pending/hold/solved/closed`).
+2. Provjeri lifecycle tagove (`awaiting_human`, `awaiting_customer_detail`, `human_active`, `resolved`).
+3. Triggeriraj `POST /webhook/zendesk/events` i potvrdi da session prima update.
 
-## Triage reason kodovi
+## Najcesci reason kodovi
 
-- `product_bleed`
-- `support_shift_missed`
-- `clarification_unnecessary`
-- `knowledge_gap_real`
-- `knowledge_gap_false_negative`
-- `webhook_duplicate`
-- `spam_false_positive`
-- `knowledge_source_conflict`
+- `purchase_search_guidance`
+- `online_buyback_guidance`
+- `buyback_package_guidance`
+- `buyback_delivery_exchange_guidance`
+- `order_issue_clarification`
+- `order_merge_guidance`
+- `contact_details_without_intent`
+- `followup_without_context`
+- `positive_feedback_acknowledgement`
+- `grounded_answer`
+- `knowledge_fallback`
+- `attachments_present`
+- `no_answer_found`
 
 ## Runtime metrike
 
-Provjeriti na `/health`:
-
+Provjeri na `/health`:
 - `duplicate_chat_start_prevented_total`
 - `webhook_duplicate_ignored_total`
 - `clarification_asked_total`
 - `knowledge_conflict_handoff_total`
-- `outcome_*`
-
-Ako raste `knowledge_conflict_handoff_total`, prvo provjeriti jesu li Zendesk i OneDrive izvori usklađeni za:
-
-- radno vrijeme
-- email
-- telefon
-- adresu
+- `outcome_*` brojac skupina
 
 ## Kad prijaviti KB gap
 
-Prijaviti ako:
+Prijavi KB gap ako:
+- intent je prepoznat, ali nema dovoljno jak knowledge odgovor
+- informacije na webu i KB-u nisu uskladjene
+- bot cesto ide u `no_answer_found` za isti upitni pattern
 
-- bot ispravno prepozna intent, ali nema dovoljno jak knowledge odgovor
-- odgovor postoji na webu, ali ne postoji ili je zastario u KB-u
-- postoje dva izvora s različitim informacijama
+## Kad oznaciti false positive spam
 
-## Kad označiti false positive spam
-
-Prijaviti ako:
-
-- legitimni support mail bude blokiran
-- poruka sadrži linkove ili duži quoted thread, ali je stvarni support upit
-- outreach heuristika pogodi stvarni korisnički problem
+Prijavi ako:
+- legitimni support email bude blokiran kao spam
+- poruka sa quoted threadom bude odbijena iako sadrzi validan upit

@@ -1,380 +1,310 @@
-# Dokumentacija Trenutnog Stanja Libar Chatbota
+# Libar Bot Dokumentacija (Kanonska)
 
-Datum: 17. travnja 2026.
+Datum uskladjenja: 29.04.2026
+Status: aktivno, uskladjeno s kodom u `index.js`, `services/*` i `public/*`
 
-## Sažetak
+## Svrha sustava
 
-Libar chatbot je produkcijski backend i frontend sloj za korisničku podršku koji povezuje:
+Libar bot je Zendesk-first middleware za korisnicku podrsku Antikvarijata Libar.
 
-- web chat widget
-- Zendesk Support
-- Zendesk Help Center
-- OneDrive / SharePoint knowledge base
-- OpenRouter LLM sloj
-
-Sustav radi kao Zendesk-centered support middleware. Zendesk ticket je glavni zapis razgovora, a bot koristi objedinjeni knowledge sloj za automatske odgovore kada postoji dovoljno dobar kontekst.
-
-## Glavne funkcionalnosti
-
-Trenutno aktivne funkcionalnosti sustava su:
-
-- web chat widget na `/chat`
-- WordPress embed preko `embed.js` i iframe moda
-- Zendesk-backed chat sessioni
-- AI odgovori iz Zendesk Help Centera i OneDrive / SharePoint knowledge baze
-- multi-channel obrada upita za:
-  - web chat
-  - email
-  - Facebook Messenger / Facebook ticket flow kroz Zendesk
-- human handoff logika
-- resolution flow za web chat
-- email spam filter prije AI odgovaranja
-- internal note logging za AI outcome i korištene izvore
+Sustav pokriva:
+- web chat widget (`/chat`, `/embed/chat`)
+- webhook automaciju za email i Facebook tok kroz Zendesk
+- knowledge retrieval iz Zendesk Help Centera, OneDrive i opcionalno vektorskog sloja
+- strogo policy-gated odgovaranje (safe answer, clarifying question, handoff)
 
 ## Arhitektura
 
-### Backend
+## Backend
 
-Backend je implementiran kao Node.js + Express aplikacija.
+Glavni entrypoint je `index.js` (Express server).
 
-Glavne odgovornosti backenda:
+Kljucevi slojevi:
+- Session/lifecycle orchestration preko Zendesk ticketa
+- Retrieval orchestration (`knowledgeService`)
+- Policy routing i fallback guardovi
+- Channel-aware customer copy (web chat / email / facebook)
+- Runtime persist in-memory stanja (`runtimeStore`)
 
-- otvaranje i ažuriranje Zendesk ticketa
-- sinkronizacija poruka i transcripta
-- dohvat knowledge konteksta iz više izvora
-- AI decision layer i generiranje odgovora
-- channel-aware ponašanje za web chat, email i Facebook
-- spam filtering za email kanal
-- isporuka chat frontenda i WordPress embeda
+## Servisi
 
-### Source of Truth
+- `services/zendeskService.js`: Zendesk ticket/audit/help-center API
+- `services/knowledgeService.js`: merge OneDrive + vector + Zendesk knowledge
+- `services/oneDriveService.js`: OneDrive/SharePoint retrieval + cache
+- `services/vectorKnowledgeService.js`: Supabase vector retrieval i sync
+- `services/aiService.js`: grounded answer generation i model fallback
+- `services/siteLinkService.js`: canonical website link fallback
+- `services/spamFilterService.js`: email spam filter
+- `services/metricsService.js`: runtime brojac metrike
+- `services/productFeedService.js`: query preprocessing i legacy product metadata support
 
-Zendesk ticket je glavni izvor istine za:
+## Frontend
 
-- transcript
-- status razgovora
-- lifecycle state
-- ljudski takeover
-- customer-facing i internal note evidenciju
+- `public/chat.html`, `public/chat.js`, `public/chat.css`: widget UI i client flow
+- `public/embed.js`: WordPress/third-party embed launcher + iframe shell
 
-## Aktivni kanali
+## Source of truth i perzistencija
 
-### 1. Web chat
+Primarni source of truth je Zendesk ticket.
 
-Web chat radi preko frontenda na:
+Lokalni runtime state je dodatni sloj:
+- `chatSessions` (in-memory)
+- `processedWebhookAudits` (idempotency cache)
+- `recentChatStarts` (start dedupe cache)
+- persist/hydrate kroz `runtimeStore` (`.runtime` datoteke)
 
-- `GET /chat`
+Sustav nema zasebnu aplikacijsku bazu podataka.
 
-Podržano ponašanje:
+## Kanali
 
-- onboarding unutar widgeta
-- prikupljanje imena i emaila prije otvaranja ticketa
-- otvaranje backing Zendesk ticketa
-- slanje korisničkih poruka u Zendesk
-- AI odgovori iz knowledge baze
-- human takeover prikaz
-- resolution flow i potvrda rješenja
-- live transcript refresh preko SSE-a
+## Web chat
 
-### 2. Email
+Web chat API upravlja ticketom od starta do resolve flowa.
 
-Email kanal radi kroz Zendesk trigger + webhook flow.
+Bitno trenutno stanje:
+- Start forma trazi obavezno samo `message`
+- `name` i `email` su opcionalni
+- Ako je `email` poslan, mora biti validan
+- Linkovi u porukama se renderiraju kao klikabilni
+- Privitci odmah guraju ticket u handoff (`attachments_present`)
 
-Podržano ponašanje:
+## Email
 
-- obrada novih korisničkih email poruka iz Zendesk ticketa
-- knowledge retrieval iz Zendesk Help Centera i OneDrive / SharePoint izvora
-- AI odgovor kada postoji dovoljno jak kontekst
-- handoff ljudskom agentu kada kontekst nije dovoljan
-- internal note s prikazom AI outcomea i korištenih izvora
-- spam filtering prije retrievala i AI odgovora
+Email automation ide preko `/webhook/zendesk`.
 
-### 3. Facebook
+Specificno:
+- primjenjuje se spam filter prije AI odgovora
+- quoted/forwarded parsing ostaje u Zendesk -> normalized poruka
+- ako nije siguran odgovor, ide handoff
 
-Facebook kanal radi kroz Zendesk ticket flow za Facebook poruke.
+## Facebook
 
-Podržano ponašanje:
+Facebook tok ide preko `/webhook/zendesk`.
 
-- obrada novih korisničkih Facebook poruka kroz Zendesk ticket
-- isti knowledge retrieval kao na web chatu i emailu
-- AI odgovor kad je kontekst dovoljan
-- handoff agentu kada kontekst nije dovoljan
-- internal note s prikazom outcomea i izvora
+Specificno:
+- channel-specific copy (kraci, chat-like)
+- idempotency preko audit ID cachea
 
-## Knowledge Base Sloj
+## Decision pipeline
 
-Bot koristi objedinjeni knowledge sloj iz dva izvora:
+`resolveAutomatedOutcome(session, userMessage, { hasAttachments, channelType })` radi ovim redom:
 
-- Zendesk Help Center
-- OneDrive / SharePoint dokumenti
+1. Route/context hydration
+2. Policy pre-check (`buildPolicyOutcome`)
+3. Retrieval (`knowledgeService.searchKnowledgeDetailed`)
+4. Grounded AI odgovor (ako postoji quality kontekst)
+5. Knowledge fallback odgovor (deterministicki)
+6. No-context autonomous fallback (`buildNoContextAutonomousOutcome`)
+7. Hard handoff (`no_answer_found`) ako nista nije sigurno
 
-### Zendesk Help Center
-
-Bot lokalno dohvaća i kratkotrajno cacheira Help Center corpus te radi lokalni ranking po upitu.
-
-Za svaki relevantni rezultat u kontekst ulazi:
-
-- naslov članka
-- relevantnost
-- najrelevantniji odlomak / snippet članka
-
-### OneDrive / SharePoint
-
-OneDrive provider radi preko Microsoft Graph API-ja.
-
-Bot dohvaća dokumente iz konfiguriranog SharePoint / OneDrive foldera i koristi ih kao knowledge source.
-
-Podržani formati dokumenata:
-
-- `.txt`
-- `.md`
-- `.csv`
-- `.json`
-- `.html`
-- `.htm`
-- `.docx`
-
-Za svaki dokument bot radi:
-
-- parsiranje sadržaja
-- lokalni ranking po korisničkom upitu
-- izdvajanje najrelevantnijeg odlomka / snippet konteksta
-
-### Merge i ranking
-
-Knowledge sloj trenutno radi:
-
-- čišćenje korisničkog upita prije pretrage
-- lokalni lexical scoring
-- opcionalni Supabase `pgvector` semantic search preko OneDrive chunkova
-- izdvajanje najrelevantnijih odlomaka umjesto generičkog početka dokumenta
-- objedinjeni rerank između Supabase vector, OneDrive lexical i Zendesk izvora
-- blagu prednost OneDrive dokumentima pri jednakim scoreovima
-
-Kontekst koji se šalje AI sloju uključuje:
-
-- tip izvora
-- naslov izvora
-- relevantnost
-- sadržaj najrelevantnijeg odlomka
-
-## AI Decision Layer
-
-AI sloj koristi OpenRouter preko OpenAI SDK klijenta. Zadani primarni model je `openai/gpt-5`, a fallback model je `google/gemini-2.5-pro`.
-
-Bot koristi channel-aware promptove za:
-
-- web chat
-- email
-- Facebook
-
-### Outcome tipovi
-
-AI decision layer vraća jedan od tri outcomea:
+## Outcome tipovi
 
 - `safe_answer`
-- `soft_handoff`
+- `ask_clarifying_question`
 - `hard_handoff`
+- `soft_handoff` (koristi se kroz quality gate odluku)
 
-### Safe answer
-
-Kad je knowledge kontekst dovoljno jak:
-
-- bot generira customer-facing odgovor
-- odgovor se upisuje u Zendesk kao public reply
-- ticket ostaje u AI-active stanju
-
-### Soft handoff
-
-Kad pitanje nije dovoljno sigurno pokriveno kontekstom:
-
-- bot ne šalje customer-facing AI odgovor
-- ticket ide u awaiting-human stanje
-- dodaje se internal note s razlogom i korištenim izvorima
-
-### Hard handoff
-
-Kod osjetljivih ili rizičnih tema:
-
-- ticket se odmah prepušta ljudskom agentu
-- dodaje se internal note i state update
-
-### Grounded answer fallback
-
-Ako structured decision model vrati `soft_handoff`, a retrieval pokazuje jak OneDrive-driven kontekst, backend radi dodatni fokusirani grounded-answer pokušaj na top izvorima.
-
-To omogućuje da sustav češće isporuči odgovor kada top knowledge izvor jasno pokriva pitanje.
-
-## Query Understanding
-
-Prije retrievala upit prolazi kroz query preprocessing.
-
-To uključuje:
-
-- uklanjanje pozdrava
-- uklanjanje filler fraza poput `zanima me`, `molim vas`, `možete li mi reći`
-- normalizaciju teksta za stabilniji ranking
-
-To poboljšava matching između prirodno formuliranih korisničkih poruka i knowledge dokumenata.
-
-## Zendesk Ticket Lifecycle
-
-Bot koristi conversation state tagove i transcript logiku u Zendesku.
-
-Aktivni stateovi:
+## State tagovi (ticket/web state)
 
 - `ai_active`
+- `awaiting_customer_detail`
 - `awaiting_human`
-- `human_active`
 - `resolved`
 
-### Internal note logging
+UI tone map:
+- `ai-active`
+- `awaiting-customer-detail`
+- `awaiting-human`
+- `human-active`
+- `resolved`
 
-Za svaki AI decision backend zapisuje internal note koji uključuje:
+## Aktualna policy pravila (bitna za routing)
 
-- kanal
-- AI outcome
-- korisnički upit
-- primarni izvor
-- top relevantnost
-- korištene izvore
-- reason oznaku
+## Product lookup
 
-### Human takeover
+Trenutni customer-facing model je webshop guidance:
+- `purchase_search_guidance` usmjerava na `/kupi-udzbenike/`
+- bot daje uputu za pretragu (sifra, ISBN, naslov, autor, nakladnik)
+- heuristike aktivno smanjuju product bleed iz support konteksta
 
-Kad agent preuzme razgovor kroz Zendesk:
+## Buyback
 
-- transcript ostaje u istom ticketu
-- razgovor se nastavlja kroz Zendesk lifecycle
-- state prelazi u ljudski support flow
+Podrzani fast-path outcomei:
+- `online_buyback_guidance`
+- `buyback_package_guidance`
+- `buyback_accepted_books_guidance`
+- `buyback_bonus_guidance`
+- `buyback_price_guidance`
+- `buyback_delivery_exchange_guidance` (predaja knjiga dostavljacu pri isporuci narudzbe)
 
-## Email Spam Filter
+## Order/reklamacija
 
-Spam filter se primjenjuje samo na email kanal prije glavnog retrieval + AI flowa.
+Podrzani fast-path outcomei:
+- `order_issue_clarification`
+- `order_merge_guidance`
 
-### Heuristički sloj
+## Conversation quality fixevi (29.04.2026)
 
-Filter provjerava:
+Dodani guardovi i intent detektori:
+- positive feedback detekcija (`positive_feedback_acknowledgement`)
+- contact-details-only detekcija (`contact_details_without_intent`)
+- feasibility follow-up detekcija (`followup_without_context`)
+- explicit domain correction (`ne radi se o ... nego ...`)
+- bolji prioritet order signala iznad buyback/product za mixed correction poruke
 
-- broj linkova
-- tipične outreach i spam obrasce
-- phishing signale
-- marketing / SEO pitch obrasce
-- support signale u tekstu
+## Web chat lifecycle
 
-### AI classifier sloj
+## Start (`POST /api/chat/start`)
 
-Za granične slučajeve koristi se dodatni AI spam classifier.
+Ulaz:
+- `message` obavezno
+- `name` opcionalno
+- `email` opcionalno (ako je poslan, validacija)
+- `entryIntent`, `entryPromptAnswer`, `entryFlowVersion` opcionalno
+- `attachments[]` opcionalno (max 5, max 10MB po fileu)
 
-Ako je email klasificiran kao spam:
+Ponasanje:
+- start dedupe radi samo ako postoji identitet (`name` ili `email`)
+- anonimni start ne ulazi u identitet-based dedupe
+- ako `name`/`email` fale, backend koristi fallback requester identitet za Zendesk ticket
 
-- ne radi se knowledge retrieval
-- ne radi se support AI odgovor
-- ticket dobiva internal note
-- ticket dobiva tag `suspected_spam`
+## Restore (`POST /api/chat/restore`)
 
-## WordPress Embed
+Ulaz:
+- `ticketId` + `requesterId` obavezni
 
-Bot se može ugraditi na WordPress preko:
+Izlaz mode:
+- `active_session`
+- `closed_session`
 
-- `GET /embed.js`
-- `GET /embed/chat`
+Kad Zendesk privremeno nije dostupan, moze vratiti `degraded: true` ako postoji lokalna session kopija.
 
-Embed radi kao:
+## Message (`POST /api/chat/message`)
 
-- JS loader
-- floating launcher
-- iframe chat panel prema chatbot serveru
+Ulaz:
+- `sessionId` obavezno
+- `message` ili barem jedan privitak
 
-Podržane embed konfiguracije:
+Ako je ticket vec `solved/closed`, vraća 409 i `conversationState.resolved`.
 
-- `baseUrl`
-- `position`
-- `offsetX`
-- `offsetY`
-- `zIndex`
-- `launcherLabel`
-- `theme`
+## Resolve (`POST /api/chat/resolve`)
 
-## Frontend Chat Widget
+Ulaz:
+- `sessionId`
+- `confirmed` (boolean)
 
-Frontend koristi statične datoteke iz `public/` direktorija.
+Ponasanje:
+- `confirmed=true` i validan prompt -> solve ticket
+- `confirmed=false` -> razgovor ostaje otvoren, prompt se gasi
 
-Glavne značajke widgeta:
+## Session read
 
-- onboarding stanje
-- customer / assistant poruke
-- attachment upload podrška
-- SSE stream za live osvježavanje
-- resolution prompt
-- embed mode za iframe prikaz
-
-## Aktivni HTTP endpointi
-
-### Javne rute
-
-- `GET /health`
-- `GET /chat`
-- `GET /embed/chat`
-- `GET /embed.js`
-
-### Web chat API
-
-- `POST /api/chat/start`
-- `POST /api/chat/restore`
-- `POST /api/chat/message`
-- `POST /api/chat/resolve`
 - `GET /api/chat/session/:sessionId`
-- `GET /api/chat/stream/:sessionId`
+- `GET /api/chat/stream/:sessionId` (SSE)
 
-### Zendesk webhook rute
+## Zendesk webhook lifecycle
 
-- `POST /webhook/zendesk`
-- `POST /webhook/zendesk/events`
+## `POST /webhook/zendesk`
 
-### Admin i debug rute
+Glavni automation webhook:
+- normalizira payload envelope
+- radi audit idempotency cache
+- blokira automation kad je thread human-managed ili resolved
+- primjenjuje spam filter na emailu
+- pokrece `resolveAutomatedOutcome`
+- upisuje customer reply + internal note + state tag
 
-- `POST /admin/cache/knowledge/refresh`
-- `POST /admin/vector/knowledge/sync`
-- `GET /debug/zendesk/:ticketId`
+## `POST /webhook/zendesk/events`
 
-Vector sync se može pokrenuti i lokalno/cron naredbom:
+Event webhook za ticket status/state sinkronizaciju prema aktivnim web sessionima.
 
-- `npm run sync:vector`
+Zahtijeva validan `x-zendesk-webhook-token`.
+
+## Entry flow (web)
+
+Aktivna verzija: `v1`
+
+Podrzani `entryIntent`:
+- `kupnja_knjiga`
+- `narudzba`
+- `dostava`
+- `otkup_knjiga`
+- `reklamacija_problem`
+- `opci_upit`
+
+Entry flow kontekst ulazi u:
+- retrieval hints
+- internal note
+- inicijalni routing signal
+
+## Spam filter (email)
+
+Spam filter se primjenjuje samo na email kanalu.
+
+Model je dvoslojan:
+- heuristika
+- AI klasifikacija za granicne slucajeve
+
+Ako je oznaceno kao spam:
+- nema AI odgovora korisniku
+- ticket dobiva interni note i spam oznaku
+
+## Knowledge sloj
+
+`knowledgeService` spaja tri izvora paralelno:
+- vector hits (ako je konfigurirano)
+- OneDrive lexical hits
+- Zendesk Help Center hits
+
+Merge pravilo:
+- sort po score
+- tie-break favorizira OneDrive entry
+- top `KNOWLEDGE_CONTEXT_ITEMS` ulazi u AI context
 
 ## Konfiguracija
 
-Sustav koristi environment-driven konfiguraciju za:
+Minimalno za pokretanje:
+- Zendesk env (`ZENDESK_*`)
+- OpenRouter key (`OPENROUTER_API_KEY`)
 
-- Zendesk pristup
-- OpenRouter primarni/fallback model i autentikaciju
-- OpenRouter embedding model za Supabase vector knowledge
-- Supabase `pgvector` knowledge bazu
-- OneDrive / SharePoint pristup
-- retrieval tuning
-- spam filter tuning
-- WordPress embed allowed origins
+Model fallback:
+- primary: `openai/gpt-5`
+- fallback: `google/gemini-2.5-pro`
 
-### Supabase vector embeddings
+Dodatno opcionalno:
+- OneDrive (`ONEDRIVE_*`)
+- Supabase vector (`SUPABASE_*`, embedding env)
+- `ADMIN_TOKEN` za admin endpointe
 
-Vector knowledge koristi OpenRouter embeddings po defaultu. Za produkciju su potrebne varijable:
+Referenca svih env varijabli: `.env.example`
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `OPENROUTER_API_KEY`
-- `EMBEDDING_PROVIDER=openrouter`
-- `OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small`
-- `EMBEDDING_DIMENSIONS=1536`
+## Health i admin endpointi
 
-`OPENAI_API_KEY` nije potreban za defaultni setup. Direct OpenAI embeddings su opcionalni samo ako je `EMBEDDING_PROVIDER=openai`.
+- `GET /embed.js` (static loader za iframe embed)
+- `GET /health`
+- `POST /admin/cache/knowledge/refresh?token=...`
+- `POST /admin/vector/knowledge/sync?token=...`
+- `GET /debug/zendesk/:ticketId?token=...`
 
-## Operativni rezultat sustava
+## Sigurnosni i operativni guardovi
 
-U trenutnom stanju bot radi kao objedinjeni support sloj koji:
+- rate limit na web chat API rutama
+- webhook idempotency (audit cache)
+- chat start dedupe prozor (`CHAT_START_DEDUPLICATION_TTL_MS`)
+- attachment hard handoff
+- anti-leak odgovor quality check
 
-- prima upite iz više kanala
-- koristi Zendesk kao ticket backbone
-- odgovara iz kombinirane knowledge baze
-- zna razlikovati AI odgovor i handoff
-- bilježi AI odluke i izvore u Zendesk internal noteovima
-- podržava web widget i WordPress embed distribuciju
+## Test status
+
+Automatizirani test suite je trenutni gate za regresije.
+
+Core komande:
+- `npm test`
+- `npm run report:regression`
+- `npm run report:real-queries`
+
+## Poznata ogranicenja
+
+- nema trajne aplikacijske baze; runtime cache je process-local
+- fallback requester identitet za anonimne chat startove je tehnicki identitet, ne verifikacija korisnika
+- policy je namjerno konzervativan i radije eskalira nego da daje nesiguran odgovor

@@ -1,67 +1,57 @@
 # Multi-Channel Bot QA
 
+Datum uskladjenja: 29.04.2026
+
 ## Automatizirani scope
 
-- `tests/reasoning.test.js`: intent, continuity, buyback, support info i topic shift heuristike.
-- `tests/stability.test.js`: memory, source policy, knowledge quality i product bleed regression.
-- `tests/channelPrompting.test.js`: channel prompt pravila i spam-filter asimetrija.
-- `tests/conversationRegressionDataset.test.js`: conversation-level parity dataset preko kanala.
-- `tests/channelIntegration.test.js`: web chat start/restore flow, Facebook webhook, email spam path i webhook idempotency.
+Kljucevi testovi koji pokrivaju channel i policy regresije:
+- `tests/botResponseRegression.test.js`
+- `tests/channelIntegration.test.js`
+- `tests/channelRegression.test.js`
+- `tests/productIntentRegression.test.js`
+- `tests/productRoutingRegression.test.js`
+- `tests/zendeskWebhookRoute.test.js`
+
+Pokretanje:
+
+```bash
+npm test
+```
 
 ## Manual QA matrix
 
-### Web
+## Web chat
 
-1. Pokreni novi chat i potvrdi da su `ime`, `prezime` i `email` obavezni.
-2. Odaberi `Prodaja knjiga / otkup` i upiši `Želim prodati knjige`.
-3. Nakon odgovora pošalji `Koje vam je radno vrijeme?`.
-4. Nakon toga pošalji `Imate li Algebra 1?`.
-5. Vrati se na `A gdje se nalazite?`.
-6. Refresh stranice i potvrdi da su poruke, aktivna tema i stanje razgovora vraćeni ispravno.
-7. Pošalji privitak i potvrdi da flow ne puca i da ide očekivana eskalacija.
-8. Provjeri da `product_lookup` ne prikazuje product kartice nego link na `/kupi-udzbenike/` i upute za pretragu po šifri, naslovu, autoru ili nakladniku.
+1. Otvori novi chat (`/chat`) i potvrdi da je obavezna samo poruka.
+2. Pokreni chat bez imena i emaila, potvrdi da start radi.
+3. Upisi email pogresnog formata, potvrdi validation error.
+4. Posalji poruku s URL-om, potvrdi da je link klikabilan.
+5. Posalji `zanima me samo jel se moze` bez konteksta i potvrdi clarifying odgovor (`followup_without_context`).
+6. Posalji `Vanesa Vukas 091...` bez dodatnog konteksta i potvrdi `contact_details_without_intent` clarifying odgovor.
+7. Posalji `Jako sam zadovoljna vasom uslugom` i potvrdi zahvalni odgovor (`positive_feedback_acknowledgement`).
+8. Posalji `Mozete li spojiti dvije narudzbe u jedan paket?` i potvrdi `order_merge_guidance`.
+9. Posalji `Kad mi dode kurir s narudzbom, mogu li mu predati knjige za otkup?` i potvrdi `buyback_delivery_exchange_guidance`.
+10. Posalji poruku s privitkom i potvrdi handoff (`attachments_present`).
 
-### Facebook
+## Facebook webhook
 
-1. Pošalji `Htio bih prodati knjige`.
-2. Nastavi s `A koje vam je radno vrijeme?`.
-3. Nastavi s `A gdje ste?`.
-4. Pošalji `Imate li knjigu X?` i potvrdi da odgovor vodi na webshop pretragu bez preporuke artikla.
-5. Ponovi isti webhook event i potvrdi da nema duplog odgovora.
-6. Testiraj poruku sa slikom i potvrdi sigurnu eskalaciju ili ručnu obradu.
+1. Posalji buyback opening poruku i potvrdi buyback guidance.
+2. Posalji support-info follow-up i potvrdi topic shift bez product bleeda.
+3. Ponovi isti webhook audit payload i potvrdi da nema duplog odgovora (idempotency).
 
-### E-mail
+## Email webhook
 
-1. Pošalji buyback opening mail.
-2. Pošalji follow-up mail s upitom za radno vrijeme.
-3. Pošalji zaseban mail za adresu ili kontakt.
-4. Pošalji `Gdje mi je narudžba?` bez broja i potvrdi jedno kratko potpitanje.
-5. Pošalji reklamaciju bez detalja i potvrdi očekivani escalation path.
-6. Pošalji spam-like outreach i potvrdi da reply nije poslan.
-7. Pošalji quoted/forwarded mail i potvrdi da je zadnja korisnička poruka pravilno ekstrahirana.
-8. Pošalji mail s attachmentom i potvrdi očekivanu ručnu provjeru.
+1. Posalji support-info mail i potvrdi normalan odgovor.
+2. Posalji order upit bez broja narudzbe i potvrdi `order_issue_clarification`.
+3. Posalji spam-like outreach i potvrdi da nema customer AI odgovora.
+4. Posalji quoted/forwarded email i potvrdi da je obradjena zadnja korisnicka poruka.
 
-## Triage signali koje treba gledati
+## Triage signali
 
-- `Kanal`
-- `Primary intent`
-- `Task intent`
-- `Active domain`
-- `Topic shift type`
-- `Topic shift confidence`
-- `Source contract`
-- `Response policy mode`
-- `Knowledge quality`
-- `Final outcome`
-
-Ako fail nastane, prvo utvrditi spada li u jednu od tri skupine:
-
-- `intent_wrong`
-- `topic_shift_wrong`
-- `source_or_render_wrong`
-
-## Povezani operativni dokumenti
-
-- `docs/pre-release-smoke-checklist.md`
-- `docs/knowledge-source-of-truth.md`
-- `docs/support-runbook.md`
+Kod incidenta prvo provjeri:
+- kanal
+- final `outcome.type`
+- `reason`
+- `taskIntent`
+- `conversationState`
+- koristeni knowledge source (`zendesk_knowledge` / `onedrive_knowledge` / `website_links` / `policy_guard`)
