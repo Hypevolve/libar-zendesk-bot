@@ -271,6 +271,104 @@ test("webhook processing rebuilds retrieval context from prior conversation for 
   }
 });
 
+test("webhook processing ignores duplicate customer message across different webhook audits", async () => {
+  const originalGetTicketSummary = zendeskService.getTicketSummary;
+  const originalGetTicketAudits = zendeskService.getTicketAudits;
+  const originalUpdateConversationState = zendeskService.updateConversationState;
+  const originalAddBotReplyToTicket = zendeskService.addBotReplyToTicket;
+  const originalAddInternalNote = zendeskService.addInternalNote;
+  const originalEvaluateIncomingMessage = spamFilterService.evaluateIncomingMessage;
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+  const botReplies = [];
+
+  zendeskService.getTicketSummary = async () => ({
+    id: 88800,
+    status: "open",
+    tags: [],
+    requesterId: 1001,
+    requesterName: "Kupac Test",
+    requesterEmail: "kupac@example.com"
+  });
+  zendeskService.getTicketAudits = async () => [
+    createAudit({
+      id: "audit-user-duplicate-check",
+      channel: "mail",
+      body: "Imate li ovu knjigu na stanju?"
+    })
+  ];
+  zendeskService.updateConversationState = async () => {};
+  zendeskService.addBotReplyToTicket = async (ticketId, replyText, options = {}) => {
+    botReplies.push({ ticketId, replyText, options });
+  };
+  zendeskService.addInternalNote = async () => {};
+  spamFilterService.evaluateIncomingMessage = async () => ({
+    shouldBlock: false,
+    reason: "support_message"
+  });
+  knowledgeService.searchKnowledgeDetailed = async () => ({
+    context: "Izvor 1 (OneDrive):\nNaslov: Dostupnost\nSadržaj: Dostupnost provjeravamo po naslovu ili ISBN-u.",
+    articles: [
+      {
+        title: "Dostupnost",
+        body: "Dostupnost provjeravamo po naslovu ili ISBN-u.",
+        score: 22,
+        source: "onedrive"
+      }
+    ],
+    topScore: 22,
+    totalMatches: 1,
+    primarySource: "onedrive"
+  });
+  aiService.generateGroundedAnswer = async () =>
+    "Pošaljite nam naslov ili ISBN pa ćemo odmah provjeriti dostupnost.";
+
+  try {
+    const firstResult = await __internal.processZendeskWebhookPayload({
+      ticket: {
+        id: 88800,
+        via: {
+          channel: "email"
+        }
+      },
+      ticket_event: {
+        id: 551001,
+        comment: {
+          body: "Imate li ovu knjigu na stanju?"
+        }
+      }
+    });
+    const secondResult = await __internal.processZendeskWebhookPayload({
+      ticket: {
+        id: 88800,
+        via: {
+          channel: "email"
+        }
+      },
+      ticket_event: {
+        id: 551002
+      }
+    });
+
+    assert.equal(firstResult.status, 200);
+    assert.equal(firstResult.body.action, "customer_reply_sent");
+    assert.equal(secondResult.status, 200);
+    assert.equal(secondResult.body.action, "ignored");
+    assert.equal(secondResult.body.reason, "duplicate_customer_message");
+    assert.equal(botReplies.length, 1);
+  } finally {
+    zendeskService.getTicketSummary = originalGetTicketSummary;
+    zendeskService.getTicketAudits = originalGetTicketAudits;
+    zendeskService.updateConversationState = originalUpdateConversationState;
+    zendeskService.addBotReplyToTicket = originalAddBotReplyToTicket;
+    zendeskService.addInternalNote = originalAddInternalNote;
+    spamFilterService.evaluateIncomingMessage = originalEvaluateIncomingMessage;
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+    resetRuntimeState();
+  }
+});
+
 test("webhook processing moves complaint tickets to awaiting human with complaint tags", async () => {
   const originalGetTicketSummary = zendeskService.getTicketSummary;
   const originalGetTicketAudits = zendeskService.getTicketAudits;

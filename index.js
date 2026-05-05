@@ -20,6 +20,7 @@ const IS_TEST_ENV = process.env.NODE_ENV === "test";
 const SHOULD_LOG_IN_TEST = process.env.DEBUG_TEST_LOGS === "true";
 const chatSessions = new Map();
 const processedWebhookAudits = new Map();
+const processedWebhookMessages = new Map();
 const recentChatStarts = new Map();
 let vectorKnowledgeSyncPromise = null;
 const WEBHOOK_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
@@ -410,6 +411,10 @@ function persistRuntimeState() {
       key,
       createdAt
     })),
+    processedWebhookMessages: [...processedWebhookMessages.entries()].map(([key, createdAt]) => ({
+      key,
+      createdAt
+    })),
     recentChatStarts: [...recentChatStarts.entries()].map(([key, value]) => ({
       key,
       ...value
@@ -433,6 +438,12 @@ function hydrateRuntimeState() {
   for (const entry of persistedState.processedWebhookAudits) {
     if (entry?.key) {
       processedWebhookAudits.set(entry.key, Number(entry.createdAt) || Date.now());
+    }
+  }
+
+  for (const entry of persistedState.processedWebhookMessages) {
+    if (entry?.key) {
+      processedWebhookMessages.set(entry.key, Number(entry.createdAt) || Date.now());
     }
   }
 
@@ -470,6 +481,7 @@ function resetRuntimeState() {
   chatSessions.clear();
   chatStreams.clear();
   processedWebhookAudits.clear();
+  processedWebhookMessages.clear();
   recentChatStarts.clear();
   rateLimitStore.clear();
   persistRuntimeState();
@@ -1241,6 +1253,38 @@ function getLatestAssistantMessage(messages = []) {
 
 function getLatestUserMessage(messages = []) {
   return [...messages].reverse().find((message) => message.role === "user") || null;
+}
+
+function buildWebhookMessageDeduplicationKey({ ticketId, latestUserMessage, fallbackMessage = "" } = {}) {
+  if (!ticketId || !latestUserMessage) {
+    return "";
+  }
+
+  const messageId = String(latestUserMessage.id || "").trim();
+
+  if (messageId) {
+    return `${ticketId}:message:${messageId}`;
+  }
+
+  const createdAt = String(latestUserMessage.createdAt || "").trim();
+  const normalizedContent =
+    normalizeMessage(latestUserMessage.content) || normalizeMessage(fallbackMessage);
+  const attachmentFingerprint = Array.isArray(latestUserMessage.attachments)
+    ? latestUserMessage.attachments
+      .map((attachment) =>
+        String(attachment?.id || attachment?.url || attachment?.name || "").trim()
+      )
+      .filter(Boolean)
+      .join("|")
+    : "";
+  const fallbackParts = [createdAt, normalizedContent.toLowerCase(), attachmentFingerprint]
+    .filter(Boolean);
+
+  if (fallbackParts.length === 0) {
+    return "";
+  }
+
+  return `${ticketId}:fallback:${fallbackParts.join("::")}`;
 }
 
 function getLatestPublicMessage(messages = []) {
@@ -3578,6 +3622,7 @@ async function processZendeskWebhookPayload(payload = {}) {
     hasAttachments,
     auditId
   } = extractZendeskWebhookEnvelope(payload);
+  let registeredMessageDeduplicationKey = "";
 
   // Fix #16: Webhook idempotency — skip duplicate audit processing.
   if (auditId) {
@@ -3716,6 +3761,34 @@ async function processZendeskWebhookPayload(payload = {}) {
       };
     }
 
+    const latestUserMessageDeduplicationKey = buildWebhookMessageDeduplicationKey({
+      ticketId,
+      latestUserMessage,
+      fallbackMessage: normalizedMessage
+    });
+
+    if (
+      latestUserMessageDeduplicationKey &&
+      processedWebhookMessages.has(latestUserMessageDeduplicationKey)
+    ) {
+      metricsService.increment("webhook_duplicate_ignored_total");
+      return {
+        status: 200,
+        body: {
+          success: true,
+          action: "ignored",
+          reason: "duplicate_customer_message",
+          channelType
+        }
+      };
+    }
+
+    if (latestUserMessageDeduplicationKey) {
+      processedWebhookMessages.set(latestUserMessageDeduplicationKey, Date.now());
+      registeredMessageDeduplicationKey = latestUserMessageDeduplicationKey;
+      scheduleRuntimePersist();
+    }
+
     const temporarySession = {
       ticketId,
       requesterId: ticketSummary.requesterId,
@@ -3831,6 +3904,11 @@ async function processZendeskWebhookPayload(payload = {}) {
       stack: error.stack,
       ticketId
     });
+
+    if (registeredMessageDeduplicationKey) {
+      processedWebhookMessages.delete(registeredMessageDeduplicationKey);
+      scheduleRuntimePersist();
+    }
 
     return {
       status: 500,
@@ -4727,9 +4805,17 @@ app.get("/debug/zendesk/:ticketId", async (req, res) => {
 const webhookIdempotencyCleanupInterval = setInterval(() => {
   const now = Date.now();
   let changed = false;
+
   for (const [key, timestamp] of processedWebhookAudits) {
     if (now - timestamp > WEBHOOK_IDEMPOTENCY_TTL_MS) {
       processedWebhookAudits.delete(key);
+      changed = true;
+    }
+  }
+
+  for (const [key, timestamp] of processedWebhookMessages) {
+    if (now - timestamp > WEBHOOK_IDEMPOTENCY_TTL_MS) {
+      processedWebhookMessages.delete(key);
       changed = true;
     }
   }

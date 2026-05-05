@@ -56,6 +56,7 @@ function loadRuntimeState() {
   return {
     sessions: pruneSessions(parsed.sessions, now),
     processedWebhookAudits: pruneWebhookEntries(parsed.processedWebhookAudits, now),
+    processedWebhookMessages: pruneWebhookEntries(parsed.processedWebhookMessages, now),
     recentChatStarts: pruneRecentStarts(parsed.recentChatStarts, now)
   };
 }
@@ -66,6 +67,7 @@ function saveRuntimeState(state = {}) {
   const payload = {
     sessions: pruneSessions(state.sessions),
     processedWebhookAudits: pruneWebhookEntries(state.processedWebhookAudits),
+    processedWebhookMessages: pruneWebhookEntries(state.processedWebhookMessages),
     recentChatStarts: pruneRecentStarts(state.recentChatStarts),
     savedAt: new Date().toISOString()
   };
