@@ -60,7 +60,34 @@ test("extractZendeskWebhookEnvelope accepts nested Zendesk-style email payload",
   });
 });
 
+test("extractZendeskWebhookEnvelope detects singular attachment payloads", () => {
+  const payload = {
+    ticket: {
+      id: 88797,
+      via: {
+        channel: "facebook"
+      }
+    },
+    ticket_event: {
+      id: 445566,
+      attachment: {
+        id: 991,
+        content_url: "https://example.com/file.jpg"
+      }
+    }
+  };
+
+  assert.deepEqual(__internal.extractZendeskWebhookEnvelope(payload), {
+    ticketId: 88797,
+    message: "",
+    channelType: "facebook",
+    auditId: 445566,
+    hasAttachments: true
+  });
+});
+
 test("webhook processing sends reply for nested email payload instead of rejecting it as invalid", async () => {
+  resetRuntimeState();
   const originalGetTicketSummary = zendeskService.getTicketSummary;
   const originalGetTicketAudits = zendeskService.getTicketAudits;
   const originalUpdateConversationState = zendeskService.updateConversationState;
@@ -154,6 +181,7 @@ test("webhook processing sends reply for nested email payload instead of rejecti
 });
 
 test("webhook processing rebuilds retrieval context from prior conversation for non-web channels", async () => {
+  resetRuntimeState();
   const originalGetTicketSummary = zendeskService.getTicketSummary;
   const originalGetTicketAudits = zendeskService.getTicketAudits;
   const originalUpdateConversationState = zendeskService.updateConversationState;
@@ -271,7 +299,105 @@ test("webhook processing rebuilds retrieval context from prior conversation for 
   }
 });
 
+test("webhook processing escalates facebook attachment-only messages from FacebookComment audits", async () => {
+  resetRuntimeState();
+  const originalGetTicketSummary = zendeskService.getTicketSummary;
+  const originalGetTicketAudits = zendeskService.getTicketAudits;
+  const originalUpdateConversationState = zendeskService.updateConversationState;
+  const originalAddTagAndNote = zendeskService.addTagAndNote;
+  const originalAddInternalNote = zendeskService.addInternalNote;
+  const originalEvaluateIncomingMessage = spamFilterService.evaluateIncomingMessage;
+
+  const notes = [];
+  const stateUpdates = [];
+  const tags = [];
+
+  zendeskService.getTicketSummary = async () => ({
+    id: 88799,
+    status: "open",
+    tags: [],
+    requesterId: 1001,
+    requesterName: "Željka Horvat",
+    requesterEmail: "zeljka@example.com"
+  });
+  zendeskService.getTicketAudits = async () => [
+    {
+      id: "audit-facebook-photo",
+      author_id: 1001,
+      created_at: "2026-05-07T07:12:00.000Z",
+      via: { channel: "facebook" },
+      events: [
+        {
+          id: "fb-comment-1",
+          type: "FacebookComment",
+          public: true,
+          author_id: 1001,
+          body: "",
+          html_body: "",
+          data: {
+            attachments: [
+              {
+                id: "attachment-1",
+                mime_type: "image/jpeg",
+                name: "books.jpg",
+                size: 1024
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ];
+  zendeskService.updateConversationState = async (ticketId, stateTag) => {
+    stateUpdates.push({ ticketId, stateTag });
+  };
+  zendeskService.addTagAndNote = async (ticketId, tag, noteText) => {
+    tags.push({ ticketId, tag, noteText });
+  };
+  zendeskService.addInternalNote = async (_ticketId, noteText) => {
+    notes.push(noteText);
+  };
+  spamFilterService.evaluateIncomingMessage = async () => ({
+    shouldBlock: false,
+    reason: "support_message"
+  });
+
+  try {
+    const result = await __internal.processZendeskWebhookPayload({
+      ticket: {
+        id: 88799,
+        via: {
+          channel: "facebook"
+        }
+      },
+      ticket_event: {
+        id: 445568
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.action, "attachment_escalation");
+    assert.equal(result.body.channelType, "facebook");
+    assert.equal(tags.length, 1);
+    assert.equal(tags[0].tag, "hitno_slike");
+    assert.equal(stateUpdates.length, 1);
+    assert.equal(stateUpdates[0].stateTag, "awaiting_human");
+    assert.equal(notes.length, 1);
+    assert.match(notes[0], /attachments_present/);
+    assert.match(notes[0], /\[privitak bez teksta\]/i);
+  } finally {
+    zendeskService.getTicketSummary = originalGetTicketSummary;
+    zendeskService.getTicketAudits = originalGetTicketAudits;
+    zendeskService.updateConversationState = originalUpdateConversationState;
+    zendeskService.addTagAndNote = originalAddTagAndNote;
+    zendeskService.addInternalNote = originalAddInternalNote;
+    spamFilterService.evaluateIncomingMessage = originalEvaluateIncomingMessage;
+    resetRuntimeState();
+  }
+});
+
 test("webhook processing ignores duplicate customer message across different webhook audits", async () => {
+  resetRuntimeState();
   const originalGetTicketSummary = zendeskService.getTicketSummary;
   const originalGetTicketAudits = zendeskService.getTicketAudits;
   const originalUpdateConversationState = zendeskService.updateConversationState;
@@ -370,6 +496,7 @@ test("webhook processing ignores duplicate customer message across different web
 });
 
 test("webhook processing moves complaint tickets to awaiting human with complaint tags", async () => {
+  resetRuntimeState();
   const originalGetTicketSummary = zendeskService.getTicketSummary;
   const originalGetTicketAudits = zendeskService.getTicketAudits;
   const originalUpdateConversationState = zendeskService.updateConversationState;

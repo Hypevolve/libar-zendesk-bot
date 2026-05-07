@@ -37,6 +37,51 @@ function buildPublicCommentAudit({
   };
 }
 
+test("mapZendeskAuditsToMessages keeps FacebookComment attachments from data.attachments", () => {
+  const requesterId = 1001;
+  const ticketSummary = {
+    status: "open",
+    tags: []
+  };
+  const audits = [
+    {
+      id: "audit-facebook-photo",
+      author_id: 1001,
+      created_at: "2026-05-07T07:12:00.000Z",
+      via: { channel: "facebook" },
+      events: [
+        {
+          id: "fb-comment-1",
+          type: "FacebookComment",
+          public: true,
+          author_id: 1001,
+          body: "",
+          html_body: "",
+          data: {
+            attachments: [
+              {
+                id: "attachment-1",
+                mime_type: "image/jpeg",
+                name: "books.jpg",
+                size: 1024
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ];
+
+  const messages = __internal.mapZendeskAuditsToMessages(audits, requesterId, ticketSummary);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].sourceChannel, "facebook");
+  assert.equal(messages[0].attachments.length, 1);
+  assert.equal(messages[0].attachments[0].name, "books.jpg");
+  assert.equal(messages[0].attachments[0].contentType, "image/jpeg");
+});
+
 test("facebook customer webhook message is not misclassified as assistant when author_id differs from requester", () => {
   const requesterId = 1001;
   const ticketSummary = {

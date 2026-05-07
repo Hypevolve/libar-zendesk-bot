@@ -252,6 +252,26 @@ function hasAttachmentEntries(value) {
   return Array.isArray(value) && value.length > 0;
 }
 
+function hasAttachmentReference(value) {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Boolean(
+    value.id ||
+    value.url ||
+    value.content_url ||
+    value.contentUrl ||
+    value.name ||
+    value.file_name ||
+    value.fileName
+  );
+}
+
 function extractZendeskWebhookEnvelope(payload = {}) {
   const ticketId = firstDefinedValue(
     payload.ticket_id,
@@ -319,11 +339,19 @@ function extractZendeskWebhookEnvelope(payload = {}) {
         payload.ticket_event?.comment?.has_attachments
       )
     ) ||
+    hasAttachmentReference(payload.attachment) ||
     hasAttachmentEntries(payload.attachments) ||
+    hasAttachmentReference(payload.comment?.attachment) ||
     hasAttachmentEntries(payload.comment?.attachments) ||
+    hasAttachmentReference(payload.ticket?.attachment) ||
     hasAttachmentEntries(payload.ticket?.attachments) ||
+    hasAttachmentReference(payload.ticket?.comment?.attachment) ||
     hasAttachmentEntries(payload.ticket?.comment?.attachments) ||
-    hasAttachmentEntries(payload.ticket_event?.comment?.attachments);
+    hasAttachmentReference(payload.ticket_event?.attachment) ||
+    hasAttachmentReference(payload.ticket_event?.comment?.attachment) ||
+    hasAttachmentEntries(payload.ticket_event?.comment?.attachments) ||
+    hasAttachmentReference(payload.event?.comment?.attachment) ||
+    hasAttachmentEntries(payload.event?.comment?.attachments);
 
   return {
     ticketId,
@@ -356,11 +384,11 @@ function getChannelMessages(channelType = "unknown") {
     case "facebook":
       return {
         attachmentHandoff:
-          "Hvala na privitku. Pregledat ćemo ga i javiti vam se ovdje čim provjerimo detalje.",
+          "Hvala na fotografijama. Pregledat ćemo ih i javiti vam se čim provjerimo detalje.",
         hardHandoff:
-          "Ovo trebamo provjeriti ručno. Kolege će vam se javiti ovdje čim pregledaju upit.",
+          "Ovo trebamo provjeriti ručno. Kolege će vam se javiti čim pregledaju upit.",
         softHandoff:
-          "Ne želim vam dati netočan odgovor. Kolege će pregledati upit i javiti vam se ovdje uskoro."
+          "Ne želim vam dati netočan odgovor. Kolege će pregledati upit i javiti vam se uskoro."
       };
     case "email":
       return {
@@ -722,7 +750,17 @@ function stripEmailSignature(content = "") {
 }
 
 function normalizeZendeskCommentContent(comment = {}) {
-  const sources = [comment.html_body, comment.plain_body, comment.body].filter(Boolean);
+  const sources = [
+    comment.html_body,
+    comment.plain_body,
+    comment.body,
+    comment.data?.html_body,
+    comment.data?.plain_body,
+    comment.data?.body,
+    comment.data?.content,
+    comment.content?.body,
+    comment.content?.text
+  ].filter(Boolean);
 
   if (sources.length === 0) {
     return "";
@@ -921,16 +959,69 @@ function inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSumma
   return "user";
 }
 
+function isPublicConversationAuditEvent(event = {}) {
+  return Boolean(
+    event?.public !== false &&
+    ["Comment", "VoiceComment", "FacebookComment", "Tweet"].includes(String(event?.type || ""))
+  );
+}
+
+function normalizeZendeskAttachment(attachment = {}) {
+  if (!attachment || typeof attachment !== "object") {
+    return null;
+  }
+
+  const normalizedAttachment = {
+    id: attachment.id || attachment.attachment_id || attachment.graph_object_id || attachment.url || null,
+    name: attachment.file_name || attachment.fileName || attachment.name || null,
+    contentType: attachment.content_type || attachment.contentType || attachment.mime_type || null,
+    size: attachment.size || null,
+    url: attachment.content_url || attachment.contentUrl || attachment.url || null
+  };
+
+  return normalizedAttachment.id || normalizedAttachment.name || normalizedAttachment.url
+    ? normalizedAttachment
+    : null;
+}
+
+function extractZendeskEventAttachments(event = {}) {
+  const attachments = [
+    ...(Array.isArray(event.attachments) ? event.attachments : []),
+    ...(Array.isArray(event.data?.attachments) ? event.data.attachments : []),
+    ...(hasAttachmentReference(event.attachment) ? [event.attachment] : []),
+    ...(hasAttachmentReference(event.data?.attachment) ? [event.data.attachment] : [])
+  ]
+    .map((attachment) => normalizeZendeskAttachment(attachment))
+    .filter(Boolean);
+
+  return attachments.filter((attachment, index, allAttachments) => {
+    const fingerprint = String(
+      attachment.id || attachment.url || `${attachment.name}:${attachment.contentType}:${attachment.size}`
+    );
+    return allAttachments.findIndex((candidate) => String(
+      candidate.id || candidate.url || `${candidate.name}:${candidate.contentType}:${candidate.size}`
+    ) === fingerprint) === index;
+  });
+}
+
+function getAuditEventSourceChannel(audit = {}, event = {}) {
+  if (event?.type === "FacebookComment") {
+    return "facebook";
+  }
+
+  return event?.via?.channel || audit?.via?.channel || null;
+}
+
 function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
   return audits
     .flatMap((audit) => {
       const commentEvents = Array.isArray(audit.events)
-        ? audit.events.filter((event) => event?.type === "Comment" && event?.public !== false)
+        ? audit.events.filter((event) => isPublicConversationAuditEvent(event))
         : [];
 
       return commentEvents.map((commentEvent) => {
         const role = inferMessageRoleFromAudit(audit, commentEvent, requesterId, ticketSummary);
-        const sourceChannel = commentEvent?.via?.channel || audit?.via?.channel || null;
+        const sourceChannel = getAuditEventSourceChannel(audit, commentEvent);
 
         return {
           id: String(commentEvent.id || audit.id),
@@ -942,15 +1033,7 @@ function mapZendeskAuditsToMessages(audits, requesterId, ticketSummary) {
           supportTaskIntent: role === "assistant" ? getSupportTaskIntentFromMetadata(audit) : "",
           products: role === "assistant" ? getMessageProductsFromMetadata(audit) : [],
           suggestedReplies: role === "assistant" ? getSuggestedRepliesFromMetadata(audit) : [],
-          attachments: Array.isArray(commentEvent.attachments)
-            ? commentEvent.attachments.map((attachment) => ({
-                id: attachment.id,
-                name: attachment.file_name,
-                contentType: attachment.content_type,
-                size: attachment.size,
-                url: attachment.content_url
-              }))
-            : []
+          attachments: extractZendeskEventAttachments(commentEvent)
         };
       });
     })
@@ -2855,7 +2938,7 @@ function buildOnlineBuybackGuidanceOutcome() {
 function looksLikeBuybackAcceptedBooksQuestion(userMessage = "") {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
 
-  return /(koje\s+sve\s+knjige|koje\s+knjige|sto\s+otkupljujete|što\s+otkupljujete|otkupljujete li|radne\s+biljeznice|radne\s+bilježnice|osnovn\w*\s+skol|osnovn\w*\s+škol|osnovnoskol\w*|osnovnoškol\w*|fakultet|beletristik|roman)/.test(normalizedMessage) &&
+  return /(koje\s+sve\s+knjige|koje\s+knjige|sto\s+otkupljujete|što\s+otkupljujete|otkupljujete li|da\s+li\s+otkupljujete|dali\s+otkupljujete|radne\s+biljeznice|radne\s+bilježnice|osnovn\w*\s+skol|osnovn\w*\s+škol|osnovnoskol\w*|osnovnoškol\w*|fakultet|beletristik|roman)/.test(normalizedMessage) &&
     /(otkup|otkupljuj|prodati|prodajem|prodaja)/.test(normalizedMessage);
 }
 
@@ -2868,6 +2951,38 @@ function buildBuybackAcceptedBooksOutcome() {
     stateTag: "ai_active",
     reason: "buyback_accepted_books_guidance",
     source: "conversation_fallback",
+    taskIntent: "buyback",
+    customerMessage,
+    zendeskMessage: customerMessage
+  };
+}
+
+function looksLikeSpecificSellOfferMessage(userMessage = "") {
+  const normalizedMessage = normalizeForComparison(userMessage).trim();
+
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    /(ja\s+prodajem|prodajem\s+ove|ovo\s+prodajem|zelim\s+prodati\s+ove|želim\s+prodati\s+ove|ako\s+vi\s+otkupljujete)/.test(
+      normalizedMessage
+    ) &&
+    /(knjig|udzben|otkup|otkupljuj|prodaj)/.test(normalizedMessage)
+  );
+}
+
+function buildSpecificSellOfferGuidanceOutcome(channelType = "web_chat") {
+  const customerMessage =
+    channelType === "facebook"
+      ? `Da, ako su knjige upotrebljive i postoji potražnja. Najbrže provjerite barkod na ${BASE_URL}/otkup-udzbenika/ ili pošaljite barkod/ISBN odnosno fotografije pa ćemo provjeriti.`
+      : `Da, ako su knjige upotrebljive i postoji potražnja. Najbrže provjerite barkod na ${BASE_URL}/otkup-udzbenika/ ili pošaljite barkod/ISBN odnosno fotografije pa ćemo provjeriti.`;
+
+  return {
+    type: "safe_answer",
+    stateTag: "ai_active",
+    reason: "buyback_offer_guidance",
+    source: "website_links",
     taskIntent: "buyback",
     customerMessage,
     zendeskMessage: customerMessage
@@ -3003,6 +3118,7 @@ function buildPolicyOutcome(userMessage = "", { session = {}, channelType = "web
     (looksLikeBuybackAcceptedBooksQuestion(userMessage) ? buildBuybackAcceptedBooksOutcome() : null) ||
     (looksLikeBuybackBonusQuestion(userMessage) ? buildBuybackBonusOutcome() : null) ||
     (looksLikeBuybackPriceQuestion(userMessage) ? buildBuybackPriceOutcome() : null) ||
+    (looksLikeSpecificSellOfferMessage(userMessage) ? buildSpecificSellOfferGuidanceOutcome(channelType) : null) ||
     buildCriticalComplaintOutcome(userMessage) ||
     (looksLikeOrderMergeRequest(userMessage) ? buildOrderMergeGuidanceOutcome() : null) ||
     (looksLikeBuybackDeliveryExchangeQuestion(userMessage) ? buildBuybackDeliveryExchangeGuidanceOutcome() : null) ||
@@ -3182,6 +3298,10 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
       normalizedMessage
     )
   ) {
+    if (looksLikeSpecificSellOfferMessage(userMessage)) {
+      return buildSpecificSellOfferGuidanceOutcome(channelType);
+    }
+
     return {
       type: "safe_answer",
       stateTag: "ai_active",

@@ -84,6 +84,7 @@ Facebook tok ide preko `/webhook/zendesk`.
 Specificno:
 - channel-specific copy (kraci, chat-like)
 - idempotency preko audit ID cachea
+- slikovne poruke hvataju se i kroz `FacebookComment.data.attachments`, ne samo kroz standardni `Comment.attachments`
 
 ## Decision pipeline
 
@@ -131,6 +132,7 @@ Trenutni customer-facing model je webshop guidance:
 
 Podrzani fast-path outcomei:
 - `online_buyback_guidance`
+- `buyback_offer_guidance`
 - `buyback_package_guidance`
 - `buyback_accepted_books_guidance`
 - `buyback_bonus_guidance`

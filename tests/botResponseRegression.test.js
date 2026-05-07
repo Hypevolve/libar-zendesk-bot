@@ -467,6 +467,39 @@ test("resolveAutomatedOutcome answers common buyback FAQ intents without product
   }
 });
 
+test("resolveAutomatedOutcome recognizes natural buyback acceptance and seller clarification phrasing", async () => {
+  const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
+  const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
+
+  knowledgeService.searchKnowledgeDetailed = async () => null;
+  aiService.generateGroundedAnswer = async () => "";
+
+  try {
+    const acceptedBooks = await __internal.resolveAutomatedOutcome(
+      {},
+      "Da li otkupljujete knjige na talijanskom jeziku?",
+      { channelType: "facebook" }
+    );
+
+    assert.equal(acceptedBooks.outcome.type, "safe_answer");
+    assert.equal(acceptedBooks.outcome.reason, "buyback_accepted_books_guidance");
+
+    const specificOffer = await __internal.resolveAutomatedOutcome(
+      {},
+      "Ja prodajem ove knjige, ako vi otkupljujete naravno",
+      { channelType: "facebook" }
+    );
+
+    assert.equal(specificOffer.outcome.type, "safe_answer");
+    assert.equal(specificOffer.outcome.reason, "buyback_offer_guidance");
+    assert.match(specificOffer.outcome.customerMessage, /otkup-udzbenika/i);
+    assert.doesNotMatch(specificOffer.outcome.customerMessage, /\n2\./i);
+  } finally {
+    knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
+    aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;
+  }
+});
+
 test("resolveAutomatedOutcome asks for a fuller title on short ambiguous product queries", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;

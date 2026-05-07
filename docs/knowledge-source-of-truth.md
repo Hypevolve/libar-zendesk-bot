@@ -28,7 +28,7 @@ Sljedeca pravila imaju prednost nad retrieval odgovorom:
 - `attachments_present` -> handoff
 - kriticni complaint signali -> handoff
 - `order_issue_clarification` kad nedostaju identifikatori narudzbe
-- buyback specific guidance (`online_buyback_guidance`, `buyback_package_guidance`, itd.)
+- buyback specific guidance (`online_buyback_guidance`, `buyback_offer_guidance`, `buyback_package_guidance`, itd.)
 - product lookup guidance (`purchase_search_guidance`) umjesto direktnog product card odgovora
 
 ## Obavezni audit topicovi

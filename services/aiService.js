@@ -122,6 +122,7 @@ function buildChannelInstructions(channelType = "unknown") {
     return [
       "KANAL: Facebook",
       "- Odgovor treba biti malo kraći i razgovorniji nego email, ali i dalje profesionalan.",
+      "- Odgovor zadrži na najviše 3 kratke rečenice osim ako korisnik izričito traži korake.",
       "- Nemoj koristiti web-chat formulacije poput 'javiti ćemo vam se ovdje u chatu'."
     ];
   }
@@ -337,6 +338,8 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
     "- Ako kontekst sadrži konkretne korake ili preporuke, sažmi ih u jasan odgovor.",
     "- Ako korisnik pita dvije ili tri povezane stvari, odgovori kratko po istom redoslijedu.",
     "- Ako korisnik traži samo potvrdu ili kratku činjenicu, nemoj širiti odgovor u nepotreban postupak.",
+    "- Ako je korisnik u otkupu ili prodaji knjiga, ne odgovaraj kao da traži kupnju, dostupnost ili narudžbu knjiga.",
+    "- Ako je podržano kontekstom, na da/ne pitanje odgovori odmah u prvoj rečenici.",
     "- Ako kontekst ne pokriva stvarni korisnikov posao ili pitanje, radije ne odgovaraj.",
     "- Ton mora biti ljubazan, smiren i koristan, bez obrambenog ili optužujućeg tona.",
     "- Sve činjenice poput cijena, rokova, datuma, radnog vremena, adresa, emailova, telefona i naziva načina plaćanja prepiši točno kako pišu u kontekstu.",

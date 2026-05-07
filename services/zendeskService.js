@@ -691,7 +691,15 @@ async function getTicketAudits(ticketId) {
     validateZendeskConfig();
 
     const audits = [];
-    let nextPageUrl = `/api/v2/tickets/${ticketId}/audits.json?filter_events[]=Comment&page[size]=100`;
+    let nextPageUrl =
+      `/api/v2/tickets/${ticketId}/audits.json?` +
+      [
+        "filter_events[]=Comment",
+        "filter_events[]=VoiceComment",
+        "filter_events[]=FacebookComment",
+        "filter_events[]=Tweet",
+        "page[size]=100"
+      ].join("&");
 
     while (nextPageUrl) {
       const response = await zendeskClient.get(nextPageUrl);

@@ -165,7 +165,8 @@ test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit 
 
     const facebookResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "facebook" });
     assert.equal(facebookResult.outcome.type, "hard_handoff");
-    assert.match(facebookResult.outcome.customerMessage, /javiti.*ovdje/i);
+    assert.match(facebookResult.outcome.customerMessage, /javiti/i);
+    assert.doesNotMatch(facebookResult.outcome.customerMessage, /ovdje/i);
 
     const emailResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "email" });
     assert.equal(emailResult.outcome.type, "hard_handoff");
@@ -207,7 +208,8 @@ test("resolveAutomatedOutcome bypasses KB lookup for attachments and keeps chann
       channelType: "facebook"
     });
     assert.equal(facebookResult.reason, "attachments_present");
-    assert.match(facebookResult.outcome.customerMessage, /javiti vam se ovdje/i);
+    assert.match(facebookResult.outcome.customerMessage, /javiti vam se/i);
+    assert.doesNotMatch(facebookResult.outcome.customerMessage, /ovdje/i);
 
     const emailResult = await __internal.resolveAutomatedOutcome({}, "Šaljem privitak", {
       hasAttachments: true,

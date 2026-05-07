@@ -24,6 +24,7 @@ Datum uskladjenja: 29.04.2026
 
 - `purchase_search_guidance`
 - `online_buyback_guidance`
+- `buyback_offer_guidance`
 - `buyback_package_guidance`
 - `buyback_delivery_exchange_guidance`
 - `order_issue_clarification`
