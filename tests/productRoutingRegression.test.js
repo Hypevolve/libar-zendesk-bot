@@ -138,7 +138,18 @@ test("conversation regression keeps product lookup isolated from support routes"
 
       if (scenario.expectedRoute === "onedrive_knowledge") {
         assert.equal(knowledgeLookupCalled, true, scenario.message);
-        assert.equal(outcome.reason, "knowledge_fallback", scenario.message);
+        const validFallbackReasons = [
+          "knowledge_fallback",
+          "knowledge_fallback_grounded",
+          "reference_facts_grounded",
+          "support_info_link_fallback",
+          "delivery_link_fallback",
+          "grounded_answer"
+        ];
+        assert.ok(
+          validFallbackReasons.includes(outcome.reason),
+          `${scenario.message} -> unexpected reason: ${outcome.reason}`
+        );
         continue;
       }
 

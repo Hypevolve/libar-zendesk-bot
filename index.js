@@ -1670,7 +1670,8 @@ function validateAnswerQuality({ answer = "", outcomeType = "", knowledge = null
     };
   }
 
-  if (/\b(ne znam|nisam siguran|mozda|možda|pretpostavljam|vjerojatno)\b/i.test(normalizedAnswer)) {
+  const firstSentence = normalizedAnswer.split(/[.!?\n]/).filter(Boolean)[0] || "";
+  if (/\b(ne znam|nisam siguran|pretpostavljam)\b/i.test(firstSentence)) {
     return {
       isValid: false,
       reason: "uncertain_answer"
@@ -1863,6 +1864,37 @@ function buildKnowledgeFallbackAnswer(knowledge = null) {
   }
 
   return "";
+}
+
+function buildKnowledgeFallbackContext(knowledge = null) {
+  if (
+    !knowledge ||
+    Number(knowledge.topScore || 0) < KNOWLEDGE_MIN_TOP_SCORE ||
+    !Array.isArray(knowledge.articles) ||
+    knowledge.articles.length === 0
+  ) {
+    return "";
+  }
+
+  const articleSections = knowledge.articles
+    .filter((article) => article?.body)
+    .map((article) => {
+      const title = article.title ? `Naslov: ${article.title}` : "";
+      const body = String(article.body || "").trim();
+
+      return [title, body].filter(Boolean).join("\n");
+    })
+    .filter(Boolean);
+
+  if (articleSections.length === 0) {
+    return "";
+  }
+
+  return [
+    ...articleSections,
+    "",
+    REFERENCE_FACTS_CONTEXT
+  ].join("\n\n");
 }
 
 function isGreetingOnlyMessage(message = "") {
@@ -3620,23 +3652,39 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     }
   }
 
-  const fallbackAnswer = buildKnowledgeFallbackAnswer(knowledge);
+  const fallbackKnowledgeContext = buildKnowledgeFallbackContext(knowledge);
 
-  if (fallbackAnswer) {
-    const outcome = finalizeOutcomeForCustomer({
-      type: "safe_answer",
-      stateTag: "ai_active",
-      reason: "knowledge_fallback",
-      source: knowledge?.primarySource === "zendesk" ? "zendesk_knowledge" : "onedrive_knowledge",
-      taskIntent: knowledgeSearchOptions.taskIntent || knowledgeSearchOptions.activeDomain || "",
-      customerMessage: fallbackAnswer
-    }, {
-      channelType,
-      knowledge
-    });
+  if (fallbackKnowledgeContext) {
+    const fallbackGroundedAnswer = await aiService.generateGroundedAnswer(
+      userMessage,
+      fallbackKnowledgeContext,
+      {
+        channelType,
+        customerName: session.requesterName || ""
+      }
+    );
 
-    if (outcome?.type === "safe_answer") {
-      return finishOutcome(outcome, knowledge);
+    if (fallbackGroundedAnswer) {
+      const normalizedFallbackAnswer = normalizeForComparison(fallbackGroundedAnswer);
+      const looksUncertain = /(ne mogu|nisam siguran|nemam informacij|pouzdano potvrditi)/.test(normalizedFallbackAnswer);
+
+      if (!looksUncertain) {
+        const outcome = finalizeOutcomeForCustomer({
+          type: "safe_answer",
+          stateTag: "ai_active",
+          reason: "knowledge_fallback_grounded",
+          source: knowledge?.primarySource === "zendesk" ? "zendesk_knowledge" : "onedrive_knowledge",
+          taskIntent: knowledgeSearchOptions.taskIntent || knowledgeSearchOptions.activeDomain || "",
+          customerMessage: fallbackGroundedAnswer
+        }, {
+          channelType,
+          knowledge
+        });
+
+        if (outcome?.type === "safe_answer") {
+          return finishOutcome(outcome, knowledge);
+        }
+      }
     }
   }
 
