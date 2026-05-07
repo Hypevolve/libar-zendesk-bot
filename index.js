@@ -2506,7 +2506,7 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   if (
-    /(refund|reklamacij|povrat|dostav|isporuk|postarin|poštarin|paket|paketomat|gls|boxnow|box now|kurir|dostavljac|dostavljač|naljepnic|preda|predati|predam|odnijeti|odnes|zapakir|spakir|\botkup\w*|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
+    /(refund|reklamacij|povrat|dostav|isporuk|postarin|poštarin|paket|paketomat|gls|boxnow|box now|kurir|dostavljac|dostavljač|naljepnic|preda|predati|predam|odnijeti|odnes|zapakir|spakir|\botkup\w*|\bprodaja\b|\bprodati\b|\bprodajem\b|\bprodat\b|\bprodam\b|\bprodao\b|\bprodala\b|\botkupljuj\w*|\bsjedi 5\b|radno vrijeme|kontakt|adresa|telefon|email|mail|narudzb|problem|pomoc|administrator|ignore all previous instructions|listu svih kupaca|kupaca|kupci|buyers|proslog mjeseca|prosli mjesec)/.test(
       normalizedMessage
     )
   ) {
