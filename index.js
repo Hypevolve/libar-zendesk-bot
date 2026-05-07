@@ -2353,13 +2353,13 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
       normalizedMessage
     );
   const hasOrderIssue =
-    /(narudzb|narudžb|reklamacij|povrat|refund|r1|racun|račun|problem|gdje mi je|nisam .*dobi|niste odgovorili|otkazat|otkaziv|ostecen|oštećen|kriva knjiga|krive knjige)/.test(
+    /(narudzb|narudžb|reklamacij|povrat|refund|vratiti|vratim|vratio|vratila|vrati|r1|racun|račun|problem|gdje mi je|nisam .*dobi|niste odgovorili|otkazat|otkaziv|ostecen|oštećen|kriva knjiga|krive knjige)/.test(
       normalizedMessage
     );
   const hasBuyerForSalePhrase = looksLikeBuyerSearchDespiteSellWords(rawMessage);
   const hasBuybackIntent =
     !hasBuyerForSalePhrase &&
-    /\b(otkup\w*|prodati|prodat\w*|prodajem|prodala|prodao|prodaja knjiga|prodaja udzbenika|prodaja udžbenika|procjen\w*|vrednovanj\w*|otkupn\w*\s+nalog)\b/.test(
+    /\b(otkup\w*|prodati|prodat\w*|prodam|prodajem|prodala|prodao|prodaja knjiga|prodaja udzbenika|prodaja udžbenika|procjen\w*|vrednovanj\w*|otkupn\w*\s+nalog|donesem)\b/.test(
       normalizedMessage
     );
   const hasDeliverySignal =
@@ -2367,7 +2367,7 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
       normalizedMessage
     );
   const hasSupportInfoSignal =
-    /(radno vrijeme|adresa|lokacija|kontakt|telefon|email|mail|placanj|plaćanj|pouzec|pouzeć|gdje se nalaz)/.test(
+    /(radno vrijeme|adresa|lokacija|kontakt|telefon|email|mail|placanj|plaćanj|pouzec|pouzeć|gdje se nalaz|sjedi 5|poslovnic)/.test(
       normalizedMessage
     );
   const hasBookSearchVerb =
@@ -2468,7 +2468,8 @@ function getRelevanceQueryFeatures(message = "", session = {}) {
     hasMixedSupportAndProductIntent,
     hasContextualSupportFollowup,
     isTitleHeavyProductCandidate,
-    isVagueProductQuery
+    isVagueProductQuery,
+    isSupportOnly
   };
 }
 
@@ -2500,6 +2501,10 @@ function looksLikeProductLookupMessage(message = "", session = {}) {
   }
 
   const queryFeatures = getRelevanceQueryFeatures(message, session);
+
+  if (queryFeatures.isSupportOnly) {
+    return false;
+  }
 
   if (queryFeatures.isTitleHeavyProductCandidate) {
     return true;
@@ -5175,6 +5180,7 @@ module.exports = {
     getSessionActiveDomain,
     looksLikeProductContinuationMessage,
     looksLikeProductLookupMessage,
+    getRelevanceQueryFeatures,
     mapZendeskAuditsToMessages,
     normalizeChannelType,
     normalizeZendeskCommentContent,
