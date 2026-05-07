@@ -1005,7 +1005,7 @@ test("buildGroundedAnswerPrompt encodes answer constraints for exact facts and c
     }
   );
 
-  assert.match(prompt, /Sve činjenice poput cijena, rokova, datuma, radnog vremena, adresa, emailova, telefona i naziva načina plaćanja prepiši točno kako pišu u kontekstu\./);
+  assert.match(prompt, /Sve činjenice poput cijena, rokova, datuma, radnog vremena, adresa, emailova, telefona i naziva načina plaćanja prepiši TOČNO kako pišu u kontekstu\./);
   assert.match(prompt, /Nemoj mijenjati brojke, valutu, raspone, uvjete ni redoslijed koraka iz konteksta\./);
   assert.match(prompt, /KANAL: Email/);
   assert.match(prompt, /Ne generiraj subject ni potpis; vrati samo tijelo odgovora\./);
