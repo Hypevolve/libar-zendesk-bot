@@ -41,6 +41,7 @@ npm run report:real-queries
 - QA matrix: `docs/multi-channel-bot-qa.md`
 - Smoke checklist prije releasa: `docs/pre-release-smoke-checklist.md`
 - Pravila izvora znanja: `docs/knowledge-source-of-truth.md`
+- Copilot Studio / Agent Builder paket: `docs/copilot/README.md`
 
 ## Napomena o verziji dokumentacije
 

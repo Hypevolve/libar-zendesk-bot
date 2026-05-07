@@ -3129,6 +3129,57 @@ function buildPolicyOutcome(userMessage = "", { session = {}, channelType = "web
   );
 }
 
+function buildSupportInfoFallbackMessage(normalizedMessage) {
+  const parts = [];
+
+  if (/(gdje se nalaz|adresa|lokacija)/.test(normalizedMessage)) {
+    parts.push("Poslovnica **Antikvarijata Libar** nalazi se na adresi **Županijska ulica 17, 31000 Osijek**.");
+  }
+
+  if (/(radno vrijeme)/.test(normalizedMessage)) {
+    parts.push("Radno vrijeme je **ponedjeljak–petak 08:00–20:00** i **subota 08:00–13:00**. Nedjeljom i blagdanima ne radimo.");
+  }
+
+  if (/(kontakt|telefon|email|mail)/.test(normalizedMessage)) {
+    parts.push("Kontaktirajte nas na **info@antikvarijat-libar.com** ili telefonom na **031/201-230**.");
+  }
+
+  if (/(placanje|placanjem|nacini placanja|pouzecem|pouzece)/.test(normalizedMessage)) {
+    parts.push("Online plaćanje je moguće **pouzećem** putem GLS dostavne službe ili putem **CorvusPay** servisa. U poslovnici prihvaćamo gotovinu te kartice MasterCard, Maestro i Visa.");
+  }
+
+  if (parts.length === 0) {
+    parts.push(
+      "Poslovnica **Antikvarijata Libar** nalazi se na adresi **Županijska ulica 17, 31000 Osijek**.",
+      "Radno vrijeme je **ponedjeljak–petak 08:00–20:00** i **subota 08:00–13:00**.",
+      "Kontaktirajte nas na **info@antikvarijat-libar.com** ili telefonom na **031/201-230**."
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+function buildDeliveryFallbackMessage(normalizedMessage) {
+  if (/boxnow|box now/.test(normalizedMessage)) {
+    return "Dostava u **BoxNow paketomat** iznosi **3,25 EUR**. Rok dostave je u pravilu **1–2 radna dana**. Osobno preuzimanje u Osijeku je **besplatno**.";
+  }
+
+  if (/\bgls\b/.test(normalizedMessage)) {
+    return "Dostava putem **GLS-a na kućnu adresu** iznosi **5,97 EUR**, a u **GLS paketomat 3,75 EUR**. Rok dostave je u pravilu **1–2 radna dana**.";
+  }
+
+  if (/(pouzecem|pouzece)/.test(normalizedMessage)) {
+    return "Online plaćanje **pouzećem** je moguće putem GLS dostavne službe. Dostava na kućnu adresu tada iznosi **5,97 EUR**. Također možete platiti putem **CorvusPay** servisa.";
+  }
+
+  return [
+    "Dostava na kućnu adresu putem **GLS-a** iznosi **5,97 EUR**, **GLS paketomat 3,75 EUR**, a **BoxNow paketomat 3,25 EUR**.",
+    "Osobno preuzimanje u Osijeku je **besplatno**.",
+    "Rok dostave je u pravilu **1–2 radna dana**.",
+    "Online plaćanje je moguće **pouzećem** ili putem **CorvusPay** servisa."
+  ].join("\n\n");
+}
+
 function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelType = "web_chat" } = {}) {
   const normalizedMessage = normalizeForComparison(userMessage).trim();
 
@@ -3269,8 +3320,7 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
       reason: "support_info_link_fallback",
       source: "website_links",
       taskIntent: "support_info",
-      customerMessage:
-        "Najbrže ćete provjeriti te informacije na našem webu. Ako želite, mogu zatim pomoći protumačiti što je relevantno za vaš slučaj."
+      customerMessage: buildSupportInfoFallbackMessage(normalizedMessage)
     };
   }
 
@@ -3285,8 +3335,7 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
       reason: "delivery_link_fallback",
       source: "website_links",
       taskIntent: "delivery",
-      customerMessage:
-        "Najbrže ćete provjeriti troškove i opcije dostave na ovoj stranici. Ako želite, mogu zatim pomoći protumačiti što vam odgovara."
+      customerMessage: buildDeliveryFallbackMessage(normalizedMessage)
     };
   }
 
@@ -3314,7 +3363,9 @@ function buildNoContextAutonomousOutcome(userMessage, { session = {}, channelTyp
           "1. Otvorite online otkupni nalog na webu.",
           "2. Mobitelom skenirajte barkod svake knjige; ako skeniranje ne uspije, upišite barkod broj bez crtica ili učitajte sliku barkoda.",
           "3. Nakon što sustav prikaže vrijednost i nastavite s nalogom, zapakirajte knjige.",
-          "4. Predajte paket dostavljaču prema dogovorenom prikupu."
+          "4. Predajte paket dostavljaču prema dogovorenom prikupu.",
+          "",
+          "Ako šaljete **5 ili više udžbenika**, dostava je **besplatna**. Ako šaljete manje od 5, trošak dostave je **3,00 EUR** i odbija se od iznosa otkupa."
         ].join("\n")
     };
   }
@@ -3535,7 +3586,8 @@ async function resolveAutomatedOutcome(session, userMessage, { hasAttachments = 
     reason: "no_answer_found",
     source: "policy_guard",
     taskIntent: relevanceContext.taskIntent || "",
-    customerMessage: channelMessages.hardHandoff
+    customerMessage:
+      "Ne mogu to pouzdano potvrditi iz dostupnih informacija. Mogu Vas uputiti na podršku na **info@antikvarijat-libar.com** ili telefonom na **031/201-230**."
   };
   return finishOutcome(outcome, knowledge);
 }

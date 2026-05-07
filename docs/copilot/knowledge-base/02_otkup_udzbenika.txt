@@ -1,0 +1,45 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Otkup udžbenika
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o prodaji rabljenih udžbenika Antikvarijatu Libar.
+
+OSNOVNI MODEL OTKUPA
+Libar otkupljuje rabljene udžbenike putem interneta u cijeloj Hrvatskoj i kroz poslovnicu u Osijeku.
+
+ONLINE OTKUP
+Za online otkup korisnik treba:
+- odabrati ili ispuniti podatke kroz obrazac za otkup
+- unijeti datum kada želi da GLS dostavljač preuzme paket
+- unijeti OIB i IBAN za isplatu
+
+PRIKUP PAKETA
+- Otkup ide putem GLS dostavne službe.
+- Ako korisnik prodaje 5 ili više udžbenika, trošak dostave plaća Libar.
+- Ako korisnik šalje manje od 5 udžbenika, trošak dostave iznosi 3,00 EUR i odbija se od ukupnog iznosa otkupa.
+
+FIZIČKI OTKUP
+Korisnik može doći u poslovnicu u Osijeku tijekom radnog vremena ako želi osobno riješiti fizički otkup.
+
+VAŽNA PRAVILA
+- Bot smije objasniti opći proces otkupa.
+- Bot ne smije potvrditi da je određena knjiga prihvaćena za otkup ako to nije izričito potvrđeno u dokumentima ili sustavu.
+- Bot ne smije izmišljati procjenu cijene ni konačnu otkupnu vrijednost.
+
+PROGRAM VJERNOSTI
+Program vjernosti "SJEDI 5" detaljno je opisan u zasebnom dokumentu o popustima i bonusima.
+
+TIPIČNA PITANJA
+- Kako mogu prodati udžbenike kod vas?
+- Kako funkcionira otkup?
+- Kolika je dostava za otkup?
+- Što trebam upisati za isplatu?
+- Mogu li doći osobno u poslovnicu?
+
+PREPORUČENI KRATKI ODGOVOR
+Za online otkup odaberete datum kada želite da GLS preuzme paket, a u obrazac upisujete OIB i IBAN za isplatu. Ako šaljete 5 ili više udžbenika, dostava je besplatna. Ako šaljete manje od 5 udžbenika, trošak dostave je 3,00 EUR i odbija se od iznosa otkupa.
+
+KADA PREUSMJERITI NA PODRŠKU
+- korisnik pita za specifičnu knjigu ili kategoriju koja nije potvrđena u dokumentima
+- korisnik traži procjenu cijene
+- korisnik ima problem s obrascem za otkup ili preuzimanjem paketa

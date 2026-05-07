@@ -1,0 +1,60 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Kupnja i pretraga udžbenika
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o kupnji udžbenika i korištenju webshopa Antikvarijata Libar.
+
+OSNOVNO PRAVILO
+Ako korisnik pita za opći proces kupnje, bot smije odgovoriti samostalno.
+Ako korisnik pita za točno određeni naslov ili dostupnost, bot ne smije izmišljati stanje zalihe.
+
+KAKO KUPITI UDŽBENIKE
+1. Korisnik pretražuje udžbenike na stranici:
+   https://antikvarijat-libar.com/kupi-udzbenike/
+2. Pretraga se može raditi po:
+   - reg. broju
+   - šifri udžbenika
+   - šifri kompleta
+   - kataloškom broju
+   - predmetu
+   - nazivu udžbenika
+3. Korisnik dodaje tražene udžbenike u košaricu.
+4. U košarici može prilagoditi količinu.
+5. Zatim bira način dostave i plaćanja te unosi podatke za narudžbu.
+6. Moguće je i osobno preuzimanje u Osijeku.
+7. Nakon zaključene narudžbe Libar priprema paket i šalje ga prvom prilikom ili u dogovoreno vrijeme ako je to navedeno u napomeni.
+
+AKO KORISNIK NE MOŽE PRONAĆI KNJIGU
+Bot treba uputiti korisnika da pokuša pretragu po:
+- naslovu
+- autoru
+- ISBN-u
+- šifri udžbenika
+
+Ako korisnik i dalje ne može pronaći naslov, bot ga treba uputiti na podršku.
+
+ŠTO BOT SMIJE REĆI
+- kako izgleda opći proces kupnje
+- gdje se traži udžbenik
+- po kojim se podacima može pretraživati webshop
+- da se narudžba može osobno preuzeti u Osijeku ako korisnik odabere tu opciju
+
+ŠTO BOT NE SMIJE TVRDITI
+- da je određena knjiga sigurno dostupna ako to nije potvrđeno
+- da je narudžba već obrađena
+- da je rezervacija napravljena
+
+TIPIČNA PITANJA
+- Kako kupiti udžbenike?
+- Gdje tražim knjige na webshopu?
+- Ne mogu pronaći traženi udžbenik.
+- Imate li ovu knjigu?
+- Možete li provjeriti je li ovaj naslov dostupan?
+
+PREPORUČENI KRATKI ODGOVOR
+Udžbenike možete pretražiti na https://antikvarijat-libar.com/kupi-udzbenike/ po nazivu, autoru, ISBN-u, reg. broju ili šifri udžbenika. Kad pronađete traženi naslov, dodate ga u košaricu, odaberete dostavu i plaćanje te zaključite narudžbu.
+
+KADA PREUSMJERITI NA PODRŠKU
+- korisnik traži ručnu provjeru dostupnosti
+- korisnik pita za točan naslov koji ne nalazi
+- korisnik ima problem s košaricom ili checkoutom

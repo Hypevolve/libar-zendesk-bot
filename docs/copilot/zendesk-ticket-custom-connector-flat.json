@@ -1,0 +1,328 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Libar Zendesk Ticket API Flat",
+    "version": "2.0",
+    "description": "Creates a Zendesk support ticket for Antikvarijat Libar from Microsoft Copilot Studio using flat inputs."
+  },
+  "host": "antikvarijat-libar.zendesk.com",
+  "basePath": "/api/v2",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "securityDefinitions": {
+    "basicAuth": {
+      "type": "basic"
+    }
+  },
+  "security": [
+    {
+      "basicAuth": [
+
+      ]
+    }
+  ],
+  "paths": {
+    "/tickets": {
+      "post": {
+        "summary": "Create Zendesk ticket",
+        "description": "Creates a new Zendesk ticket with flat input fields that are transformed into the Zendesk payload by custom code.",
+        "operationId": "CreateZendeskTicketFlat",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "description": "Flat ticket input payload.",
+            "schema": {
+              "type": "object",
+              "required": [
+                "subject",
+                "commentBody",
+                "requesterName",
+                "requesterEmail"
+              ],
+              "properties": {
+                "subject": {
+                  "type": "string",
+                  "description": "Ticket subject shown in Zendesk.",
+                  "x-ms-summary": "Subject",
+                  "x-ms-visibility": "important"
+                },
+                "commentBody": {
+                  "type": "string",
+                  "description": "Public comment body for the ticket.",
+                  "x-ms-summary": "Comment body",
+                  "x-ms-visibility": "important"
+                },
+                "requesterName": {
+                  "type": "string",
+                  "description": "Customer full name.",
+                  "x-ms-summary": "Requester name",
+                  "x-ms-visibility": "important"
+                },
+                "requesterEmail": {
+                  "type": "string",
+                  "description": "Customer email.",
+                  "x-ms-summary": "Requester email",
+                  "x-ms-visibility": "important"
+                },
+                "commentPublic": {
+                  "type": "boolean",
+                  "description": "Set to true for a public ticket comment.",
+                  "default": true,
+                  "x-ms-summary": "Public comment",
+                  "x-ms-visibility": "advanced"
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "Ticket priority.",
+                  "enum": [
+                    "low",
+                    "normal",
+                    "high",
+                    "urgent"
+                  ],
+                  "default": "normal",
+                  "x-ms-summary": "Priority",
+                  "x-ms-visibility": "advanced"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Ticket status.",
+                  "enum": [
+                    "new",
+                    "open",
+                    "pending",
+                    "hold",
+                    "solved"
+                  ],
+                  "default": "new",
+                  "x-ms-summary": "Status",
+                  "x-ms-visibility": "advanced"
+                },
+                "tags": {
+                  "type": "array",
+                  "description": "Optional ticket tags.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "x-ms-summary": "Tags",
+                  "x-ms-visibility": "advanced"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Ticket created",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ticket": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Zendesk ticket ID.",
+                      "x-ms-summary": "Ticket ID"
+                    },
+                    "requester_id": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Zendesk requester user ID. Use this as authorId when adding user comments.",
+                      "x-ms-summary": "Requester ID"
+                    },
+                    "subject": {
+                      "type": "string",
+                      "description": "Ticket subject."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Ticket status."
+                    },
+                    "priority": {
+                      "type": "string",
+                      "description": "Ticket priority."
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "API URL of the created ticket."
+                    }
+                  }
+                },
+                "audit": {
+                  "type": "object",
+                  "description": "Zendesk audit object returned on create."
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Ticket created",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ticket": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Zendesk ticket ID.",
+                      "x-ms-summary": "Ticket ID"
+                    },
+                    "requester_id": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Zendesk requester user ID. Use this as authorId when adding user comments.",
+                      "x-ms-summary": "Requester ID"
+                    },
+                    "subject": {
+                      "type": "string",
+                      "description": "Ticket subject."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Ticket status."
+                    },
+                    "priority": {
+                      "type": "string",
+                      "description": "Ticket priority."
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "API URL of the created ticket."
+                    }
+                  }
+                },
+                "audit": {
+                  "type": "object",
+                  "description": "Zendesk audit object returned on create."
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tickets/{ticketId}": {
+      "put": {
+        "summary": "Add comment to Zendesk ticket",
+        "description": "Adds a public comment (agent reply) to an existing Zendesk ticket. The comment is sent to the customer via email.",
+        "operationId": "AddCommentToTicketFlat",
+        "parameters": [
+          {
+            "name": "ticketId",
+            "in": "path",
+            "required": true,
+            "type": "integer",
+            "format": "int64",
+            "description": "Zendesk ticket ID to add comment to.",
+            "x-ms-summary": "Ticket ID",
+            "x-ms-url-encoding": "single"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "description": "Comment payload.",
+            "schema": {
+              "type": "object",
+              "required": [
+                "commentBody"
+              ],
+              "properties": {
+                "commentBody": {
+                  "type": "string",
+                  "description": "Comment text to add to the ticket.",
+                  "x-ms-summary": "Comment body",
+                  "x-ms-visibility": "important"
+                },
+                "authorId": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Zendesk user ID to attribute this comment to. Use Requester ID from Create ticket to make comments appear as from the customer. Leave empty for agent comments.",
+                  "x-ms-summary": "Author ID",
+                  "x-ms-visibility": "important"
+                },
+                "commentPublic": {
+                  "type": "boolean",
+                  "description": "true = public reply (sent via email), false = internal note.",
+                  "default": true,
+                  "x-ms-summary": "Public comment",
+                  "x-ms-visibility": "advanced"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comment added",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ticket": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64",
+                      "description": "Zendesk ticket ID.",
+                      "x-ms-summary": "Ticket ID"
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Ticket status."
+                    }
+                  }
+                },
+                "audit": {
+                  "type": "object",
+                  "description": "Zendesk audit object."
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,70 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Narudžbe, reklamacije i povrati
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o statusu narudžbe, izmjeni ili otkazivanju narudžbe, reklamacijama i općim pravilima povrata.
+
+STATUS NARUDŽBE
+Bot ne može sam provjeriti status konkretne narudžbe ako nema pristup internom sustavu.
+
+Ako korisnik pita za status narudžbe:
+- treba poslati broj narudžbe
+- treba poslati ime i prezime ili kontakt podatke korištene pri kupnji
+- treba ga uputiti na podršku
+
+IZMJENA ILI OTKAZIVANJE NARUDŽBE
+Ako korisnik želi izmijeniti ili otkazati narudžbu:
+- treba se javiti podršci
+- treba poslati broj narudžbe
+- treba navesti što želi promijeniti ili otkazati
+
+Bot smije objasniti proces, ali ne smije tvrditi da je izmjena ili otkazivanje izvršeno.
+
+REKLAMACIJE I PROBLEMI NAKON KUPNJE
+Ako korisnik prijavi:
+- krivu knjigu
+- oštećenje
+- problem s dostavom
+- drugi problem nakon kupnje
+
+bot ga treba usmjeriti da pošalje:
+- broj narudžbe
+- kratak opis problema
+- po potrebi fotografije
+
+JEDNOSTRANI RASKID ONLINE KUPOVINE
+Prema uvjetima poslovanja:
+- potrošač može jednostrano raskinuti online ugovor u roku od 14 dana od primitka robe
+- roba se vraća bez nepotrebnog odgađanja, najkasnije u roku od 14 dana od odluke o raskidu
+- trošak povrata robe snosi kupac
+- povrat novca može biti izvršen nakon što trgovac primi vraćenu robu
+
+POVRAT U POSLOVNICI
+Prema FAQ sadržaju:
+- povrat novca u poslovnici rade ako je došlo do njihove pogreške ili nemaju zamjenski udžbenik
+- korisnik treba imati račun
+
+ŠTO BOT SMIJE REĆI
+- opći proces za status, izmjenu i otkazivanje narudžbe
+- koje podatke korisnik treba pripremiti
+- opće pravilo o 14 dana za jednostrani raskid online kupnje ako korisnik pita za online narudžbu
+
+ŠTO BOT NE SMIJE REĆI
+- da je konkretna narudžba pronađena
+- da je otkazivanje odrađeno
+- da će reklamacija sigurno biti odobrena
+
+TIPIČNA PITANJA
+- Što je s mojom narudžbom?
+- Kako mogu otkazati narudžbu?
+- Mogu li promijeniti podatke nakon narudžbe?
+- Što ako je stigla kriva knjiga?
+- Kako ide povrat?
+
+PREPORUČENI KRATKI ODGOVOR
+Za status, izmjenu ili otkazivanje konkretne narudžbe potrebno je da nam pošaljete broj narudžbe i osnovne podatke za provjeru. Ako se radi o reklamaciji ili krivoj knjizi, pošaljite i kratak opis problema, a po potrebi i fotografije.
+
+KADA PREUSMJERITI NA PODRŠKU
+- uvijek za konkretnu narudžbu
+- uvijek za reklamaciju
+- uvijek kada korisnik želi izvršiti radnju, a ne samo dobiti opću informaciju

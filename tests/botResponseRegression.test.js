@@ -149,7 +149,7 @@ test("resolveAutomatedOutcome still escalates when knowledge score is too weak a
 
     assert.equal(outcome.type, "hard_handoff");
     assert.equal(outcome.reason, "no_answer_found");
-    assert.match(outcome.customerMessage, /provjeriti ručno/i);
+    assert.match(outcome.customerMessage, /pouzdano potvrditi/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

@@ -149,8 +149,27 @@ function buildChannelInstructions(channelType = "unknown") {
   ];
 }
 
-
-
+const REFERENTNE_CINJENICE = [
+  "REFERENTNE ČINJENICE (koristi samo ako su relevantne za korisnikov upit):",
+  "- Dostava GLS na kućnu adresu: 5,97 EUR",
+  "- Dostava u GLS paketomat: 3,75 EUR",
+  "- Dostava u BoxNow paketomat: 3,25 EUR",
+  "- Osobno preuzimanje u Osijeku: besplatno",
+  "- Rok dostave: 1–2 radna dana (do 48 sati)",
+  "- Radno vrijeme: ponedjeljak–petak 08:00–20:00, subota 08:00–13:00, nedjeljom i blagdanima ne rade",
+  "- Adresa poslovnice: Županijska ulica 17, 31000 Osijek",
+  "- Email: info@antikvarijat-libar.com",
+  "- Telefon: 031/201-230",
+  "- Online plaćanje: pouzeće putem GLS-a ili CorvusPay",
+  "- Plaćanje u poslovnici: gotovina, MasterCard, Maestro, Visa",
+  "- Plaćanje na rate u poslovnici: Zaba i PBZ kartice do 6 rata",
+  "- SJEDI 5 program vjernosti: 5 prodanih udžbenika = besplatna dostava za taj nalog otkupa, 8 = 5% popust na kupnju, 11 = 10% popust na cijelu kupnju",
+  "- Otkup dostava: 5 ili više udžbenika besplatno, manje od 5 = 3,00 EUR (odbija se od iznosa otkupa)",
+  "- Otkup putem GLS dostavne službe; korisnik upisuje OIB i IBAN za isplatu",
+  "- Jednostrani raskid online kupnje: 14 dana od primitka robe, trošak povrata snosi kupac",
+  "- Odgovor na upite: najkasnije 24 sata / 1 radni dan",
+  "- Trgovac: Dante d.o.o., OIB: 20816309823"
+].join("\n");
 
 
 function buildSystemPrompt(
@@ -257,6 +276,8 @@ function buildSystemPrompt(
     customerName
       ? `Korisnik se zove ${customerName}. Ime koristi samo kad zvuči prirodno i korisno.`
       : "Ime korisnika nije dostupno.",
+    "",
+    REFERENTNE_CINJENICE,
     "",
     "SUPPORT UNDERSTANDING:",
     reasoningResult?.primaryIntent ? `Primary intent: ${reasoningResult.primaryIntent}` : "Primary intent: nije dostavljen",
@@ -456,6 +477,8 @@ function buildGroundedAnswerPrompt(context, { channelType = "unknown", customerN
       ? `KORISNIK: Korisnik se zove ${customerName}. Ime koristi samo ako zvuči prirodno i korisno.`
       : "",
     "- Vrati samo gotov odgovor za korisnika, bez JSON-a i bez dodatnih oznaka.",
+    "",
+    REFERENTNE_CINJENICE,
     "",
     ...buildChannelInstructions(channelType),
     "",

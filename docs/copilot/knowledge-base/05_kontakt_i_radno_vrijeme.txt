@@ -1,0 +1,46 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Kontakt i radno vrijeme
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o lokaciji, radnom vremenu i kontaktu.
+
+POSLOVNICA
+Antikvarijat Libar
+Županijska ulica 17
+31000 Osijek
+
+RADNO VRIJEME
+- ponedjeljak do petka: 08:00 do 20:00
+- subota: 08:00 do 13:00
+- nedjeljom i blagdanima ne rade
+
+KONTAKT
+- email: info@antikvarijat-libar.com
+- telefon: 031/201-230
+- Facebook stranica: Antikvarijat Libar
+
+ODGOVOR NA UPITE
+Prema FAQ i postojećem knowledge sloju:
+- na upite odgovaraju najkasnije u roku od 24 sata / 1 radnog dana tijekom radnog tjedna
+- upiti poslani vikendom ili praznikom rješavaju se prvi sljedeći radni dan
+
+KADA BOT TREBA DATI OVAJ ODGOVOR
+- korisnik pita gdje se nalazi poslovnica
+- korisnik pita radi li Libar danas ili subotom
+- korisnik pita kako kontaktirati podršku
+
+ŠTO BOT NE SMIJE REĆI
+- ne smije izmišljati produženo radno vrijeme
+- ne smije tvrditi da je podrška trenutno online ako to nije potvrđeno
+
+TIPIČNA PITANJA
+- Gdje se nalazite?
+- Koje vam je radno vrijeme?
+- Radite li subotom?
+- Kako vas mogu kontaktirati?
+
+PREPORUČENI KRATKI ODGOVOR
+Poslovnica Antikvarijata Libar nalazi se na adresi Županijska ulica 17, 31000 Osijek. Radno vrijeme je od ponedjeljka do petka 08:00 do 20:00, a subotom 08:00 do 13:00. Kontaktirati nas možete na info@antikvarijat-libar.com ili 031/201-230.
+
+KADA PREUSMJERITI NA PODRŠKU
+- korisnik traži specifičan dogovor, rezervaciju ili potvrdu izvan objavljenih informacija

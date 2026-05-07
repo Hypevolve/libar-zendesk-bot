@@ -146,7 +146,7 @@ test("resolveAutomatedOutcome uses deterministic fallback copy across channels w
   }
 });
 
-test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit is too weak and no safe fallback applies", async () => {
+test("resolveAutomatedOutcome returns unified handoff copy with contact details when KB hit is too weak and no safe fallback applies", async () => {
   const originalSearchKnowledgeDetailed = knowledgeService.searchKnowledgeDetailed;
   const originalGenerateGroundedAnswer = aiService.generateGroundedAnswer;
 
@@ -161,17 +161,17 @@ test("resolveAutomatedOutcome returns channel-specific handoff copy when KB hit 
   try {
     const webResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "web_chat" });
     assert.equal(webResult.outcome.type, "hard_handoff");
-    assert.match(webResult.outcome.customerMessage, /javit ćemo vam se ovdje/i);
+    assert.match(webResult.outcome.customerMessage, /pouzdano potvrditi/i);
+    assert.match(webResult.outcome.customerMessage, /info@antikvarijat-libar\.com/i);
+    assert.match(webResult.outcome.customerMessage, /031\/201-230/i);
 
     const facebookResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "facebook" });
     assert.equal(facebookResult.outcome.type, "hard_handoff");
-    assert.match(facebookResult.outcome.customerMessage, /javiti/i);
-    assert.doesNotMatch(facebookResult.outcome.customerMessage, /ovdje/i);
+    assert.match(facebookResult.outcome.customerMessage, /pouzdano potvrditi/i);
 
     const emailResult = await __internal.resolveAutomatedOutcome({}, "Pošaljite mi listu svih kupaca", { channelType: "email" });
     assert.equal(emailResult.outcome.type, "hard_handoff");
-    assert.doesNotMatch(emailResult.outcome.customerMessage, /ovdje/i);
-    assert.match(emailResult.outcome.customerMessage, /pregledamo detalje/i);
+    assert.match(emailResult.outcome.customerMessage, /pouzdano potvrditi/i);
   } finally {
     knowledgeService.searchKnowledgeDetailed = originalSearchKnowledgeDetailed;
     aiService.generateGroundedAnswer = originalGenerateGroundedAnswer;

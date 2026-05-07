@@ -1,0 +1,58 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Dostava i plaćanje
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o načinima dostave, troškovima dostave i načinima plaćanja.
+
+DOSTAVA ZA KUPNJU UDŽBENIKA
+- Dostava na kućnu adresu putem GLS-a: 5,97 EUR
+- Dostava u GLS paketomat: 3,75 EUR
+- Dostava u BoxNow paketomat: 3,25 EUR
+- Osobno preuzimanje u Osijeku: besplatno
+
+ROK DOSTAVE
+U pravilu dostava traje 1 do 2 radna dana, odnosno do 48 sati, ovisno o obradi i kurirskoj službi.
+
+PRAĆENJE POŠILJKE
+Korisnik nakon slanja dobiva podatke od dostavne službe za praćenje pošiljke.
+
+NAČINI PLAĆANJA ONLINE
+- pouzeće putem GLS dostavne službe
+- online plaćanje putem CorvusPay servisa
+
+NAČINI PLAĆANJA U POSLOVNICI
+- gotovina
+- kartice MasterCard, Maestro i Visa
+
+PLAĆANJE NA RATE U POSLOVNICI
+Prema javno objavljenim informacijama:
+- Zaba Visa i Master kartice do 6 rata
+- PBZ Visa i Visa Premium kartice do 6 rata
+
+SAŽETA JAVNA FORMULACIJA
+Na javnim stranicama također stoji da prihvaćaju PBZ i ZABA kartice te gotovinu u poslovnici.
+
+ŠTO BOT SMIJE REĆI
+- cijene i opcije dostave koje su potvrđene u ovom dokumentu
+- da je online plaćanje moguće pouzećem i CorvusPayem
+- da je osobno preuzimanje u Osijeku besplatno
+
+ŠTO BOT NE SMIJE REĆI
+- ne smije obećati točan sat isporuke
+- ne smije tvrditi da je konkretan paket poslan ili dostavljen
+- ne smije potvrditi posebne načine plaćanja koji nisu u dokumentima
+
+TIPIČNA PITANJA
+- Kolika je dostava na adresu?
+- Koliko košta BoxNow paketomat?
+- Imate li GLS paketomat?
+- Kako mogu platiti online?
+- Može li plaćanje na rate?
+
+PREPORUČENI KRATKI ODGOVOR
+Za kupnju udžbenika dostava na kućnu adresu putem GLS-a iznosi 5,97 EUR, GLS paketomat 3,75 EUR, a BoxNow paketomat 3,25 EUR. Online možete platiti pouzećem ili putem CorvusPaya, a osobno preuzimanje u Osijeku je besplatno.
+
+KADA PREUSMJERITI NA PODRŠKU
+- korisnik pita za status konkretnog paketa
+- korisnik prijavljuje problem s naplatom ili dostavom
+- korisnik traži iznimku ili poseban dogovor oko dostave

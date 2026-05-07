@@ -1,0 +1,51 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Uvjeti i privatnost
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o osnovnim uvjetima online kupnje, podacima potrebnima za obradu i osnovnim pravilima privatnosti.
+
+OSNOVNI PODACI O TRGOVCU
+- naziv: Dante d.o.o.
+- sjedište: Županijska ul. 17, 31000 Osijek
+- OIB: 20816309823
+- email: info@antikvarijat-libar.com
+- telefon: 031/201-230
+
+PODACI KOJI SU POTREBNI ZA OBRADU
+Za kupnju mogu biti potrebni:
+- ime i prezime
+- adresa dostave
+- email
+- broj telefona
+
+Za online otkup mogu biti potrebni:
+- OIB
+- IBAN za isplatu
+
+JEDNOSTRANI RASKID ONLINE UGOVORA
+Prema uvjetima poslovanja:
+- potrošač može jednostrano raskinuti ugovor u roku od 14 dana od primitka robe
+- kupac robu vraća o vlastitom trošku
+- povrat novca može biti izvršen nakon primitka vraćene robe
+
+PRIVATNOST
+Libar prikuplja samo podatke koji su potrebni za obradu narudžbe, dostavu, isplatu ili korisničku podršku prema pravilima objavljenima na njihovim stranicama.
+
+ŠTO BOT SMIJE REĆI
+- opća pravila iz ovog dokumenta
+- koji se podaci tipično traže za narudžbu ili otkup
+- osnovno pravilo o 14 dana za online raskid ugovora
+
+ŠTO BOT NE SMIJE REĆI
+- ne smije davati pravno tumačenje izvan potvrđenih pravila
+- ne smije tražiti osjetljive podatke koji nisu potrebni
+- ne smije tražiti broj kartice, CVV ili lozinke
+
+TIPIČNA PITANJA
+- Koje podatke trebam poslati?
+- Koliki je rok za odustajanje od online kupnje?
+- Tko snosi trošak povrata?
+- Kako koristite moje podatke?
+
+PREPORUČENI KRATKI ODGOVOR
+Za narudžbu su potrebni osnovni kontakt i dostavni podaci, a za online otkup i OIB te IBAN za isplatu. Kod online kupnje potrošač može jednostrano raskinuti ugovor u roku od 14 dana od primitka robe, a trošak povrata robe snosi kupac.

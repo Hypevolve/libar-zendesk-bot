@@ -1,0 +1,33 @@
+LIBAR KNOWLEDGE BASE
+TEMA: Program vjernosti i popusti
+VERZIJA: 2026-05-07
+
+Ovaj dokument služi za pitanja o programu vjernosti "SJEDI 5", bonusima i općim pravilima popusta.
+
+PROGRAM VJERNOSTI SJEDI 5
+Program je vezan uz prodaju udžbenika Libaru.
+
+Pravila:
+1. Ako korisnik proda 5 udžbenika, dobiva besplatnu dostavu za trenutni nalog otkupa.
+2. Ako proda ukupno 8 udžbenika, ostvaruje 5% popusta na kupovinu udžbenika.
+3. Ako proda ukupno 11 udžbenika, ostvaruje 10% popusta na cijelu kupnju.
+
+VAŽNO
+- Bot smije govoriti samo o pravilima koja su potvrđena u ovom dokumentu.
+- Bot ne smije obećati kupon ili promotivni kod koji nije potvrđen.
+- Ako korisnik pita za aktualnu kampanju ili posebnu akciju, bot treba odgovoriti samo ako je ona unesena u knowledge source.
+
+TIPIČNA PITANJA
+- Kako funkcionira SJEDI 5?
+- Dobivam li besplatnu dostavu za otkup?
+- Kada ostvarujem 5% popusta?
+- Kada ostvarujem 10% popusta?
+- Imate li kod za popust?
+
+PREPORUČENI KRATKI ODGOVOR
+Program vjernosti SJEDI 5 funkcionira tako da nakon 5 prodanih udžbenika dobivate besplatnu dostavu za taj nalog otkupa, nakon ukupno 8 prodanih udžbenika ostvarujete 5% popusta na kupnju udžbenika, a nakon ukupno 11 prodanih udžbenika ostvarujete 10% popusta na cijelu kupnju.
+
+KADA PREUSMJERITI NA PODRŠKU
+- korisnik pita za specifičan kupon
+- korisnik prijavljuje da popust nije obračunat
+- korisnik pita za kampanju koja nije potvrđena u dokumentima
