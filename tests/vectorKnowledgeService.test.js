@@ -147,6 +147,11 @@ test("vector match attempts fall back from domain-filtered search to broader One
         reason: "domain_filtered"
       },
       {
+        threshold: 0.58,
+        domainFilter: "delivery",
+        reason: "domain_aware_lower"
+      },
+      {
         threshold: 0.68,
         domainFilter: null,
         reason: "no_domain_filter"

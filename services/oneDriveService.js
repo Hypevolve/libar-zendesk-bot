@@ -526,7 +526,7 @@ async function searchOneDriveDetailed(query, options = {}) {
       .map((document) => ({
         document,
         score: scoreDocument(document, searchQuery, options),
-        excerpt: findBestExcerpt(document.body || "", searchQuery, 2400)
+        excerpt: findBestExcerpt(document.body || "", searchQuery, 3200)
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score)
@@ -542,7 +542,7 @@ async function searchOneDriveDetailed(query, options = {}) {
         `Izvor: OneDrive`,
         `Naslov: ${document.title}`,
         `Relevantnost: ${score}`,
-        `Sadržaj: ${excerpt || truncateText(document.body, 2400)}`
+        `Sadržaj: ${excerpt || truncateText(document.body, 3200)}`
       ].join("\n"))
       .join("\n\n");
 
@@ -552,7 +552,7 @@ async function searchOneDriveDetailed(query, options = {}) {
         id: document.id,
         title: document.title,
         score,
-        body: excerpt || truncateText(document.body, 2400),
+        body: excerpt || truncateText(document.body, 3200),
         source: "onedrive",
         url: document.url || null
       })),

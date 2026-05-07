@@ -299,6 +299,22 @@ const QUERY_ALIASES = [
   {
     pattern: /\b(loyalty|lojalnost|vjern\w*\s+kup\w*|nagrade|popusti za vjerne|popust\w* za vjern\w*|5,\s*8 ili 11|5\s+8\s+ili\s+11|prodam vise udzbenika|prodam više udžbenika)\b/u,
     terms: ["loyalty program", "5 udzbenika", "ukupno 8 udzbenika", "ukupno 11 udzbenika", "5 popusta", "10 popusta", "besplatna dostava", "sjedi 5"]
+  },
+  {
+    pattern: /\b(sjedi\s*5|sjedi\s*pet|program vjernosti|program\s+vjern\w*)\b/u,
+    terms: ["sjedi 5", "program vjernosti", "5 udzbenika besplatna dostava", "8 udzbenika 5 popusta", "11 udzbenika 10 popusta", "loyalty program"]
+  },
+  {
+    pattern: /\b(14 dana|rok za povrat|rok povrata|jednostrani raskid|raskid ugovora|raskid kupnje|odustajanje|odustajem)\b/u,
+    terms: ["14 dana od primitka robe", "jednostrani raskid", "trosak povrata snosi kupac", "povrat novca", "raskid online kupnje"]
+  },
+  {
+    pattern: /\b(fizick\w*\s+otkup|osobn\w*\s+otkup|otkup\s+u\s+poslovnic|otkup\s+osobno)\b.{0,60}\b(isplat\w*|gotovina|novac|odmah)\b|\b(isplat\w*|gotovina|novac|odmah)\b.{0,60}\b(fizick\w*\s+otkup|osobn\w*\s+otkup|otkup\s+u\s+poslovnic|otkup\s+osobno)\b/u,
+    terms: ["fizicki otkup", "odmah gotovina na blagajni", "isplata je odmah u gotovini", "odmah pri predaji", "oib ili broj osobne"]
+  },
+  {
+    pattern: /\b(jednostrani raskid online kupnje|odustati od kupnje|odustajanje od kupnje|vracanje robe|vraćanje robe)\b/u,
+    terms: ["14 dana od primitka robe", "jednostrani raskid", "trosak povrata snosi kupac", "povrat robe"]
   }
 ];
 
@@ -660,6 +676,21 @@ function scoreSearchText(text = "", query = "") {
 
   if (/^sadrzaj\b/.test(searchableText) || (searchableText.match(/clanak\s+\d+/g) || []).length >= 3) {
     score -= 8;
+  }
+
+  if (/(sjedi\s*5|sjedi\s*pet|program vjernosti|program\s+vjern\w*)/.test(normalizedQuery) &&
+      /(sjedi 5|5 udzbenika|5 udžbenika|ukupno 8|ukupno 11|besplatna dostava|5% popusta|10% popusta|program vjernosti)/.test(searchableText)) {
+    score += 260;
+  }
+
+  if (/(14 dana|rok za povrat|rok povrata|jednostrani raskid|raskid kupnje|odustati od kupnje|odustajanje)/.test(normalizedQuery) &&
+      /(14 dana|jednostrani raskid|trosak povrata snosi kupac|trošak povrata snosi kupac|primitka robe)/.test(searchableText)) {
+    score += 220;
+  }
+
+  if (/(fizick\w*\s+otkup|osobn\w*\s+otkup|otkup\s+u\s+poslovnic|otkup\s+osobno).{0,60}(isplat|gotovina|novac|odmah)|(isplat|gotovina|novac|odmah).{0,60}(fizick\w*\s+otkup|osobn\w*\s+otkup|otkup\s+u\s+poslovnic|otkup\s+osobno)/.test(normalizedQuery) &&
+      /(odmah|gotovina na blagajni|na licu mjesta|fizicki otkup|fizički otkup|isplata je odmah)/.test(searchableText)) {
+    score += 160;
   }
 
   return score;

@@ -8,6 +8,7 @@ const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const VECTOR_MATCH_COUNT = Number(process.env.VECTOR_MATCH_COUNT) || 8;
 const VECTOR_MIN_SCORE = Number(process.env.VECTOR_MIN_SCORE) || 0.68;
+const VECTOR_DOMAIN_AWARE_MIN_SCORE = Number(process.env.VECTOR_DOMAIN_AWARE_MIN_SCORE) || 0.58;
 const VECTOR_FALLBACK_MIN_SCORE = Number(process.env.VECTOR_FALLBACK_MIN_SCORE) || 0.55;
 const VECTOR_CONTEXT_ITEMS = Number(process.env.VECTOR_CONTEXT_ITEMS) || 5;
 const VECTOR_CHUNK_MAX_CHARS = Number(process.env.VECTOR_CHUNK_MAX_CHARS) || 1200;
@@ -429,6 +430,14 @@ function buildVectorMatchAttempts(options = {}) {
       reason: domainFilter ? "domain_filtered" : "default"
     }
   ];
+
+  if (domainFilter && VECTOR_DOMAIN_AWARE_MIN_SCORE < VECTOR_MIN_SCORE) {
+    attempts.push({
+      threshold: VECTOR_DOMAIN_AWARE_MIN_SCORE,
+      domainFilter,
+      reason: "domain_aware_lower"
+    });
+  }
 
   if (domainFilter) {
     attempts.push({

@@ -15,9 +15,26 @@ function normalizeSourceArticles(result, source) {
   }));
 }
 
+function deduplicateArticles(articles = []) {
+  const seen = new Map();
+
+  for (const article of articles) {
+    const key = `${(article.title || "").toLowerCase().trim()}::${article.source || ""}`;
+    const existing = seen.get(key);
+
+    if (!existing || (article.score || 0) > (existing.score || 0)) {
+      seen.set(key, article);
+    }
+  }
+
+  return [...seen.values()];
+}
+
 function mergeKnowledgeResults(results = []) {
-  const candidates = results
-    .flatMap(({ result, source }) => normalizeSourceArticles(result, source))
+  const allArticles = results
+    .flatMap(({ result, source }) => normalizeSourceArticles(result, source));
+  const deduplicated = deduplicateArticles(allArticles);
+  const candidates = deduplicated
     .sort((left, right) => {
       const scoreDifference = (right.score || 0) - (left.score || 0);
 
